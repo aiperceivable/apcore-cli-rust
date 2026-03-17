@@ -372,9 +372,8 @@ async fn main() {
             .await;
         }
         Some((external, sub_m)) => {
-            // External subcommand: re-parse trailing args through a temporary
-            // command so that dispatch_module can access built-in flags like
-            // --yes, --input, --format, --sandbox, etc.
+            // External subcommand: re-parse trailing args through a command
+            // that includes both built-in flags and schema-derived flags.
             let external = external.to_string();
             let trailing: Vec<String> = sub_m
                 .get_many::<std::ffi::OsString>("")
@@ -389,10 +388,22 @@ async fn main() {
                 })
                 .collect();
 
-            // Reuse the shared dispatch flags via add_dispatch_flags.
-            let temp_cmd = apcore_cli::cli::add_dispatch_flags(
-                clap::Command::new(&external).no_binary_name(true),
-            );
+            // Look up the module in the registry to get schema-derived flags.
+            // If found, build the full command with --a, --b, etc. from input_schema.
+            // If not found, use basic dispatch flags (dispatch_module will exit 44).
+            let temp_cmd = match registry_provider.get_module_descriptor(&external) {
+                Some(descriptor) => {
+                    match apcore_cli::build_module_command(&descriptor, executor.clone()) {
+                        Ok(cmd) => cmd.no_binary_name(true),
+                        Err(_) => apcore_cli::cli::add_dispatch_flags(
+                            clap::Command::new(&external).no_binary_name(true),
+                        ),
+                    }
+                }
+                None => apcore_cli::cli::add_dispatch_flags(
+                    clap::Command::new(&external).no_binary_name(true),
+                ),
+            };
 
             let ext_matches = temp_cmd
                 .try_get_matches_from(&trailing)

@@ -594,6 +594,8 @@ fn extract_cli_kwargs(
         }
         if let Some(val) = matches.get_one::<String>(&id) {
             kwargs.insert(id, Value::String(val.clone()));
+        } else if let Some(val) = matches.get_one::<std::path::PathBuf>(&id) {
+            kwargs.insert(id, Value::String(val.to_string_lossy().to_string()));
         } else {
             kwargs.insert(id, Value::Null);
         }

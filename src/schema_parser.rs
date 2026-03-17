@@ -113,9 +113,11 @@ pub fn map_type(prop_name: &str, prop_schema: &Value) -> Result<Arg, SchemaParse
 
     let arg = Arg::new(prop_name.to_string()).long(flag_long);
 
+    // All types use string-based value parsers so that extract_cli_kwargs can
+    // uniformly read values with get_one::<String>. Type coercion to JSON
+    // numbers/booleans happens in reconvert_enum_values and collect_input.
     let arg = match schema_type {
-        Some("integer") => arg.value_parser(clap::value_parser!(i64)),
-        Some("number") => arg.value_parser(clap::value_parser!(f64)),
+        Some("integer") | Some("number") => arg,
         Some("string") if is_file_property(prop_name, prop_schema) => {
             arg.value_parser(clap::value_parser!(PathBuf))
         }
