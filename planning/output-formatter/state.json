@@ -1,21 +1,72 @@
 {
   "feature": "output-formatter",
   "created": "2026-03-16T09:15:00Z",
-  "updated": "2026-03-16T09:15:00Z",
-  "status": "pending",
-  "execution_order": ["resolve-format-and-truncate", "format-module-list", "format-module-detail", "format-exec-result", "wire-format-flag"],
+  "updated": "2026-03-17T03:38:48.737911+00:00",
+  "status": "completed",
+  "execution_order": [
+    "resolve-format-and-truncate",
+    "format-module-list",
+    "format-module-detail",
+    "format-exec-result",
+    "wire-format-flag"
+  ],
   "progress": {
     "total_tasks": 5,
-    "completed": 0,
+    "completed": 5,
     "in_progress": 0,
-    "pending": 5
+    "pending": 0
   },
   "tasks": [
-    {"id": "resolve-format-and-truncate", "file": "tasks/resolve-format-and-truncate.md", "title": "Implement resolve_format (TTY detection) and truncate helper", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "format-module-list", "file": "tasks/format-module-list.md", "title": "Implement format_module_list — comfy-table with ID/Description/Tags columns", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "format-module-detail", "file": "tasks/format-module-detail.md", "title": "Implement format_module_detail — multi-section display with optional schema/annotation/extension/tags", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "format-exec-result", "file": "tasks/format-exec-result.md", "title": "Implement format_exec_result — match on serde_json::Value variants", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "wire-format-flag", "file": "tasks/wire-format-flag.md", "title": "Replace stubs in test_output.rs with working assertions", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+    {
+      "id": "resolve-format-and-truncate",
+      "file": "tasks/resolve-format-and-truncate.md",
+      "title": "Implement resolve_format (TTY detection) and truncate helper",
+      "status": "completed",
+      "started_at": "2026-03-17T03:30:05.576300+00:00",
+      "completed_at": "2026-03-17T03:31:48.607319+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "format-module-list",
+      "file": "tasks/format-module-list.md",
+      "title": "Implement format_module_list \u2014 comfy-table with ID/Description/Tags columns",
+      "status": "completed",
+      "started_at": "2026-03-17T03:31:48.607319+00:00",
+      "completed_at": "2026-03-17T03:34:07.864450+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "format-module-detail",
+      "file": "tasks/format-module-detail.md",
+      "title": "Implement format_module_detail \u2014 multi-section display with optional schema/annotation/extension/tags",
+      "status": "completed",
+      "started_at": "2026-03-17T03:34:07.864450+00:00",
+      "completed_at": "2026-03-17T03:36:23.484530+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "format-exec-result",
+      "file": "tasks/format-exec-result.md",
+      "title": "Implement format_exec_result \u2014 match on serde_json::Value variants",
+      "status": "completed",
+      "started_at": "2026-03-17T03:36:23.484530+00:00",
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "wire-format-flag",
+      "file": "tasks/wire-format-flag.md",
+      "title": "Replace stubs in test_output.rs with working assertions",
+      "status": "completed",
+      "started_at": null,
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    }
   ],
   "metadata": {
     "source_doc": "../../../apcore-cli/docs/features/output-formatter.md",

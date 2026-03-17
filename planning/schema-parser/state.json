@@ -1,24 +1,105 @@
 {
   "feature": "schema-parser",
   "created": "2026-03-16T09:10:00Z",
-  "updated": "2026-03-16T09:10:00Z",
-  "status": "pending",
-  "execution_order": ["ref-resolver-core", "schema-composition", "type-mapping", "boolean-flag-pairs", "enum-choices", "help-text-and-collision", "reconvert-enum-values", "update-clap-arg-call-site"],
+  "updated": "2026-03-17T03:48:18.474572+00:00",
+  "status": "completed",
+  "execution_order": [
+    "ref-resolver-core",
+    "schema-composition",
+    "type-mapping",
+    "boolean-flag-pairs",
+    "enum-choices",
+    "help-text-and-collision",
+    "reconvert-enum-values",
+    "update-clap-arg-call-site"
+  ],
   "progress": {
     "total_tasks": 8,
-    "completed": 0,
+    "completed": 8,
     "in_progress": 0,
-    "pending": 8
+    "pending": 0
   },
   "tasks": [
-    {"id": "ref-resolver-core", "file": "tasks/ref-resolver-core.md", "title": "Implement resolve_refs and resolve_node — $ref inlining, depth limit, circular detection", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "schema-composition", "file": "tasks/schema-composition.md", "title": "Extend resolve_node with allOf merge and anyOf/oneOf intersection", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "type-mapping", "file": "tasks/type-mapping.md", "title": "Introduce SchemaArgs/BoolFlagPair/SchemaParserError structs; implement map_type and extract_help", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "boolean-flag-pairs", "file": "tasks/boolean-flag-pairs.md", "title": "Implement paired --flag / --no-flag args with ArgAction::SetTrue/SetFalse and BoolFlagPair metadata", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "enum-choices", "file": "tasks/enum-choices.md", "title": "Implement PossibleValuesParser enum handling; populate enum_maps; wire [required] help annotation", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "help-text-and-collision", "file": "tasks/help-text-and-collision.md", "title": "Add test coverage for extract_help and FlagCollision detection", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "reconvert-enum-values", "file": "tasks/reconvert-enum-values.md", "title": "Replace reconvert_enum_values stub — coerce string to Value::Number/Bool using enum_maps", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "update-clap-arg-call-site", "file": "tasks/update-clap-arg-call-site.md", "title": "Wire SchemaArgs into build_module_command and dispatch callback in cli.rs", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+    {
+      "id": "ref-resolver-core",
+      "file": "tasks/ref-resolver-core.md",
+      "title": "Implement resolve_refs and resolve_node \u2014 $ref inlining, depth limit, circular detection",
+      "status": "completed",
+      "started_at": "2026-03-17T03:30:05.576300+00:00",
+      "completed_at": "2026-03-17T03:31:48.607319+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "schema-composition",
+      "file": "tasks/schema-composition.md",
+      "title": "Extend resolve_node with allOf merge and anyOf/oneOf intersection",
+      "status": "completed",
+      "started_at": "2026-03-17T03:31:48.607319+00:00",
+      "completed_at": "2026-03-17T03:34:07.864450+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "type-mapping",
+      "file": "tasks/type-mapping.md",
+      "title": "Introduce SchemaArgs/BoolFlagPair/SchemaParserError structs; implement map_type and extract_help",
+      "status": "completed",
+      "started_at": "2026-03-17T03:34:07.864450+00:00",
+      "completed_at": "2026-03-17T03:36:23.484530+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "boolean-flag-pairs",
+      "file": "tasks/boolean-flag-pairs.md",
+      "title": "Implement paired --flag / --no-flag args with ArgAction::SetTrue/SetFalse and BoolFlagPair metadata",
+      "status": "completed",
+      "started_at": "2026-03-17T03:36:23.484530+00:00",
+      "completed_at": "2026-03-17T03:38:48.737911+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "enum-choices",
+      "file": "tasks/enum-choices.md",
+      "title": "Implement PossibleValuesParser enum handling; populate enum_maps; wire [required] help annotation",
+      "status": "completed",
+      "started_at": "2026-03-17T03:38:48.737911+00:00",
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "help-text-and-collision",
+      "file": "tasks/help-text-and-collision.md",
+      "title": "Add test coverage for extract_help and FlagCollision detection",
+      "status": "completed",
+      "started_at": null,
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "reconvert-enum-values",
+      "file": "tasks/reconvert-enum-values.md",
+      "title": "Replace reconvert_enum_values stub \u2014 coerce string to Value::Number/Bool using enum_maps",
+      "status": "completed",
+      "started_at": null,
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "update-clap-arg-call-site",
+      "file": "tasks/update-clap-arg-call-site.md",
+      "title": "Wire SchemaArgs into build_module_command and dispatch callback in cli.rs",
+      "status": "completed",
+      "started_at": null,
+      "completed_at": null,
+      "assignee": null,
+      "commits": []
+    }
   ],
   "metadata": {
     "source_doc": "../../../apcore-cli/docs/features/schema-parser.md",

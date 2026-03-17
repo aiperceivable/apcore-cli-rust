@@ -1,22 +1,83 @@
 {
   "feature": "approval-gate",
   "created": "2026-03-16T09:25:00Z",
-  "updated": "2026-03-16T09:25:00Z",
-  "status": "pending",
-  "execution_order": ["error-types", "annotation-extraction", "bypass-logic", "non-tty-rejection", "tty-prompt-timeout", "cli-integration"],
+  "updated": "2026-03-17T04:15:00Z",
+  "status": "completed",
+  "execution_order": [
+    "error-types",
+    "annotation-extraction",
+    "bypass-logic",
+    "non-tty-rejection",
+    "tty-prompt-timeout",
+    "cli-integration"
+  ],
   "progress": {
     "total_tasks": 6,
-    "completed": 0,
+    "completed": 6,
     "in_progress": 0,
-    "pending": 6
+    "pending": 0
   },
   "tasks": [
-    {"id": "error-types", "file": "tasks/error-types.md", "title": "Define ApprovalError enum with thiserror", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "annotation-extraction", "file": "tasks/annotation-extraction.md", "title": "Strict bool check + message/ID helpers", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "bypass-logic", "file": "tasks/bypass-logic.md", "title": "--yes flag and APCORE_CLI_AUTO_APPROVE bypass paths", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "non-tty-rejection", "file": "tasks/non-tty-rejection.md", "title": "TTY detection via IsTerminal and NonInteractive error", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "tty-prompt-timeout", "file": "tasks/tty-prompt-timeout.md", "title": "tokio::select! prompt raced against 60s sleep", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "cli-integration", "file": "tasks/cli-integration.md", "title": "Wire into exec path; map all ApprovalError variants to exit 46", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+    {
+      "id": "error-types",
+      "file": "tasks/error-types.md",
+      "title": "Define ApprovalError enum with thiserror",
+      "status": "completed",
+      "started_at": "2026-03-17T03:48:28.751752+00:00",
+      "completed_at": "2026-03-17T04:05:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "annotation-extraction",
+      "file": "tasks/annotation-extraction.md",
+      "title": "Strict bool check + message/ID helpers",
+      "status": "completed",
+      "started_at": "2026-03-17T04:05:00Z",
+      "completed_at": "2026-03-17T04:07:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "bypass-logic",
+      "file": "tasks/bypass-logic.md",
+      "title": "--yes flag and APCORE_CLI_AUTO_APPROVE bypass paths",
+      "status": "completed",
+      "started_at": "2026-03-17T04:07:00Z",
+      "completed_at": "2026-03-17T04:09:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "non-tty-rejection",
+      "file": "tasks/non-tty-rejection.md",
+      "title": "TTY detection via IsTerminal and NonInteractive error",
+      "status": "completed",
+      "started_at": "2026-03-17T04:09:00Z",
+      "completed_at": "2026-03-17T04:11:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "tty-prompt-timeout",
+      "file": "tasks/tty-prompt-timeout.md",
+      "title": "tokio::select! prompt raced against 60s sleep",
+      "status": "completed",
+      "started_at": "2026-03-17T04:11:00Z",
+      "completed_at": "2026-03-17T04:13:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "cli-integration",
+      "file": "tasks/cli-integration.md",
+      "title": "Wire into exec path; map all ApprovalError variants to exit 46",
+      "status": "completed",
+      "started_at": "2026-03-17T04:13:00Z",
+      "completed_at": "2026-03-17T04:15:00Z",
+      "assignee": null,
+      "commits": []
+    }
   ],
   "metadata": {
     "source_doc": "../../../apcore-cli/docs/features/approval-gate.md",

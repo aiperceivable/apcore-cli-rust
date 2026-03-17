@@ -1,20 +1,61 @@
 {
   "feature": "discovery",
   "created": "2026-03-16T09:20:00Z",
-  "updated": "2026-03-16T09:20:00Z",
-  "status": "pending",
-  "execution_order": ["tag-validation", "list-command", "describe-command", "register-discovery-commands"],
+  "updated": "2026-03-17T04:15:00Z",
+  "status": "completed",
+  "execution_order": [
+    "tag-validation",
+    "list-command",
+    "describe-command",
+    "register-discovery-commands"
+  ],
   "progress": {
     "total_tasks": 4,
-    "completed": 0,
+    "completed": 4,
     "in_progress": 0,
-    "pending": 4
+    "pending": 0
   },
   "tasks": [
-    {"id": "tag-validation", "file": "tasks/tag-validation.md", "title": "Implement validate_tag helper, RegistryProvider trait, MockRegistry, and DiscoveryError enum", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "list-command", "file": "tasks/list-command.md", "title": "Implement cmd_list — tag filter with AND semantics, format dispatch, output delegation", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "describe-command", "file": "tasks/describe-command.md", "title": "Implement cmd_describe — module ID validation, exit-44 on not found, optional section omission", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "register-discovery-commands", "file": "tasks/register-discovery-commands.md", "title": "Wire list/describe into root CLI, replace stubs in tests/test_discovery.rs", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+    {
+      "id": "tag-validation",
+      "file": "tasks/tag-validation.md",
+      "title": "Implement validate_tag helper, RegistryProvider trait, MockRegistry, and DiscoveryError enum",
+      "status": "completed",
+      "started_at": "2026-03-17T03:48:28.751752+00:00",
+      "completed_at": "2026-03-17T04:05:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "list-command",
+      "file": "tasks/list-command.md",
+      "title": "Implement cmd_list — tag filter with AND semantics, format dispatch, output delegation",
+      "status": "completed",
+      "started_at": "2026-03-17T04:05:00Z",
+      "completed_at": "2026-03-17T04:08:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "describe-command",
+      "file": "tasks/describe-command.md",
+      "title": "Implement cmd_describe — module ID validation, exit-44 on not found, optional section omission",
+      "status": "completed",
+      "started_at": "2026-03-17T04:08:00Z",
+      "completed_at": "2026-03-17T04:11:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "register-discovery-commands",
+      "file": "tasks/register-discovery-commands.md",
+      "title": "Wire list/describe into root CLI, replace stubs in tests/test_discovery.rs",
+      "status": "completed",
+      "started_at": "2026-03-17T04:11:00Z",
+      "completed_at": "2026-03-17T04:15:00Z",
+      "assignee": null,
+      "commits": []
+    }
   ],
   "metadata": {
     "source_doc": "../../../apcore-cli/docs/features/discovery.md",

@@ -1,20 +1,61 @@
 {
   "feature": "shell-integration",
   "created": "2026-03-16T09:35:00Z",
-  "updated": "2026-03-16T09:35:00Z",
-  "status": "pending",
-  "execution_order": ["shell-error-type", "completion-command", "man-page-generator", "cli-wiring"],
+  "updated": "2026-03-17T04:15:00Z",
+  "status": "completed",
+  "execution_order": [
+    "shell-error-type",
+    "completion-command",
+    "man-page-generator",
+    "cli-wiring"
+  ],
   "progress": {
     "total_tasks": 4,
-    "completed": 0,
+    "completed": 4,
     "in_progress": 0,
-    "pending": 4
+    "pending": 0
   },
   "tasks": [
-    {"id": "shell-error-type", "file": "tasks/shell-error-type.md", "title": "Define ShellError enum and KNOWN_BUILTINS constant", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "completion-command", "file": "tasks/completion-command.md", "title": "Implement completion_command and cmd_completion using clap_complete", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "man-page-generator", "file": "tasks/man-page-generator.md", "title": "Implement generate_man_page, build_synopsis, and cmd_man", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "cli-wiring", "file": "tasks/cli-wiring.md", "title": "Implement register_shell_commands, fix signature, update lib.rs/main.rs, replace stubs", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+    {
+      "id": "shell-error-type",
+      "file": "tasks/shell-error-type.md",
+      "title": "Define ShellError enum and KNOWN_BUILTINS constant",
+      "status": "completed",
+      "started_at": "2026-03-17T03:48:28.751752+00:00",
+      "completed_at": "2026-03-17T04:05:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "completion-command",
+      "file": "tasks/completion-command.md",
+      "title": "Implement completion_command and cmd_completion using clap_complete",
+      "status": "completed",
+      "started_at": "2026-03-17T04:05:00Z",
+      "completed_at": "2026-03-17T04:08:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "man-page-generator",
+      "file": "tasks/man-page-generator.md",
+      "title": "Implement generate_man_page, build_synopsis, and cmd_man",
+      "status": "completed",
+      "started_at": "2026-03-17T04:08:00Z",
+      "completed_at": "2026-03-17T04:11:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "cli-wiring",
+      "file": "tasks/cli-wiring.md",
+      "title": "Implement register_shell_commands, fix signature, update lib.rs/main.rs, replace stubs",
+      "status": "completed",
+      "started_at": "2026-03-17T04:11:00Z",
+      "completed_at": "2026-03-17T04:15:00Z",
+      "assignee": null,
+      "commits": []
+    }
   ],
   "metadata": {
     "source_doc": "../../../apcore-cli/docs/features/shell-integration.md",

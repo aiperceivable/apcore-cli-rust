@@ -1,23 +1,30 @@
 {
   "feature": "core-dispatcher",
   "created": "2026-03-16T09:05:00Z",
-  "updated": "2026-03-16T09:05:00Z",
-  "status": "pending",
-  "execution_order": ["validate-module-id", "collect-input", "lazy-module-group-skeleton", "build-module-command", "exec-dispatch-callback", "create-cli-and-main"],
+  "updated": "2026-03-17T03:29:54.582454+00:00",
+  "status": "completed",
+  "execution_order": [
+    "validate-module-id",
+    "collect-input",
+    "lazy-module-group-skeleton",
+    "build-module-command",
+    "exec-dispatch-callback",
+    "create-cli-and-main"
+  ],
   "progress": {
     "total_tasks": 6,
-    "completed": 0,
+    "completed": 6,
     "in_progress": 0,
-    "pending": 6
+    "pending": 0
   },
   "tasks": [
     {
       "id": "validate-module-id",
       "file": "tasks/validate-module-id.md",
       "title": "Implement and test validate_module_id with hand-written segment validator",
-      "status": "pending",
-      "started_at": null,
-      "completed_at": null,
+      "status": "completed",
+      "started_at": "2026-03-17T03:04:04.090412+00:00",
+      "completed_at": "2026-03-17T03:06:32.758652+00:00",
       "assignee": null,
       "commits": []
     },
@@ -25,9 +32,9 @@
       "id": "collect-input",
       "file": "tasks/collect-input.md",
       "title": "Implement and test collect_input / collect_input_from_reader with STDIN byte-limit and JSON validation",
-      "status": "pending",
-      "started_at": null,
-      "completed_at": null,
+      "status": "completed",
+      "started_at": "2026-03-17T03:06:32.758652+00:00",
+      "completed_at": "2026-03-17T03:10:04.967926+00:00",
       "assignee": null,
       "commits": []
     },
@@ -35,29 +42,29 @@
       "id": "lazy-module-group-skeleton",
       "file": "tasks/lazy-module-group-skeleton.md",
       "title": "Implement LazyModuleGroup struct with list_commands, get_command, and in-memory cache",
-      "status": "pending",
-      "started_at": null,
-      "completed_at": null,
+      "status": "completed",
+      "started_at": "2026-03-17T03:10:04.967926+00:00",
+      "completed_at": "2026-03-17T03:15:26.464780+00:00",
       "assignee": null,
       "commits": []
     },
     {
       "id": "build-module-command",
       "file": "tasks/build-module-command.md",
-      "title": "Implement build_module_command — schema to clap Args, built-in flags, reserved name guard",
-      "status": "pending",
-      "started_at": null,
-      "completed_at": null,
+      "title": "Implement build_module_command \u2014 schema to clap Args, built-in flags, reserved name guard",
+      "status": "completed",
+      "started_at": "2026-03-17T03:15:26.464780+00:00",
+      "completed_at": "2026-03-17T03:18:16.357333+00:00",
       "assignee": null,
       "commits": []
     },
     {
       "id": "exec-dispatch-callback",
       "file": "tasks/exec-dispatch-callback.md",
-      "title": "Full exec pipeline — collect input, schema validate, approval gate, tokio::select! SIGINT race, audit log, exit code mapping",
-      "status": "pending",
-      "started_at": null,
-      "completed_at": null,
+      "title": "Full exec pipeline \u2014 collect input, schema validate, approval gate, tokio::select! SIGINT race, audit log, exit code mapping",
+      "status": "completed",
+      "started_at": "2026-03-17T03:18:16.357333+00:00",
+      "completed_at": "2026-03-17T03:22:48.641943+00:00",
       "assignee": null,
       "commits": []
     },
@@ -65,9 +72,9 @@
       "id": "create-cli-and-main",
       "file": "tasks/create-cli-and-main.md",
       "title": "Implement create_cli, extract_extensions_dir, init_tracing with reload handle, main dispatch loop",
-      "status": "pending",
-      "started_at": null,
-      "completed_at": null,
+      "status": "completed",
+      "started_at": "2026-03-17T03:22:48.641943+00:00",
+      "completed_at": "2026-03-17T03:29:54.582454+00:00",
       "assignee": null,
       "commits": []
     }

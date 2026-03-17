@@ -1,21 +1,72 @@
 {
   "feature": "security",
   "created": "2026-03-16T09:30:00Z",
-  "updated": "2026-03-16T09:30:00Z",
-  "status": "pending",
-  "execution_order": ["config-encryptor", "audit", "sandbox", "auth", "integration"],
+  "updated": "2026-03-17T03:22:48.641943+00:00",
+  "status": "completed",
+  "execution_order": [
+    "config-encryptor",
+    "audit",
+    "sandbox",
+    "auth",
+    "integration"
+  ],
   "progress": {
     "total_tasks": 5,
-    "completed": 0,
+    "completed": 5,
     "in_progress": 0,
-    "pending": 5
+    "pending": 0
   },
   "tasks": [
-    {"id": "config-encryptor", "file": "tasks/config-encryptor.md", "title": "Implement ConfigEncryptor — keyring probe, AES-256-GCM encrypt/decrypt, PBKDF2-HMAC-SHA256 key derivation", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "audit", "file": "tasks/audit.md", "title": "Implement AuditLogger — JSONL append via BufWriter, salted SHA-256 input hash, USER/LOGNAME fallback", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "sandbox", "file": "tasks/sandbox.md", "title": "Implement Sandbox + _sandbox_runner — tokio subprocess, env_clear + whitelist, 300s timeout", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "auth", "file": "tasks/auth.md", "title": "Implement AuthProvider — env/config/keyring key resolution, Bearer header injection, 401/403 error mapping", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []},
-    {"id": "integration", "file": "tasks/integration.md", "title": "Write and pass tests/security/ covering all security acceptance tests", "status": "pending", "started_at": null, "completed_at": null, "assignee": null, "commits": []}
+    {
+      "id": "config-encryptor",
+      "file": "tasks/config-encryptor.md",
+      "title": "Implement ConfigEncryptor \u2014 keyring probe, AES-256-GCM encrypt/decrypt, PBKDF2-HMAC-SHA256 key derivation",
+      "status": "completed",
+      "started_at": "2026-03-17T03:04:04.090412+00:00",
+      "completed_at": "2026-03-17T03:06:32.758652+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "audit",
+      "file": "tasks/audit.md",
+      "title": "Implement AuditLogger \u2014 JSONL append via BufWriter, salted SHA-256 input hash, USER/LOGNAME fallback",
+      "status": "completed",
+      "started_at": "2026-03-17T03:06:32.758652+00:00",
+      "completed_at": "2026-03-17T03:10:04.967926+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "sandbox",
+      "file": "tasks/sandbox.md",
+      "title": "Implement Sandbox + _sandbox_runner \u2014 tokio subprocess, env_clear + whitelist, 300s timeout",
+      "status": "completed",
+      "started_at": "2026-03-17T03:10:04.967926+00:00",
+      "completed_at": "2026-03-17T03:15:26.464780+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "auth",
+      "file": "tasks/auth.md",
+      "title": "Implement AuthProvider \u2014 env/config/keyring key resolution, Bearer header injection, 401/403 error mapping",
+      "status": "completed",
+      "started_at": "2026-03-17T03:15:26.464780+00:00",
+      "completed_at": "2026-03-17T03:18:16.357333+00:00",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "integration",
+      "file": "tasks/integration.md",
+      "title": "Write and pass tests/security/ covering all security acceptance tests",
+      "status": "completed",
+      "started_at": "2026-03-17T03:18:16.357333+00:00",
+      "completed_at": "2026-03-17T03:22:48.641943+00:00",
+      "assignee": null,
+      "commits": []
+    }
   ],
   "metadata": {
     "source_doc": "../../../apcore-cli/docs/features/security.md",
