@@ -39,6 +39,8 @@ pub use config::ConfigResolver;
 pub use discovery::register_discovery_commands;
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
 pub use ref_resolver::resolve_refs;
-pub use schema_parser::{reconvert_enum_values, schema_to_clap_args};
+pub use schema_parser::{
+    reconvert_enum_values, schema_to_clap_args, BoolFlagPair, SchemaArgs, SchemaParserError,
+};
 pub use security::{AuditLogger, AuthProvider, ConfigEncryptor, Sandbox};
 pub use shell::register_shell_commands;
