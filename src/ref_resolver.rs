@@ -42,7 +42,7 @@ pub enum RefResolverError {
 /// recursively up to `max_depth`.
 ///
 /// # Arguments
-/// * `schema`    — mutable JSON Schema value (not mutated; deep-copy is used internally)
+/// * `schema`    — JSON Schema value (deep-copy is used internally)
 /// * `max_depth` — maximum recursion depth before raising `MaxDepthExceeded`
 /// * `module_id` — module identifier for error messages
 ///
@@ -51,7 +51,7 @@ pub enum RefResolverError {
 /// * `RefResolverError::Circular`     — circular reference (exit 48)
 /// * `RefResolverError::MaxDepthExceeded` — depth limit reached
 pub fn resolve_refs(
-    schema: &mut Value,
+    schema: &Value,
     max_depth: usize,
     module_id: &str,
 ) -> Result<Value, RefResolverError> {
@@ -283,13 +283,13 @@ mod tests {
     #[test]
     fn test_resolve_refs_no_refs_unchanged() {
         // A schema without any $ref must be returned unchanged.
-        let mut schema = json!({
+        let schema = json!({
             "type": "object",
             "properties": {
                 "name": {"type": "string"}
             }
         });
-        let result = resolve_refs(&mut schema, 32, "test.module");
+        let result = resolve_refs(&schema, 32, "test.module");
         assert!(result.is_ok());
         let resolved = result.unwrap();
         assert_eq!(resolved["properties"]["name"]["type"], "string");
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_simple_ref() {
         // A single $ref must be inlined from $defs.
-        let mut schema = json!({
+        let schema = json!({
             "$defs": {
                 "MyString": {"type": "string", "description": "A name"}
             },
@@ -307,7 +307,7 @@ mod tests {
                 "name": {"$ref": "#/$defs/MyString"}
             }
         });
-        let result = resolve_refs(&mut schema, 32, "test.module");
+        let result = resolve_refs(&schema, 32, "test.module");
         assert!(result.is_ok());
         let resolved = result.unwrap();
         assert_eq!(resolved["properties"]["name"]["type"], "string");
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_definitions_key_also_supported() {
         // Some schemas use "definitions" instead of "$defs".
-        let mut schema = json!({
+        let schema = json!({
             "definitions": {
                 "Addr": {"type": "string"}
             },
@@ -327,7 +327,7 @@ mod tests {
                 "city": {"$ref": "#/definitions/Addr"}
             }
         });
-        let result = resolve_refs(&mut schema, 32, "test.module");
+        let result = resolve_refs(&schema, 32, "test.module");
         assert!(result.is_ok());
         let resolved = result.unwrap();
         assert_eq!(resolved["properties"]["city"]["type"], "string");
@@ -337,13 +337,13 @@ mod tests {
     #[test]
     fn test_resolve_refs_unresolvable_returns_error() {
         // An unknown $ref must yield RefResolverError::Unresolvable.
-        let mut schema = json!({
+        let schema = json!({
             "type": "object",
             "properties": {
                 "x": {"$ref": "#/$defs/DoesNotExist"}
             }
         });
-        let result = resolve_refs(&mut schema, 32, "test.module");
+        let result = resolve_refs(&schema, 32, "test.module");
         assert!(
             matches!(result, Err(RefResolverError::Unresolvable { .. })),
             "expected Unresolvable, got: {result:?}"
@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_circular_returns_error() {
         // A circular $ref chain must yield RefResolverError::Circular or MaxDepthExceeded.
-        let mut schema = json!({
+        let schema = json!({
             "$defs": {
                 "A": {"$ref": "#/$defs/B"},
                 "B": {"$ref": "#/$defs/A"}
@@ -362,7 +362,7 @@ mod tests {
                 "x": {"$ref": "#/$defs/A"}
             }
         });
-        let result = resolve_refs(&mut schema, 32, "test.module");
+        let result = resolve_refs(&schema, 32, "test.module");
         assert!(
             matches!(
                 result,
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_max_depth_exceeded() {
         // max_depth=0 means the first $ref hit immediately fails.
-        let mut schema = json!({
+        let schema = json!({
             "$defs": {
                 "Inner": {"type": "string"}
             },
@@ -383,7 +383,7 @@ mod tests {
                 "x": {"$ref": "#/$defs/Inner"}
             }
         });
-        let result = resolve_refs(&mut schema, 0, "test.module");
+        let result = resolve_refs(&schema, 0, "test.module");
         assert!(
             matches!(result, Err(RefResolverError::MaxDepthExceeded { .. })),
             "expected MaxDepthExceeded, got: {result:?}"
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_nested_defs() {
         // $refs inside nested object properties must all be resolved.
-        let mut schema = json!({
+        let schema = json!({
             "$defs": {
                 "City": {"type": "string"}
             },
@@ -406,7 +406,7 @@ mod tests {
                 }
             }
         });
-        let result = resolve_refs(&mut schema, 32, "test.module");
+        let result = resolve_refs(&schema, 32, "test.module");
         assert!(result.is_ok());
         let resolved = result.unwrap();
         assert_eq!(
@@ -418,12 +418,11 @@ mod tests {
     #[test]
     fn test_resolve_refs_does_not_mutate_input() {
         // The original schema must not be modified.
-        let original = json!({
+        let schema = json!({
             "$defs": {"T": {"type": "integer"}},
             "properties": {"x": {"$ref": "#/$defs/T"}}
         });
-        let mut schema = original.clone();
-        let _ = resolve_refs(&mut schema, 32, "test.module");
+        let _ = resolve_refs(&schema, 32, "test.module");
         // Input schema still has $ref (not mutated).
         assert_eq!(schema["properties"]["x"]["$ref"], "#/$defs/T");
     }
@@ -431,7 +430,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_sibling_refs_same_def() {
         // Two different properties referencing the same $def must both resolve correctly.
-        let mut schema = json!({
+        let schema = json!({
             "$defs": {
                 "Str": {"type": "string"}
             },
@@ -440,7 +439,7 @@ mod tests {
                 "b": {"$ref": "#/$defs/Str"}
             }
         });
-        let result = resolve_refs(&mut schema, 32, "test.module");
+        let result = resolve_refs(&schema, 32, "test.module");
         assert!(result.is_ok(), "sibling refs failed: {result:?}");
         let resolved = result.unwrap();
         assert_eq!(resolved["properties"]["a"]["type"], "string");
@@ -451,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_allof_merges_properties() {
-        let mut schema = json!({
+        let schema = json!({
             "allOf": [
                 {
                     "properties": {"a": {"type": "string"}},
@@ -463,7 +462,7 @@ mod tests {
                 }
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         assert_eq!(result["properties"]["a"]["type"], "string");
         assert_eq!(result["properties"]["b"]["type"], "integer");
         let required: Vec<&str> = result["required"]
@@ -478,39 +477,39 @@ mod tests {
 
     #[test]
     fn test_allof_later_schema_wins_on_conflict() {
-        let mut schema = json!({
+        let schema = json!({
             "allOf": [
                 {"properties": {"x": {"type": "string"}}},
                 {"properties": {"x": {"type": "integer"}}}
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         // Later sub-schema wins: x must be integer.
         assert_eq!(result["properties"]["x"]["type"], "integer");
     }
 
     #[test]
     fn test_allof_copies_non_composition_keys() {
-        let mut schema = json!({
+        let schema = json!({
             "description": "My type",
             "allOf": [
                 {"properties": {"a": {"type": "string"}}}
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         // "description" must survive in the merged result.
         assert_eq!(result["description"], "My type");
     }
 
     #[test]
     fn test_anyof_unions_properties() {
-        let mut schema = json!({
+        let schema = json!({
             "anyOf": [
                 {"properties": {"a": {"type": "string"}}, "required": ["a"]},
                 {"properties": {"b": {"type": "integer"}}, "required": ["b"]}
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         // Both properties must appear.
         assert!(result["properties"].get("a").is_some());
         assert!(result["properties"].get("b").is_some());
@@ -518,13 +517,13 @@ mod tests {
 
     #[test]
     fn test_anyof_required_is_intersection() {
-        let mut schema = json!({
+        let schema = json!({
             "anyOf": [
                 {"properties": {"a": {"type": "string"}, "b": {"type": "string"}}, "required": ["a", "b"]},
                 {"properties": {"a": {"type": "string"}, "c": {"type": "string"}}, "required": ["a", "c"]}
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         let required: Vec<&str> = result["required"]
             .as_array()
             .unwrap()
@@ -539,26 +538,26 @@ mod tests {
 
     #[test]
     fn test_anyof_empty_required_when_no_overlap() {
-        let mut schema = json!({
+        let schema = json!({
             "anyOf": [
                 {"properties": {"a": {"type": "string"}}, "required": ["a"]},
                 {"properties": {"b": {"type": "integer"}}, "required": ["b"]}
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         let required = result["required"].as_array().unwrap();
         assert!(required.is_empty(), "no fields are required in both branches");
     }
 
     #[test]
     fn test_oneof_behaves_like_anyof() {
-        let mut schema = json!({
+        let schema = json!({
             "oneOf": [
                 {"properties": {"x": {"type": "string"}}, "required": ["x"]},
                 {"properties": {"y": {"type": "integer"}}, "required": ["y"]}
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         assert!(result["properties"].get("x").is_some());
         assert!(result["properties"].get("y").is_some());
         assert!(result["required"].as_array().unwrap().is_empty());
@@ -567,7 +566,7 @@ mod tests {
     #[test]
     fn test_allof_with_nested_ref() {
         // allOf sub-schema that itself contains a $ref.
-        let mut schema = json!({
+        let schema = json!({
             "$defs": {
                 "Base": {"properties": {"id": {"type": "integer"}}, "required": ["id"]}
             },
@@ -576,7 +575,7 @@ mod tests {
                 {"properties": {"name": {"type": "string"}}}
             ]
         });
-        let result = resolve_refs(&mut schema, 32, "mod").unwrap();
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
         assert_eq!(result["properties"]["id"]["type"], "integer");
         assert_eq!(result["properties"]["name"]["type"], "string");
         let required: Vec<&str> = result["required"]

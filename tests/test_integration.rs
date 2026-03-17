@@ -43,7 +43,7 @@ fn test_config_resolver_feeds_extensions_dir() {
 #[test]
 fn test_resolve_refs_then_schema_to_clap_args() {
     // A schema with $refs must be resolvable before arg generation.
-    let mut schema = json!({
+    let schema = json!({
         "$defs": {
             "MyString": {"type": "string"}
         },
@@ -53,7 +53,7 @@ fn test_resolve_refs_then_schema_to_clap_args() {
         },
         "required": ["name"]
     });
-    let resolved = resolve_refs(&mut schema, 10, "test.module");
+    let resolved = resolve_refs(&schema, 10, "test.module");
     assert!(resolved.is_ok(), "resolve_refs should succeed");
     let resolved_schema = resolved.unwrap();
 

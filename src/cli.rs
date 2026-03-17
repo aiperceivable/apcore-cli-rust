@@ -75,6 +75,51 @@ pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
 }
 
 // ---------------------------------------------------------------------------
+// exec_command — clap subcommand builder for `exec`
+// ---------------------------------------------------------------------------
+
+/// Build the `exec` clap subcommand.
+///
+/// `exec` runs an apcore module by its fully-qualified module ID.
+pub fn exec_command() -> clap::Command {
+    use clap::{Arg, ArgAction, Command};
+
+    Command::new("exec")
+        .about("Execute an apcore module")
+        .arg(
+            Arg::new("module_id")
+                .required(true)
+                .value_name("MODULE_ID")
+                .help("Fully-qualified module ID to execute"),
+        )
+        .arg(
+            Arg::new("input")
+                .long("input")
+                .value_name("SOURCE")
+                .help("Input source (file path or '-' for stdin)"),
+        )
+        .arg(
+            Arg::new("yes")
+                .long("yes")
+                .short('y')
+                .action(ArgAction::SetTrue)
+                .help("Auto-approve all confirmation prompts"),
+        )
+        .arg(
+            Arg::new("large-input")
+                .long("large-input")
+                .action(ArgAction::SetTrue)
+                .help("Allow larger-than-default input payloads"),
+        )
+        .arg(
+            Arg::new("format")
+                .long("format")
+                .value_parser(["table", "json"])
+                .help("Output format (table or json)"),
+        )
+}
+
+// ---------------------------------------------------------------------------
 // LazyModuleGroup — lazy command builder
 // ---------------------------------------------------------------------------
 
@@ -204,7 +249,7 @@ pub fn build_module_command(
 
     // TODO: resolve_refs is a stub — returns schema as-is for now.
     // When FE-08 is implemented, replace with:
-    //   let resolved = crate::ref_resolver::resolve_refs(&mut schema, 32, module_id)?;
+    //   let resolved = crate::ref_resolver::resolve_refs(&schema, 32, module_id)?;
     let resolved_schema = module_def.input_schema.clone();
 
     // Build clap args from JSON Schema properties.

@@ -8,13 +8,13 @@ use serde_json::json;
 
 #[test]
 fn test_resolve_refs_no_refs_returns_unchanged() {
-    let mut schema = json!({
+    let schema = json!({
         "type": "object",
         "properties": {
             "name": {"type": "string"}
         }
     });
-    let resolved = resolve_refs(&mut schema, 10, "test.module");
+    let resolved = resolve_refs(&schema, 10, "test.module");
     assert!(resolved.is_ok(), "schema with no $refs must resolve successfully");
     let resolved = resolved.unwrap();
     assert_eq!(
@@ -26,7 +26,7 @@ fn test_resolve_refs_no_refs_returns_unchanged() {
 
 #[test]
 fn test_resolve_refs_simple_inline() {
-    let mut schema = json!({
+    let schema = json!({
         "$defs": {
             "MyString": {"type": "string", "description": "A name"}
         },
@@ -35,7 +35,7 @@ fn test_resolve_refs_simple_inline() {
             "name": {"$ref": "#/$defs/MyString"}
         }
     });
-    let resolved = resolve_refs(&mut schema, 10, "test.module");
+    let resolved = resolve_refs(&schema, 10, "test.module");
     assert!(resolved.is_ok(), "simple $ref must resolve successfully");
     let resolved = resolved.unwrap();
     assert_eq!(
@@ -47,20 +47,20 @@ fn test_resolve_refs_simple_inline() {
 
 #[test]
 fn test_resolve_refs_unresolvable_returns_error() {
-    let mut schema = json!({
+    let schema = json!({
         "type": "object",
         "properties": {
             "x": {"$ref": "#/$defs/DoesNotExist"}
         }
     });
-    let result = resolve_refs(&mut schema, 10, "test.module");
+    let result = resolve_refs(&schema, 10, "test.module");
     assert!(matches!(result, Err(RefResolverError::Unresolvable { .. })));
 }
 
 #[test]
 fn test_resolve_refs_circular_returns_error() {
     // A → B → A must produce a Circular or MaxDepthExceeded error.
-    let mut schema = json!({
+    let schema = json!({
         "$defs": {
             "A": {"$ref": "#/$defs/B"},
             "B": {"$ref": "#/$defs/A"}
@@ -70,7 +70,7 @@ fn test_resolve_refs_circular_returns_error() {
             "x": {"$ref": "#/$defs/A"}
         }
     });
-    let result = resolve_refs(&mut schema, 20, "test.module");
+    let result = resolve_refs(&schema, 20, "test.module");
     assert!(
         matches!(
             result,
@@ -83,7 +83,7 @@ fn test_resolve_refs_circular_returns_error() {
 #[test]
 fn test_resolve_refs_max_depth_exceeded() {
     // max_depth=1 on a 2-level schema must return MaxDepthExceeded.
-    let mut schema = json!({
+    let schema = json!({
         "$defs": {
             "Inner": {"type": "string"}
         },
@@ -92,7 +92,7 @@ fn test_resolve_refs_max_depth_exceeded() {
             "x": {"$ref": "#/$defs/Inner"}
         }
     });
-    let result = resolve_refs(&mut schema, 0, "test.module");
+    let result = resolve_refs(&schema, 0, "test.module");
     assert!(matches!(
         result,
         Err(RefResolverError::MaxDepthExceeded { .. })
@@ -102,7 +102,7 @@ fn test_resolve_refs_max_depth_exceeded() {
 #[test]
 fn test_resolve_refs_nested_properties() {
     // $refs inside nested properties must all be resolved.
-    let mut schema = json!({
+    let schema = json!({
         "$defs": {
             "Coord": {"type": "number", "description": "A coordinate"}
         },
@@ -117,7 +117,7 @@ fn test_resolve_refs_nested_properties() {
             }
         }
     });
-    let resolved = resolve_refs(&mut schema, 10, "test.module");
+    let resolved = resolve_refs(&schema, 10, "test.module");
     assert!(resolved.is_ok(), "nested $refs must resolve successfully");
     let resolved = resolved.unwrap();
     assert_eq!(
