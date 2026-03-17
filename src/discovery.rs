@@ -61,18 +61,8 @@ pub fn validate_tag(tag: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn validate_module_id_discovery(id: &str) -> bool {
-    if id.is_empty() || id.len() > 128 {
-        return false;
-    }
-    if id.starts_with('.') || id.ends_with('.') || id.contains("..") {
-        return false;
-    }
-    let mut chars = id.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_lowercase() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.')
+    // Delegate to the canonical validator in cli module.
+    crate::cli::validate_module_id(id).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +201,34 @@ fn describe_command() -> Command {
                 .value_name("FORMAT")
                 .help("Output format. Default: table (TTY) or json (non-TTY)."),
         )
+}
+
+// ---------------------------------------------------------------------------
+// ApCoreRegistryProvider — wraps apcore::Registry for discovery commands
+// ---------------------------------------------------------------------------
+
+/// Adapter that implements `RegistryProvider` for the real `apcore::Registry`.
+pub struct ApCoreRegistryProvider {
+    registry: apcore::Registry,
+}
+
+impl ApCoreRegistryProvider {
+    /// Create a new adapter from a real apcore::Registry.
+    pub fn new(registry: apcore::Registry) -> Self {
+        Self { registry }
+    }
+}
+
+impl RegistryProvider for ApCoreRegistryProvider {
+    fn list(&self) -> Vec<String> {
+        self.registry.list(None, None).iter().map(|s| s.to_string()).collect()
+    }
+
+    fn get_definition(&self, id: &str) -> Option<Value> {
+        self.registry
+            .get_definition(id)
+            .and_then(|d| serde_json::to_value(d).ok())
+    }
 }
 
 // ---------------------------------------------------------------------------

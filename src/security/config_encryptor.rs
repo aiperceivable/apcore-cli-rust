@@ -78,8 +78,9 @@ impl ConfigEncryptor {
         Self { _force_aes: true }
     }
 
-    /// Public wrapper for `_keyring_available()` for use in integration tests.
-    pub fn _keyring_available_pub(&self) -> bool {
+    /// Wrapper for `_keyring_available()` for use in integration tests.
+    #[allow(dead_code)]
+    pub(crate) fn keyring_available(&self) -> bool {
         self._keyring_available()
     }
 
@@ -170,6 +171,12 @@ impl ConfigEncryptor {
     /// Material: `"<hostname>:<username>"`.
     /// Salt:     `b"apcore-cli-config-v1"`.
     /// Rounds:   100 000.
+    ///
+    /// **Design note:** The key material is intentionally low-entropy
+    /// (hostname + username with a static salt) to match the Python reference
+    /// implementation. This provides protection against casual file access but
+    /// not against a targeted attacker who knows the hostname and username.
+    /// For stronger protection, use the OS keyring path (`keyring:` prefix).
     fn _derive_key(&self) -> Result<[u8; 32], ConfigDecryptionError> {
         let hostname = gethostname()
             .into_string()

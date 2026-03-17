@@ -20,7 +20,7 @@ fn test_config_resolver_with_cli_flags() {
     let mut flags = HashMap::new();
     flags.insert("--extensions-dir".to_string(), Some("/cli".to_string()));
     let resolver = ConfigResolver::new(Some(flags.clone()), None);
-    assert_eq!(resolver._cli_flags, flags);
+    assert_eq!(resolver.cli_flags, flags);
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn test_load_config_file_valid_yaml() {
     .unwrap(); // safe: tempdir is writable
 
     let resolver = ConfigResolver::new(None, Some(config_path));
-    let file_map = resolver._config_file.as_ref().expect("config file must be loaded");
+    let file_map = resolver.config_file.as_ref().expect("config file must be loaded");
     assert_eq!(file_map.get("extensions.root"), Some(&"/custom/path".to_string()));
     assert_eq!(file_map.get("logging.level"), Some(&"DEBUG".to_string()));
 }
@@ -190,14 +190,14 @@ fn test_load_config_file_valid_yaml() {
 #[test]
 fn test_load_config_file_not_found() {
     let resolver = ConfigResolver::new(None, Some(PathBuf::from("/nonexistent/apcore.yaml")));
-    assert!(resolver._config_file.is_none());
+    assert!(resolver.config_file.is_none());
 }
 
 // T-CFG-05: Missing config file — no panic, _config_file is None.
 #[test]
 fn test_config_file_not_found_silent() {
     let resolver = ConfigResolver::new(None, Some(PathBuf::from("/this/does/not/exist.yaml")));
-    assert!(resolver._config_file.is_none());
+    assert!(resolver.config_file.is_none());
     // Must still resolve to default without panicking; no env var lookup.
     let result = resolver.resolve("extensions.root", None, None);
     assert_eq!(result, Some("./extensions".to_string()));
@@ -213,7 +213,7 @@ fn test_config_file_malformed_yaml() {
 
     let resolver = ConfigResolver::new(None, Some(config_path));
     assert!(
-        resolver._config_file.is_none(),
+        resolver.config_file.is_none(),
         "malformed YAML must result in None config_file"
     );
 }
@@ -227,7 +227,7 @@ fn test_config_file_root_not_dict() {
 
     let resolver = ConfigResolver::new(None, Some(config_path));
     assert!(
-        resolver._config_file.is_none(),
+        resolver.config_file.is_none(),
         "list root must result in None config_file"
     );
 }

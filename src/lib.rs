@@ -37,8 +37,8 @@ pub use cli::{
 };
 pub use config::ConfigResolver;
 pub use discovery::{
-    cmd_describe, cmd_list, mock_module, register_discovery_commands, DiscoveryError,
-    MockRegistry, RegistryProvider,
+    cmd_describe, cmd_list, mock_module, register_discovery_commands, ApCoreRegistryProvider,
+    DiscoveryError, MockRegistry, RegistryProvider,
 };
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
 pub use ref_resolver::resolve_refs;

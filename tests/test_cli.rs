@@ -131,8 +131,37 @@ fn test_collect_input_no_stdin_flag_returns_cli_kwargs() {
 
 #[test]
 fn test_build_module_command_creates_command() {
-    // build_module_command must return a Command named after the module.
-    // TODO: construct a mock module descriptor, call build_module_command,
-    //       verify name and about.
-    assert!(false, "not implemented");
+    use apcore_cli::cli::{build_module_command, ModuleExecutor};
+    use std::sync::Arc;
+
+    struct NoOpExecutor;
+    impl ModuleExecutor for NoOpExecutor {}
+
+    let module_def = apcore::registry::registry::ModuleDescriptor {
+        name: "math.add".to_string(),
+        annotations: apcore::module::ModuleAnnotations::default(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "integer"}
+            }
+        }),
+        output_schema: json!({}),
+        enabled: true,
+        tags: vec![],
+        dependencies: vec![],
+    };
+    let executor: Arc<dyn ModuleExecutor> = Arc::new(NoOpExecutor);
+    let cmd = build_module_command(&module_def, executor).expect("should build command");
+    assert_eq!(cmd.get_name(), "math.add");
+    // Verify built-in flags are present.
+    let arg_names: Vec<&str> = cmd.get_arguments().map(|a| a.get_id().as_str()).collect();
+    assert!(arg_names.contains(&"input"), "missing --input flag");
+    assert!(arg_names.contains(&"yes"), "missing --yes flag");
+    assert!(arg_names.contains(&"format"), "missing --format flag");
+    assert!(arg_names.contains(&"sandbox"), "missing --sandbox flag");
+    // Verify schema-derived args are present.
+    assert!(arg_names.contains(&"a"), "missing schema arg --a");
+    assert!(arg_names.contains(&"b"), "missing schema arg --b");
 }

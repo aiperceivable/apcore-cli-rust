@@ -12,16 +12,32 @@ use serde_json::json;
 
 #[test]
 fn test_schema_to_args_then_format_result() {
-    // Parse schema into args, then format the execution result.
-    // TODO: build schema, call schema_to_clap_args, run exec, format_exec_result.
-    assert!(false, "not implemented");
+    // Parse schema into args, then format an execution result.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "User name"}
+        }
+    });
+    let schema_args = schema_to_clap_args(&schema).expect("schema_to_clap_args should succeed");
+    assert!(!schema_args.args.is_empty(), "should produce at least one arg");
+
+    // Simulate an execution result and format it.
+    let result = json!({"greeting": "Hello, Alice!"});
+    let output = format_exec_result(&result, "json");
+    assert!(output.contains("greeting"), "JSON output should contain result key");
 }
 
 #[test]
 fn test_config_resolver_feeds_extensions_dir() {
-    // ConfigResolver must correctly feed the extensions dir to the CLI.
-    // TODO: create resolver with known config, verify extensions.root resolves.
-    assert!(false, "not implemented");
+    // ConfigResolver must correctly resolve the extensions dir from defaults.
+    let resolver = ConfigResolver::new(None, None);
+    let ext_root = resolver.resolve("extensions.root", None, None);
+    assert_eq!(
+        ext_root,
+        Some("./extensions".to_string()),
+        "default extensions.root must be ./extensions"
+    );
 }
 
 #[test]
@@ -38,14 +54,33 @@ fn test_resolve_refs_then_schema_to_clap_args() {
         "required": ["name"]
     });
     let resolved = resolve_refs(&mut schema, 10, "test.module");
-    // TODO: assert resolved is Ok, then call schema_to_clap_args on result.
-    assert!(false, "not implemented");
+    assert!(resolved.is_ok(), "resolve_refs should succeed");
+    let resolved_schema = resolved.unwrap();
+
+    // The resolved schema should have inlined the $ref.
+    let name_prop = resolved_schema
+        .get("properties")
+        .and_then(|p| p.get("name"));
+    assert!(name_prop.is_some(), "name property should exist after resolution");
+    assert_eq!(
+        name_prop.unwrap().get("type").and_then(|t| t.as_str()),
+        Some("string"),
+        "$ref should be inlined to type: string"
+    );
+
+    // Now generate clap args from the resolved schema.
+    let schema_args = schema_to_clap_args(&resolved_schema)
+        .expect("schema_to_clap_args should succeed on resolved schema");
+    let arg_names: Vec<&str> = schema_args.args.iter()
+        .filter_map(|a| a.get_long())
+        .collect();
+    assert!(arg_names.contains(&"name"), "should have --name arg from schema");
 }
 
 #[test]
 fn test_format_module_list_empty() {
     // An empty module list must not panic and must return a valid string.
     let result = format_module_list(&[], "json", &[]);
-    // TODO: assert result is valid JSON array "[]".
-    assert!(false, "not implemented");
+    // JSON format of empty list should be "[]".
+    assert_eq!(result.trim(), "[]", "empty module list in JSON should be []");
 }

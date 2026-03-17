@@ -58,8 +58,13 @@ impl AuditLogger {
 
     /// Hash `input_data` with a fresh 16-byte random salt.
     ///
-    /// Digest = SHA-256(`HASH_SALT` `:` stable_json(`input_data`)).
+    /// Digest = SHA-256(`random_salt` `:` `HASH_SALT` `:` stable_json(`input_data`)).
     /// Returns a lowercase hex string (64 chars).
+    ///
+    /// **Design note:** A random salt is used per call to prevent correlation
+    /// of audit entries by input content. This is a privacy design choice
+    /// matching the Python reference implementation — the hash proves an input
+    /// was logged but cannot be used to find duplicate inputs across entries.
     fn _hash_input(input_data: &Value) -> String {
         use aes_gcm::aead::rand_core::RngCore;
         use aes_gcm::aead::OsRng;

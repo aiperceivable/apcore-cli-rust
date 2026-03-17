@@ -323,14 +323,6 @@ pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserErr
     })
 }
 
-/// Stub version of `schema_to_clap_args` used by `build_module_command` until
-/// full implementation is wired in.
-///
-/// TODO(FE-09): replace call sites with `schema_to_clap_args` once implemented.
-pub fn schema_to_clap_args_or_empty(_schema: &Value) -> Vec<clap::Arg> {
-    vec![]
-}
-
 // ---------------------------------------------------------------------------
 // reconvert_enum_values
 // ---------------------------------------------------------------------------

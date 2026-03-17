@@ -134,14 +134,10 @@ fn validate_extensions_dir(ext_dir: &str) {
 
 /// Build the root `clap::Command` tree.
 ///
-/// * `extensions_dir` — path to the extensions directory, validated here.
-///   Exits 47 if provided but does not exist.
-/// * `prog_name` — override the program name shown in help text.
-///
-/// The command tree contains built-in subcommands (list, describe, completion,
-/// man). Dynamic module dispatch is handled in `main` via
-/// `allow_external_subcommands`.
-pub fn create_cli(extensions_dir: Option<String>, prog_name: Option<String>) -> clap::Command {
+/// When `validate` is true, exits 47 if `extensions_dir` does not exist.
+/// When `validate` is false (used for completion/man page generation),
+/// skips the directory check.
+fn build_cli_command(extensions_dir: Option<String>, prog_name: Option<String>, validate: bool) -> clap::Command {
     let name = resolve_prog_name(prog_name);
 
     // Resolve extensions_dir: flag > env var > default.
@@ -155,8 +151,10 @@ pub fn create_cli(extensions_dir: Option<String>, prog_name: Option<String>) -> 
         }
     };
 
-    // Validate extensions directory.
-    validate_extensions_dir(&ext_dir);
+    // Validate extensions directory (only when running real commands).
+    if validate {
+        validate_extensions_dir(&ext_dir);
+    }
 
     // Build root command.
     let mut cmd = clap::Command::new(name.clone())
@@ -181,14 +179,23 @@ pub fn create_cli(extensions_dir: Option<String>, prog_name: Option<String>) -> 
         );
 
     // Register built-in subcommands from discovery and shell modules.
-    // The registry is not used by the clap command builders; it is consumed by
-    // cmd_list / cmd_describe at dispatch time (wired in the next task).
-    let empty_registry: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
+    // The registry is only needed at dispatch time (cmd_list / cmd_describe), not
+    // during clap command registration, so a placeholder is used here.
+    let placeholder_registry: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
         std::sync::Arc::new(apcore_cli::discovery::MockRegistry::new(vec![]));
-    cmd = apcore_cli::discovery::register_discovery_commands(cmd, empty_registry);
+    cmd = apcore_cli::discovery::register_discovery_commands(cmd, placeholder_registry);
     cmd = apcore_cli::shell::register_shell_commands(cmd, &name);
 
     cmd
+}
+
+/// Build the root `clap::Command` tree with directory validation.
+///
+/// * `extensions_dir` — path to the extensions directory, validated here.
+///   Exits 47 if provided but does not exist.
+/// * `prog_name` — override the program name shown in help text.
+pub fn create_cli(extensions_dir: Option<String>, prog_name: Option<String>) -> clap::Command {
+    build_cli_command(extensions_dir, prog_name, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +217,7 @@ async fn main() {
 
     // Intercept --version before validating the extensions directory.
     // Clap exits 0 on --version; we just need to print and exit here.
-    if raw_args[1..].iter().any(|a| a == "--version" || a == "-V") {
+    if raw_args.len() > 1 && raw_args[1..].iter().any(|a| a == "--version" || a == "-V") {
         let name = resolve_prog_name(None);
         println!("{}, version {}", name, env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
@@ -235,28 +242,75 @@ async fn main() {
         }
     }
 
+    // Build a real registry from the extensions directory for dispatch.
+    let registry = apcore::Registry::new();
+    let registry_provider: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
+        std::sync::Arc::new(apcore_cli::discovery::ApCoreRegistryProvider::new(registry));
+
+    let prog_name = resolve_prog_name(None);
+
     // Dispatch subcommands.
     match matches.subcommand() {
-        Some(("list", _sub_m)) => {
-            // TODO(FE-03): implement list command handler.
-            println!("[]");
+        Some(("list", sub_m)) => {
+            let tags: Vec<&str> = sub_m
+                .get_many::<String>("tag")
+                .map(|vals| vals.map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+            let format = sub_m.get_one::<String>("format").map(|s| s.as_str());
+            match apcore_cli::discovery::cmd_list(registry_provider.as_ref(), &tags, format) {
+                Ok(output) => {
+                    println!("{output}");
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some(("describe", sub_m)) => {
+            let module_id = sub_m.get_one::<String>("module_id").expect("module_id is required");
+            let format = sub_m.get_one::<String>("format").map(|s| s.as_str());
+            match apcore_cli::discovery::cmd_describe(registry_provider.as_ref(), module_id, format) {
+                Ok(output) => {
+                    println!("{output}");
+                    std::process::exit(0);
+                }
+                Err(apcore_cli::discovery::DiscoveryError::ModuleNotFound(_)) => {
+                    eprintln!("Error: {}", apcore_cli::discovery::DiscoveryError::ModuleNotFound(module_id.clone()));
+                    std::process::exit(apcore_cli::EXIT_MODULE_NOT_FOUND);
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some(("completion", sub_m)) => {
+            let shell = *sub_m.get_one::<clap_complete::Shell>("shell").expect("shell is required");
+            let mut cmd = build_cli_command(None, Some(prog_name.clone()), false);
+            let output = apcore_cli::shell::cmd_completion(shell, &prog_name, &mut cmd);
+            print!("{output}");
             std::process::exit(0);
         }
-        Some(("describe", _sub_m)) => {
-            // TODO(FE-03): implement describe command handler.
-            println!("{{}}");
-            std::process::exit(0);
-        }
-        Some(("completion", _sub_m)) => {
-            // TODO(FE-10): implement completion command handler.
-            std::process::exit(0);
-        }
-        Some(("man", _sub_m)) => {
-            // TODO(FE-10): implement man command handler.
-            std::process::exit(0);
+        Some(("man", sub_m)) => {
+            let command_name = sub_m
+                .get_one::<String>("command")
+                .expect("command is required");
+            let cmd = build_cli_command(None, Some(prog_name.clone()), false);
+            match apcore_cli::shell::cmd_man(command_name, &cmd, &prog_name, env!("CARGO_PKG_VERSION")) {
+                Ok(output) => {
+                    println!("{output}");
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(2);
+                }
+            }
         }
         Some((_external, _sub_m)) => {
-            // Dynamic module dispatch for unrecognised subcommands — TODO(FE-04).
+            // Dynamic module dispatch for unrecognised subcommands.
             eprintln!("Error: Unknown subcommand. Use --help for usage.");
             std::process::exit(apcore_cli::EXIT_MODULE_NOT_FOUND);
         }

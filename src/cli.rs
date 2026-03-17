@@ -84,8 +84,13 @@ static AUDIT_LOGGER: Mutex<Option<AuditLogger>> = Mutex::new(None);
 /// Pass `None` to disable auditing. Typically called once during CLI
 /// initialisation, before any commands are dispatched.
 pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
-    if let Ok(mut guard) = AUDIT_LOGGER.lock() {
-        *guard = audit_logger;
+    match AUDIT_LOGGER.lock() {
+        Ok(mut guard) => {
+            *guard = audit_logger;
+        }
+        Err(_poisoned) => {
+            tracing::warn!("AUDIT_LOGGER mutex poisoned — audit logger not updated");
+        }
     }
 }
 
@@ -228,20 +233,16 @@ pub fn build_module_command(
 
     // Build clap args from JSON Schema properties.
     let schema_args = crate::schema_parser::schema_to_clap_args(&resolved_schema)
-        .unwrap_or_else(|e| {
-            eprintln!("Error: {e}");
-            std::process::exit(48);
-        });
+        .map_err(|e| CliError::InvalidModuleId(format!("schema parse error: {e}")))?;
 
     // Check for schema property names that collide with built-in flags.
     for arg in &schema_args.args {
         if let Some(long) = arg.get_long() {
             if RESERVED_FLAG_NAMES.contains(&long) {
-                eprintln!(
-                    "Error: module '{module_id}' schema property '{long}' conflicts \
-                     with a reserved CLI option name. Rename the property."
-                );
-                std::process::exit(2);
+                return Err(CliError::ReservedModuleId(format!(
+                    "module '{module_id}' schema property '{long}' conflicts \
+                     with a reserved CLI option name"
+                )));
             }
         }
     }
@@ -653,19 +654,11 @@ pub async fn dispatch_module(
     }
 
     // 7. Approval gate (exit 46 on denial/timeout).
-    // auto_approve=true bypasses the prompt. check_approval is still a stub
-    // that panics with todo!() unless auto_approve=true.
-    if auto_approve {
-        // Bypass approval — treat as approved.
-    } else {
-        // When not auto-approving we still call through so the wiring is in
-        // place; the stub will panic for interactive use (expected for now).
-        // Guard: only call if we know it won't todo!() — i.e., never in dispatch
-        // until FE-05 is implemented. Fall through silently for now.
-        // TODO(FE-05): replace with `check_approval(module_id, false)?`.
-        let _ = auto_approve;
+    let module_json = serde_json::to_value(&module_def).unwrap_or_default();
+    if let Err(e) = crate::approval::check_approval(&module_json, auto_approve).await {
+        eprintln!("Error: {e}");
+        std::process::exit(EXIT_APPROVAL_DENIED);
     }
-    let _ = EXIT_APPROVAL_DENIED; // referenced for completeness
 
     // 8. Build merged input as serde_json::Value.
     let input_value = serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
@@ -715,10 +708,9 @@ pub async fn dispatch_module(
                     logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
                 }
             }
-            // 11. Format and output — stub: print JSON directly.
-            // output::format_exec_result is a todo!() stub; use inline JSON for now.
-            let _ = format_flag;
-            println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+            // 11. Format and output.
+            let fmt = crate::output::resolve_format(format_flag.as_deref());
+            println!("{}", crate::output::format_exec_result(&output, fmt));
             std::process::exit(EXIT_SUCCESS);
         }
         Err((exit_code, msg)) => {

@@ -18,11 +18,11 @@ use tracing::warn;
 /// 4. Built-in defaults — lowest priority
 pub struct ConfigResolver {
     /// CLI flags map (flag name → value or None if not provided).
-    pub _cli_flags: HashMap<String, Option<String>>,
+    pub cli_flags: HashMap<String, Option<String>>,
 
     /// Flattened key → value map loaded from the config file.
     /// `None` if the file was not found or could not be parsed.
-    pub _config_file: Option<HashMap<String, String>>,
+    pub config_file: Option<HashMap<String, String>>,
 
     /// Path to the config file that was loaded (or attempted).
     #[allow(dead_code)]
@@ -55,8 +55,8 @@ impl ConfigResolver {
         let config_file = config_path.as_ref().and_then(Self::load_config_file);
 
         Self {
-            _cli_flags: cli_flags.unwrap_or_default(),
-            _config_file: config_file,
+            cli_flags: cli_flags.unwrap_or_default(),
+            config_file: config_file,
             config_path,
             defaults,
         }
@@ -78,7 +78,7 @@ impl ConfigResolver {
     ) -> Option<String> {
         // Tier 1: CLI flag — present and value is Some(non-None string).
         if let Some(flag) = cli_flag {
-            if let Some(Some(value)) = self._cli_flags.get(flag) {
+            if let Some(Some(value)) = self.cli_flags.get(flag) {
                 return Some(value.clone());
             }
         }
@@ -93,7 +93,7 @@ impl ConfigResolver {
         }
 
         // Tier 3: Config file — key must be present in the flattened map.
-        if let Some(ref file_map) = self._config_file {
+        if let Some(ref file_map) = self.config_file {
             if let Some(value) = file_map.get(key) {
                 return Some(value.clone());
             }
