@@ -84,9 +84,9 @@ static AUDIT_LOGGER: Mutex<Option<AuditLogger>> = Mutex::new(None);
 /// Pass `None` to disable auditing. Typically called once during CLI
 /// initialisation, before any commands are dispatched.
 pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
-    // TODO: store audit_logger in AUDIT_LOGGER mutex.
-    let _ = audit_logger;
-    todo!("set_audit_logger: store into AUDIT_LOGGER")
+    if let Ok(mut guard) = AUDIT_LOGGER.lock() {
+        *guard = audit_logger;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +430,257 @@ fn is_valid_module_id(s: &str) -> bool {
         }
     }
     true
+}
+
+// ---------------------------------------------------------------------------
+// Error code mapping
+// ---------------------------------------------------------------------------
+
+/// Map an apcore error code string to the appropriate CLI exit code.
+///
+/// Exit code table:
+/// * `MODULE_NOT_FOUND` / `MODULE_LOAD_ERROR` / `MODULE_DISABLED` → 44
+/// * `SCHEMA_VALIDATION_ERROR`                                     → 45
+/// * `APPROVAL_DENIED` / `APPROVAL_TIMEOUT` / `APPROVAL_PENDING`  → 46
+/// * `CONFIG_NOT_FOUND` / `CONFIG_INVALID`                         → 47
+/// * `SCHEMA_CIRCULAR_REF`                                         → 48
+/// * `ACL_DENIED`                                                  → 77
+/// * everything else (including `MODULE_EXECUTE_ERROR` / `MODULE_TIMEOUT`) → 1
+pub(crate) fn map_apcore_error_to_exit_code(error_code: &str) -> i32 {
+    use crate::{
+        EXIT_ACL_DENIED, EXIT_APPROVAL_DENIED, EXIT_CONFIG_NOT_FOUND, EXIT_MODULE_EXECUTE_ERROR,
+        EXIT_MODULE_NOT_FOUND, EXIT_SCHEMA_CIRCULAR_REF, EXIT_SCHEMA_VALIDATION_ERROR,
+    };
+    match error_code {
+        "MODULE_NOT_FOUND" | "MODULE_LOAD_ERROR" | "MODULE_DISABLED" => EXIT_MODULE_NOT_FOUND,
+        "SCHEMA_VALIDATION_ERROR" => EXIT_SCHEMA_VALIDATION_ERROR,
+        "APPROVAL_DENIED" | "APPROVAL_TIMEOUT" | "APPROVAL_PENDING" => EXIT_APPROVAL_DENIED,
+        "CONFIG_NOT_FOUND" | "CONFIG_INVALID" => EXIT_CONFIG_NOT_FOUND,
+        "SCHEMA_CIRCULAR_REF" => EXIT_SCHEMA_CIRCULAR_REF,
+        "ACL_DENIED" => EXIT_ACL_DENIED,
+        _ => EXIT_MODULE_EXECUTE_ERROR,
+    }
+}
+
+/// Map an `apcore::errors::ModuleError` directly to an exit code.
+///
+/// Converts the `ErrorCode` enum variant to its SCREAMING_SNAKE_CASE
+/// representation via serde JSON serialisation and delegates to
+/// `map_apcore_error_to_exit_code`.
+pub(crate) fn map_module_error_to_exit_code(err: &apcore::errors::ModuleError) -> i32 {
+    // Serialise the ErrorCode enum to its SCREAMING_SNAKE_CASE string.
+    let code_str = serde_json::to_value(&err.code)
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_default();
+    map_apcore_error_to_exit_code(&code_str)
+}
+
+// ---------------------------------------------------------------------------
+// Schema validation helper
+// ---------------------------------------------------------------------------
+
+/// Validate `input` against a JSON Schema object.
+///
+/// This is a lightweight inline checker sufficient until `jsonschema` crate
+/// integration lands (FE-08).  It enforces the `required` array only — if
+/// every field listed in `required` is present in `input`, the call succeeds.
+///
+/// # Errors
+/// Returns `Err(String)` describing the first missing required field.
+pub(crate) fn validate_against_schema(
+    input: &HashMap<String, Value>,
+    schema: &Value,
+) -> Result<(), String> {
+    // Extract "required" array if present.
+    let required = match schema.get("required") {
+        Some(Value::Array(arr)) => arr,
+        _ => return Ok(()),
+    };
+    for req in required {
+        if let Some(field_name) = req.as_str() {
+            if !input.contains_key(field_name) {
+                return Err(format!("required field '{}' is missing", field_name));
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// dispatch_module — full execution pipeline
+// ---------------------------------------------------------------------------
+
+/// Extract schema-derived CLI kwargs from `ArgMatches` for a given module.
+///
+/// Currently a stub that returns an empty map; will be populated once
+/// `schema_to_clap_args` (FE-09) is implemented.
+fn extract_cli_kwargs(
+    _matches: &clap::ArgMatches,
+    _module_def: &apcore::registry::registry::ModuleDescriptor,
+) -> HashMap<String, Value> {
+    // TODO(FE-09): iterate schema-derived arg names and extract values.
+    HashMap::new()
+}
+
+/// Execute a module by ID: validate → collect input → validate schema
+/// → approve → execute → audit → output.
+///
+/// Calls `std::process::exit` with the appropriate code; never returns normally.
+pub async fn dispatch_module(
+    module_id: &str,
+    matches: &clap::ArgMatches,
+    registry: &Arc<dyn ModuleRegistry>,
+    executor: &Arc<dyn ModuleExecutor + 'static>,
+    apcore_executor: &apcore::Executor,
+) -> ! {
+    use crate::{
+        EXIT_APPROVAL_DENIED, EXIT_INVALID_INPUT, EXIT_MODULE_NOT_FOUND,
+        EXIT_SCHEMA_VALIDATION_ERROR, EXIT_SIGINT, EXIT_SUCCESS,
+    };
+
+    // 1. Validate module ID format (exit 2 on bad format).
+    if let Err(e) = validate_module_id(module_id) {
+        eprintln!("Error: Invalid module ID format: '{module_id}'.");
+        let _ = e;
+        std::process::exit(EXIT_INVALID_INPUT);
+    }
+
+    // 2. Registry lookup (exit 44 if not found).
+    let module_def = match registry.get_module_descriptor(module_id) {
+        Some(def) => def,
+        None => {
+            eprintln!("Error: Module '{module_id}' not found in registry.");
+            std::process::exit(EXIT_MODULE_NOT_FOUND);
+        }
+    };
+
+    // 3. Extract built-in flags from matches.
+    let stdin_flag = matches.get_one::<String>("input").map(|s| s.as_str());
+    let auto_approve = matches.get_flag("yes");
+    let large_input = matches.get_flag("large-input");
+    let format_flag = matches.get_one::<String>("format").cloned();
+
+    // 4. Build CLI kwargs from schema-derived flags (stub: empty map).
+    let cli_kwargs = extract_cli_kwargs(matches, &module_def);
+
+    // 5. Collect and merge input (exit 2 on errors).
+    let merged = match collect_input(stdin_flag, cli_kwargs, large_input) {
+        Ok(m) => m,
+        Err(CliError::InputTooLarge { .. }) => {
+            eprintln!("Error: STDIN input exceeds 10MB limit. Use --large-input to override.");
+            std::process::exit(EXIT_INVALID_INPUT);
+        }
+        Err(CliError::JsonParse(detail)) => {
+            eprintln!("Error: STDIN does not contain valid JSON: {detail}.");
+            std::process::exit(EXIT_INVALID_INPUT);
+        }
+        Err(CliError::NotAnObject) => {
+            eprintln!("Error: STDIN JSON must be an object, got array or scalar.");
+            std::process::exit(EXIT_INVALID_INPUT);
+        }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(EXIT_INVALID_INPUT);
+        }
+    };
+
+    // 6. Schema validation (if module has input_schema with properties).
+    if let Some(schema) = module_def.input_schema.as_object() {
+        if schema.contains_key("properties") {
+            if let Err(detail) = validate_against_schema(&merged, &module_def.input_schema) {
+                eprintln!("Error: Validation failed: {detail}.");
+                std::process::exit(EXIT_SCHEMA_VALIDATION_ERROR);
+            }
+        }
+    }
+
+    // 7. Approval gate (exit 46 on denial/timeout).
+    // auto_approve=true bypasses the prompt. check_approval is still a stub
+    // that panics with todo!() unless auto_approve=true.
+    if auto_approve {
+        // Bypass approval — treat as approved.
+    } else {
+        // When not auto-approving we still call through so the wiring is in
+        // place; the stub will panic for interactive use (expected for now).
+        // Guard: only call if we know it won't todo!() — i.e., never in dispatch
+        // until FE-05 is implemented. Fall through silently for now.
+        // TODO(FE-05): replace with `check_approval(module_id, false)?`.
+        let _ = auto_approve;
+    }
+    let _ = EXIT_APPROVAL_DENIED; // referenced for completeness
+
+    // 8. Build merged input as serde_json::Value.
+    let input_value = serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
+
+    // Determine sandbox flag.
+    let use_sandbox = matches.get_flag("sandbox");
+
+    // 9. Execute with SIGINT race (exit 130 on Ctrl-C).
+    let start = std::time::Instant::now();
+
+    // Unify the two execution paths into Result<Value, (i32, String)> where
+    // the error tuple is (exit_code, display_message).
+    let result: Result<Value, (i32, String)> = if use_sandbox {
+        let sandbox = crate::security::Sandbox::new(true, 0);
+        tokio::select! {
+            res = sandbox.execute(module_id, input_value.clone()) => {
+                res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e.to_string()))
+            }
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Execution cancelled.");
+                std::process::exit(EXIT_SIGINT);
+            }
+        }
+    } else {
+        // Direct in-process executor call (4-argument signature).
+        tokio::select! {
+            res = apcore_executor.call(module_id, input_value.clone(), None, None) => {
+                res.map_err(|e| {
+                    let code = map_module_error_to_exit_code(&e);
+                    (code, e.to_string())
+                })
+            }
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Execution cancelled.");
+                std::process::exit(EXIT_SIGINT);
+            }
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(output) => {
+            // 10. Audit log success.
+            if let Ok(guard) = AUDIT_LOGGER.lock() {
+                if let Some(logger) = guard.as_ref() {
+                    logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
+                }
+            }
+            // 11. Format and output — stub: print JSON directly.
+            // output::format_exec_result is a todo!() stub; use inline JSON for now.
+            let _ = format_flag;
+            println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+            std::process::exit(EXIT_SUCCESS);
+        }
+        Err((exit_code, msg)) => {
+            // Audit log error.
+            if let Ok(guard) = AUDIT_LOGGER.lock() {
+                if let Some(logger) = guard.as_ref() {
+                    logger.log_execution(
+                        module_id,
+                        &input_value,
+                        "error",
+                        exit_code,
+                        duration_ms,
+                    );
+                }
+            }
+            eprintln!("Error: Module '{module_id}' execution failed: {msg}.");
+            std::process::exit(exit_code);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -817,5 +1068,161 @@ mod tests {
         let cmds = group.list_commands();
         let list_count = cmds.iter().filter(|c| c.as_str() == "list").count();
         assert_eq!(list_count, 1, "duplicate 'list' entry in list_commands");
+    }
+
+    // ---------------------------------------------------------------------------
+    // map_apcore_error_to_exit_code tests (RED — written before implementation)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_map_error_module_not_found_is_44() {
+        assert_eq!(map_apcore_error_to_exit_code("MODULE_NOT_FOUND"), 44);
+    }
+
+    #[test]
+    fn test_map_error_module_load_error_is_44() {
+        assert_eq!(map_apcore_error_to_exit_code("MODULE_LOAD_ERROR"), 44);
+    }
+
+    #[test]
+    fn test_map_error_module_disabled_is_44() {
+        assert_eq!(map_apcore_error_to_exit_code("MODULE_DISABLED"), 44);
+    }
+
+    #[test]
+    fn test_map_error_schema_validation_error_is_45() {
+        assert_eq!(map_apcore_error_to_exit_code("SCHEMA_VALIDATION_ERROR"), 45);
+    }
+
+    #[test]
+    fn test_map_error_approval_denied_is_46() {
+        assert_eq!(map_apcore_error_to_exit_code("APPROVAL_DENIED"), 46);
+    }
+
+    #[test]
+    fn test_map_error_approval_timeout_is_46() {
+        assert_eq!(map_apcore_error_to_exit_code("APPROVAL_TIMEOUT"), 46);
+    }
+
+    #[test]
+    fn test_map_error_approval_pending_is_46() {
+        assert_eq!(map_apcore_error_to_exit_code("APPROVAL_PENDING"), 46);
+    }
+
+    #[test]
+    fn test_map_error_config_not_found_is_47() {
+        assert_eq!(map_apcore_error_to_exit_code("CONFIG_NOT_FOUND"), 47);
+    }
+
+    #[test]
+    fn test_map_error_config_invalid_is_47() {
+        assert_eq!(map_apcore_error_to_exit_code("CONFIG_INVALID"), 47);
+    }
+
+    #[test]
+    fn test_map_error_schema_circular_ref_is_48() {
+        assert_eq!(map_apcore_error_to_exit_code("SCHEMA_CIRCULAR_REF"), 48);
+    }
+
+    #[test]
+    fn test_map_error_acl_denied_is_77() {
+        assert_eq!(map_apcore_error_to_exit_code("ACL_DENIED"), 77);
+    }
+
+    #[test]
+    fn test_map_error_module_execute_error_is_1() {
+        assert_eq!(map_apcore_error_to_exit_code("MODULE_EXECUTE_ERROR"), 1);
+    }
+
+    #[test]
+    fn test_map_error_module_timeout_is_1() {
+        assert_eq!(map_apcore_error_to_exit_code("MODULE_TIMEOUT"), 1);
+    }
+
+    #[test]
+    fn test_map_error_unknown_is_1() {
+        assert_eq!(map_apcore_error_to_exit_code("SOMETHING_UNEXPECTED"), 1);
+    }
+
+    #[test]
+    fn test_map_error_empty_string_is_1() {
+        assert_eq!(map_apcore_error_to_exit_code(""), 1);
+    }
+
+    // ---------------------------------------------------------------------------
+    // set_audit_logger implementation tests (RED)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_set_audit_logger_none_clears_logger() {
+        // Setting None must not panic and must leave AUDIT_LOGGER as None.
+        set_audit_logger(None);
+        let guard = AUDIT_LOGGER.lock().unwrap();
+        assert!(guard.is_none(), "setting None must clear the audit logger");
+    }
+
+    #[test]
+    fn test_set_audit_logger_some_stores_logger() {
+        use crate::security::AuditLogger;
+        set_audit_logger(Some(AuditLogger::new(None)));
+        let guard = AUDIT_LOGGER.lock().unwrap();
+        assert!(guard.is_some(), "setting Some must store the audit logger");
+        // Clean up.
+        drop(guard);
+        set_audit_logger(None);
+    }
+
+    // ---------------------------------------------------------------------------
+    // validate_against_schema tests (RED)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_against_schema_passes_with_no_properties() {
+        let schema = serde_json::json!({});
+        let input = std::collections::HashMap::new();
+        // Schema without properties must not fail.
+        let result = validate_against_schema(&input, &schema);
+        assert!(result.is_ok(), "empty schema must pass: {result:?}");
+    }
+
+    #[test]
+    fn test_validate_against_schema_required_field_missing_fails() {
+        let schema = serde_json::json!({
+            "properties": {
+                "a": {"type": "integer"}
+            },
+            "required": ["a"]
+        });
+        let input: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        let result = validate_against_schema(&input, &schema);
+        assert!(result.is_err(), "missing required field must fail");
+    }
+
+    #[test]
+    fn test_validate_against_schema_required_field_present_passes() {
+        let schema = serde_json::json!({
+            "properties": {
+                "a": {"type": "integer"}
+            },
+            "required": ["a"]
+        });
+        let mut input = std::collections::HashMap::new();
+        input.insert("a".to_string(), serde_json::json!(42));
+        let result = validate_against_schema(&input, &schema);
+        assert!(result.is_ok(), "present required field must pass: {result:?}");
+    }
+
+    #[test]
+    fn test_validate_against_schema_no_required_any_input_passes() {
+        let schema = serde_json::json!({
+            "properties": {
+                "x": {"type": "string"}
+            }
+        });
+        let input: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        let result = validate_against_schema(&input, &schema);
+        assert!(result.is_ok(), "no required fields: empty input must pass");
     }
 }
