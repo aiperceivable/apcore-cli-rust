@@ -325,50 +325,6 @@ make check                       # fmt + clippy + tests (same as pre-commit)
 cargo test --all-features        # 452 tests
 ```
 
-### Project Structure
-
-```
-src/
-├── lib.rs                   # Library root, public API re-exports
-├── main.rs                  # Binary entry point, clap wiring, dispatch
-├── cli.rs                   # LazyModuleGroup, build_module_command, collect_input, dispatch_module
-├── config.rs                # ConfigResolver (4-tier precedence)
-├── schema_parser.rs         # JSON Schema -> clap options
-├── ref_resolver.rs          # $ref / allOf / anyOf / oneOf resolution
-├── output.rs                # TTY-adaptive output formatting (comfy-table)
-├── discovery.rs             # list / describe commands, RegistryProvider trait
-├── approval.rs              # HITL approval gate with tokio timeout
-├── shell.rs                 # bash/zsh/fish/elvish/powershell completion + man pages
-├── _sandbox_runner.rs       # Subprocess entry point for sandboxed execution
-└── security/
-    ├── mod.rs                # Exports
-    ├── auth.rs               # API key authentication (Bearer header)
-    ├── config_encryptor.rs   # Keyring + AES-256-GCM encrypted config
-    ├── audit.rs              # JSON Lines audit logging (SHA-256 hashed inputs)
-    └── sandbox.rs            # tokio subprocess-based execution isolation
-
-examples/
-├── run_examples.sh          # Run all examples end-to-end
-└── extensions/
-    ├── math/                # math.add, math.multiply
-    ├── text/                # text.upper, text.reverse, text.wordcount
-    └── sysutil/             # sysutil.info, sysutil.env, sysutil.disk
-
-tests/
-├── test_cli.rs              # CLI dispatcher tests
-├── test_config.rs           # ConfigResolver tests
-├── test_schema_parser.rs    # Schema-to-clap tests
-├── test_ref_resolver.rs     # $ref resolution tests
-├── test_output.rs           # Output formatting tests
-├── test_discovery.rs        # Discovery command tests
-├── test_approval.rs         # Approval gate unit tests
-├── approval_integration.rs  # Approval gate integration tests
-├── test_shell.rs            # Shell completion + man page tests
-├── test_e2e.rs              # End-to-end binary tests
-├── test_integration.rs      # Cross-component integration tests
-└── security/                # Auth, audit, encryptor, sandbox tests
-```
-
 ### Key Dependencies
 
 | Crate | Purpose |

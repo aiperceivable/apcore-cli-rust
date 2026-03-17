@@ -443,31 +443,23 @@ mod tests {
         assert!(result.is_ok(), "auto_approve=true must bypass");
     }
 
-    #[tokio::test]
-    async fn bypass_env_var_one() {
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
-        }
-        let result = check_approval(&module(true), false).await;
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
-        }
+    #[test]
+    fn bypass_env_var_one() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(check_approval(&module(true), false));
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
         assert!(result.is_ok(), "APCORE_CLI_AUTO_APPROVE=1 must bypass");
     }
 
-    #[tokio::test]
-    async fn yes_flag_priority_over_env_var() {
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
-        }
-        let result = check_approval(&module(true), true).await;
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
-        }
+    #[test]
+    fn yes_flag_priority_over_env_var() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(check_approval(&module(true), true));
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
         assert!(result.is_ok());
     }
 
@@ -480,13 +472,16 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn non_tty_no_bypass_returns_non_interactive_error() {
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
-        }
-        let result = check_approval_with_tty(&module_requiring_approval(), false, false).await;
+    #[test]
+    fn non_tty_no_bypass_returns_non_interactive_error() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(check_approval_with_tty(
+            &module_requiring_approval(),
+            false,
+            false,
+        ));
         match result {
             Err(ApprovalError::NonInteractive { module_id }) => {
                 assert_eq!(module_id, "test-module");
@@ -501,31 +496,31 @@ mod tests {
         assert!(result.is_ok(), "auto_approve bypasses TTY check");
     }
 
-    #[tokio::test]
-    async fn non_tty_with_env_var_bypasses_before_tty_check() {
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
-        }
-        let result = check_approval_with_tty(&module_requiring_approval(), false, false).await;
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
-        }
+    #[test]
+    fn non_tty_with_env_var_bypasses_before_tty_check() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(check_approval_with_tty(
+            &module_requiring_approval(),
+            false,
+            false,
+        ));
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
         assert!(result.is_ok(), "env var bypass happens before TTY check");
     }
 
-    #[tokio::test]
-    async fn non_tty_env_var_not_one_returns_non_interactive() {
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "true") };
-        }
-        let result = check_approval_with_tty(&module_requiring_approval(), false, false).await;
-        {
-            let _guard = ENV_MUTEX.lock().unwrap();
-            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
-        }
+    #[test]
+    fn non_tty_env_var_not_one_returns_non_interactive() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "true") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(check_approval_with_tty(
+            &module_requiring_approval(),
+            false,
+            false,
+        ));
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
         assert!(matches!(result, Err(ApprovalError::NonInteractive { .. })));
     }
 
