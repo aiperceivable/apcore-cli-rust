@@ -7,30 +7,41 @@ use serde_json::Value;
 
 /// Entry point for the sandboxed subprocess.
 ///
-/// Reads a JSON execution request from stdin, calls the specified executor,
-/// and writes the result (or error) as JSON to stdout.
-///
-/// Environment variables consumed:
-/// * `APCORE_SANDBOX_MODULE_ID`  — module to execute
-/// * `APCORE_SANDBOX_INPUT_DATA` — JSON-encoded input (base64 for large payloads)
+/// Reads `module_id` from `argv[2]` (position after `apcore-cli --internal-sandbox-runner`)
+/// and `input_data` as JSON from stdin, calls the executor, and writes the
+/// JSON result to stdout.
 ///
 /// Exit codes mirror the main CLI conventions (0, 1, 44, 45, …).
 pub(crate) async fn run_sandbox_subprocess() -> Result<(), anyhow::Error> {
-    // TODO: read module_id and input_data from env / stdin,
-    //       instantiate executor, call execute, write JSON result to stdout.
-    todo!("run_sandbox_subprocess")
+    use tokio::io::AsyncReadExt;
+
+    let module_id = std::env::args()
+        .nth(2)
+        .ok_or_else(|| anyhow::anyhow!("sandbox runner: missing module_id argument"))?;
+
+    // Read JSON input from stdin.
+    let mut stdin_buf = String::new();
+    tokio::io::stdin().read_to_string(&mut stdin_buf).await?;
+    let input_data: Value = serde_json::from_str(&stdin_buf)?;
+
+    // Instantiate executor via the apcore registry.
+    let registry = apcore::Registry::new();
+    let config = apcore::Config::default();
+    let executor = apcore::Executor::new(registry, config);
+    let result = executor.call(&module_id, input_data, None, None).await?;
+
+    // Write JSON result to stdout.
+    let encoded = encode_result(&result);
+    print!("{encoded}");
+    Ok(())
 }
 
 /// Serialise the sandbox result for IPC.
 pub(crate) fn encode_result(result: &Value) -> String {
-    // TODO: serde_json::to_string(result)
-    let _ = result;
-    todo!("encode_result")
+    serde_json::to_string(result).unwrap_or_else(|_| "null".to_string())
 }
 
 /// Deserialise the sandbox result received by the parent process.
 pub(crate) fn decode_result(raw: &str) -> Result<Value, serde_json::Error> {
-    // TODO: serde_json::from_str(raw)
-    let _ = raw;
-    todo!("decode_result")
+    serde_json::from_str(raw)
 }

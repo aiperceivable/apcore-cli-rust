@@ -12,6 +12,42 @@ use thiserror::Error;
 use crate::security::AuditLogger;
 
 // ---------------------------------------------------------------------------
+// Local trait abstractions for Registry and Executor
+// ---------------------------------------------------------------------------
+// apcore::Registry and apcore::Executor are concrete structs, not traits.
+// These local traits allow LazyModuleGroup to be generic over both the real
+// implementations and test mocks without depending on apcore internals.
+
+/// Minimal registry interface required by LazyModuleGroup.
+pub trait ModuleRegistry: Send + Sync {
+    /// Return the names of all registered modules.
+    fn list_modules(&self) -> Result<Vec<String>, String>;
+    /// Return the descriptor for a module by name, or None if not found.
+    fn get_module_descriptor(&self, name: &str) -> Option<apcore::registry::registry::ModuleDescriptor>;
+}
+
+/// Minimal executor interface required by LazyModuleGroup.
+pub trait ModuleExecutor: Send + Sync {}
+
+/// Adapter that implements ModuleRegistry for the real apcore::Registry.
+pub struct ApCoreRegistryAdapter(pub apcore::Registry);
+
+impl ModuleRegistry for ApCoreRegistryAdapter {
+    fn list_modules(&self) -> Result<Vec<String>, String> {
+        Ok(self.0.list(None, None).iter().map(|s| s.to_string()).collect())
+    }
+
+    fn get_module_descriptor(&self, name: &str) -> Option<apcore::registry::registry::ModuleDescriptor> {
+        self.0.get_definition(name).cloned()
+    }
+}
+
+/// Adapter that implements ModuleExecutor for the real apcore::Executor.
+pub struct ApCoreExecutorAdapter(pub apcore::Executor);
+
+impl ModuleExecutor for ApCoreExecutorAdapter {}
+
+// ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
 
@@ -54,37 +90,88 @@ pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
 // LazyModuleGroup — lazy command builder
 // ---------------------------------------------------------------------------
 
+/// Built-in command names that are always present regardless of the registry.
+pub const BUILTIN_COMMANDS: &[&str] = &["completion", "describe", "exec", "list", "man"];
+
 /// Lazy command registry: builds module subcommands on-demand from the
 /// apcore Registry, caching them after first construction.
 ///
 /// This is the Rust equivalent of the Python `LazyModuleGroup` (Click group
 /// subclass with lazy `get_command` / `list_commands`).
 pub struct LazyModuleGroup {
-    // TODO: hold Arc<dyn Registry>, Arc<dyn Executor>, command cache HashMap
+    registry: Arc<dyn ModuleRegistry>,
+    executor: Arc<dyn ModuleExecutor>,
+    /// Cache of module name -> name string (we store the name, not the Command,
+    /// since clap::Command is not Clone in all configurations).
+    module_cache: HashMap<String, bool>,
+    /// Count of registry descriptor lookups (test instrumentation only).
+    #[cfg(test)]
+    pub registry_lookup_count: usize,
 }
 
 impl LazyModuleGroup {
     /// Create a new lazy module group.
     ///
     /// # Arguments
-    /// * `registry` — apcore module registry
-    /// * `executor` — apcore executor for running modules
-    pub fn new(/* registry: Arc<dyn Registry>, executor: Arc<dyn Executor> */) -> Self {
-        // TODO: initialise fields
-        todo!("LazyModuleGroup::new")
+    /// * `registry` — module registry (real or mock)
+    /// * `executor` — module executor (real or mock)
+    pub fn new(
+        registry: Arc<dyn ModuleRegistry>,
+        executor: Arc<dyn ModuleExecutor>,
+    ) -> Self {
+        Self {
+            registry,
+            executor,
+            module_cache: HashMap::new(),
+            #[cfg(test)]
+            registry_lookup_count: 0,
+        }
     }
 
-    /// Return the list of available command names (builtins + module ids).
+    /// Return sorted list of all command names: built-ins + module ids.
     pub fn list_commands(&self) -> Vec<String> {
-        // TODO: query registry.list() and prepend builtins
-        //       ["exec", "list", "describe", "completion", "man"]
-        todo!("LazyModuleGroup::list_commands")
+        let mut names: Vec<String> = BUILTIN_COMMANDS.iter().map(|s| s.to_string()).collect();
+        match self.registry.list_modules() {
+            Ok(module_ids) => names.extend(module_ids),
+            Err(e) => {
+                tracing::warn!("Failed to list modules from registry: {e}");
+            }
+        }
+        // Sort and dedup in one pass.
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
-    /// Look up a command by name, building and caching it if it is a module.
+    /// Look up a command by name. Returns `None` if the name is not a builtin
+    /// and is not found in the registry.
+    ///
+    /// For module commands, builds and caches a lightweight clap Command.
     pub fn get_command(&mut self, name: &str) -> Option<clap::Command> {
-        // TODO: check built-in map first, then registry
-        todo!("LazyModuleGroup::get_command: name={name}")
+        if BUILTIN_COMMANDS.contains(&name) {
+            return Some(clap::Command::new(name.to_string()));
+        }
+        // Check the in-memory cache first.
+        if self.module_cache.contains_key(name) {
+            return Some(clap::Command::new(name.to_string()));
+        }
+        // Registry lookup.
+        #[cfg(test)]
+        {
+            self.registry_lookup_count += 1;
+        }
+        let _descriptor = self.registry.get_module_descriptor(name)?;
+        let cmd = clap::Command::new(name.to_string());
+        self.module_cache.insert(name.to_string(), true);
+        tracing::debug!("Loaded module command: {name}");
+        Some(cmd)
+    }
+
+    /// Return the number of times the registry was queried for a descriptor.
+    /// Available in test builds only.
+    #[cfg(test)]
+    pub fn registry_lookup_count(&self) -> usize {
+        self.registry_lookup_count
     }
 }
 
@@ -95,14 +182,14 @@ impl LazyModuleGroup {
 /// Build a clap `Command` for a single module definition.
 ///
 /// The resulting subcommand has:
-/// * its `name` set to `module_def.module_id`
-/// * its `about` set to `module_def.description`
+/// * its `name` set to `module_def.name`
+/// * its `about` set to `module_def.annotations.description`
 /// * one `--input` flag for piped JSON
 /// * schema-derived flags from `schema_to_clap_args`
 /// * an execution callback that calls `executor.execute`
 pub fn build_module_command(
-    // module_def: &apcore::ModuleDescriptor,
-    // executor: Arc<dyn apcore::Executor>,
+    // module_def: &apcore::registry::registry::ModuleDescriptor,
+    // executor: Arc<dyn ModuleExecutor>,
 ) -> clap::Command {
     // TODO: call schema_to_clap_args on module_def.input_schema,
     //       attach --input/--auto-approve flags, wire execution callback.
@@ -390,5 +477,152 @@ mod tests {
         kwargs.insert("foo".to_string(), json!("bar"));
         let result = collect_input(None, kwargs.clone(), false).unwrap();
         assert_eq!(result.get("foo"), Some(&json!("bar")));
+    }
+
+    // ---------------------------------------------------------------------------
+    // LazyModuleGroup tests (TDD)
+    // ---------------------------------------------------------------------------
+
+    /// Mock registry that returns a fixed list of module names.
+    struct MockRegistry {
+        modules: Vec<String>,
+    }
+
+    impl ModuleRegistry for MockRegistry {
+        fn list_modules(&self) -> Result<Vec<String>, String> {
+            Ok(self.modules.clone())
+        }
+
+        fn get_module_descriptor(
+            &self,
+            name: &str,
+        ) -> Option<apcore::registry::registry::ModuleDescriptor> {
+            if self.modules.iter().any(|m| m == name) {
+                Some(apcore::registry::registry::ModuleDescriptor {
+                    name: name.to_string(),
+                    annotations: apcore::module::ModuleAnnotations::default(),
+                    input_schema: serde_json::Value::Object(Default::default()),
+                    output_schema: serde_json::Value::Object(Default::default()),
+                    enabled: true,
+                    tags: vec![],
+                    dependencies: vec![],
+                })
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Mock registry whose list_modules() always returns an error.
+    struct ErrorRegistry;
+
+    impl ModuleRegistry for ErrorRegistry {
+        fn list_modules(&self) -> Result<Vec<String>, String> {
+            Err("registry unavailable".to_string())
+        }
+
+        fn get_module_descriptor(
+            &self,
+            _name: &str,
+        ) -> Option<apcore::registry::registry::ModuleDescriptor> {
+            None
+        }
+    }
+
+    /// Mock executor (no-op).
+    struct MockExecutor;
+
+    impl ModuleExecutor for MockExecutor {}
+
+    fn mock_registry(modules: Vec<&str>) -> Arc<dyn ModuleRegistry> {
+        Arc::new(MockRegistry {
+            modules: modules.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    fn mock_executor() -> Arc<dyn ModuleExecutor> {
+        Arc::new(MockExecutor)
+    }
+
+    #[test]
+    fn test_lazy_module_group_list_commands_empty_registry() {
+        let group = LazyModuleGroup::new(mock_registry(vec![]), mock_executor());
+        let cmds = group.list_commands();
+        for builtin in ["exec", "list", "describe", "completion", "man"] {
+            assert!(
+                cmds.contains(&builtin.to_string()),
+                "missing builtin: {builtin}"
+            );
+        }
+        // Result must be sorted.
+        let mut sorted = cmds.clone();
+        sorted.sort();
+        assert_eq!(cmds, sorted, "list_commands must return a sorted list");
+    }
+
+    #[test]
+    fn test_lazy_module_group_list_commands_includes_modules() {
+        let group =
+            LazyModuleGroup::new(mock_registry(vec!["math.add", "text.summarize"]), mock_executor());
+        let cmds = group.list_commands();
+        assert!(cmds.contains(&"math.add".to_string()));
+        assert!(cmds.contains(&"text.summarize".to_string()));
+    }
+
+    #[test]
+    fn test_lazy_module_group_list_commands_registry_error() {
+        let group = LazyModuleGroup::new(Arc::new(ErrorRegistry), mock_executor());
+        let cmds = group.list_commands();
+        // Must not be empty; must contain builtins.
+        assert!(!cmds.is_empty());
+        assert!(cmds.contains(&"list".to_string()));
+    }
+
+    #[test]
+    fn test_lazy_module_group_get_command_builtin() {
+        let mut group = LazyModuleGroup::new(mock_registry(vec![]), mock_executor());
+        let cmd = group.get_command("list");
+        assert!(cmd.is_some(), "get_command('list') must return Some");
+    }
+
+    #[test]
+    fn test_lazy_module_group_get_command_not_found() {
+        let mut group = LazyModuleGroup::new(mock_registry(vec![]), mock_executor());
+        let cmd = group.get_command("nonexistent.module");
+        assert!(cmd.is_none());
+    }
+
+    #[test]
+    fn test_lazy_module_group_get_command_caches_module() {
+        let mut group =
+            LazyModuleGroup::new(mock_registry(vec!["math.add"]), mock_executor());
+        // First call builds and caches.
+        let cmd1 = group.get_command("math.add");
+        assert!(cmd1.is_some());
+        // Second call returns from cache — registry lookup should not be called again.
+        let cmd2 = group.get_command("math.add");
+        assert!(cmd2.is_some());
+        assert_eq!(group.registry_lookup_count(), 1, "cached after first lookup");
+    }
+
+    #[test]
+    fn test_lazy_module_group_builtin_commands_sorted() {
+        // BUILTIN_COMMANDS slice must itself be in sorted order (single source of truth).
+        let mut sorted = BUILTIN_COMMANDS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(
+            BUILTIN_COMMANDS, sorted.as_slice(),
+            "BUILTIN_COMMANDS must be sorted"
+        );
+    }
+
+    #[test]
+    fn test_lazy_module_group_list_deduplicates_builtins() {
+        // If a registry module name collides with a builtin, the result must not
+        // contain duplicates.
+        let group = LazyModuleGroup::new(mock_registry(vec!["list", "exec"]), mock_executor());
+        let cmds = group.list_commands();
+        let list_count = cmds.iter().filter(|c| c.as_str() == "list").count();
+        assert_eq!(list_count, 1, "duplicate 'list' entry in list_commands");
     }
 }
