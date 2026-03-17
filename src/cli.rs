@@ -228,10 +228,10 @@ pub fn build_module_command(
         return Err(CliError::ReservedModuleId(module_id.clone()));
     }
 
-    // TODO: resolve_refs is a stub — returns schema as-is for now.
-    // When FE-08 is implemented, replace with:
-    //   let resolved = crate::ref_resolver::resolve_refs(&schema, 32, module_id)?;
-    let resolved_schema = module_def.input_schema.clone();
+    // Resolve $ref pointers in the input schema before generating clap args.
+    let resolved_schema = crate::ref_resolver::resolve_refs(
+        &module_def.input_schema, 32, module_id,
+    ).unwrap_or_else(|_| module_def.input_schema.clone());
 
     // Build clap args from JSON Schema properties.
     let schema_args = crate::schema_parser::schema_to_clap_args(&resolved_schema)
@@ -771,13 +771,6 @@ mod tests {
     fn test_validate_module_id_max_length() {
         let max_id = "a".repeat(128);
         assert!(validate_module_id(&max_id).is_ok());
-    }
-
-    #[test]
-    fn test_set_audit_logger_none() {
-        // Setting None should not panic.
-        // assert!(false, "not implemented");
-        // TODO: uncomment and implement
     }
 
     // collect_input tests (TDD red → green)
