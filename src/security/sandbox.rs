@@ -59,7 +59,10 @@ impl Sandbox {
     /// * `enabled`    — enable subprocess isolation
     /// * `timeout_ms` — subprocess timeout in milliseconds (0 = use default 300 s)
     pub fn new(enabled: bool, timeout_ms: u64) -> Self {
-        Self { enabled, timeout_ms }
+        Self {
+            enabled,
+            timeout_ms,
+        }
     }
 
     /// Return `true` when subprocess isolation is enabled.
@@ -113,7 +116,10 @@ impl Sandbox {
             }
         }
         for (k, v) in &host_env {
-            if SANDBOX_ALLOWED_ENV_PREFIXES.iter().any(|prefix| k.starts_with(prefix)) {
+            if SANDBOX_ALLOWED_ENV_PREFIXES
+                .iter()
+                .any(|prefix| k.starts_with(prefix))
+            {
                 env.push((k.clone(), v.clone()));
             }
         }

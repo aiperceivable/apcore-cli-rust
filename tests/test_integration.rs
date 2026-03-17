@@ -20,12 +20,18 @@ fn test_schema_to_args_then_format_result() {
         }
     });
     let schema_args = schema_to_clap_args(&schema).expect("schema_to_clap_args should succeed");
-    assert!(!schema_args.args.is_empty(), "should produce at least one arg");
+    assert!(
+        !schema_args.args.is_empty(),
+        "should produce at least one arg"
+    );
 
     // Simulate an execution result and format it.
     let result = json!({"greeting": "Hello, Alice!"});
     let output = format_exec_result(&result, "json");
-    assert!(output.contains("greeting"), "JSON output should contain result key");
+    assert!(
+        output.contains("greeting"),
+        "JSON output should contain result key"
+    );
 }
 
 #[test]
@@ -61,7 +67,10 @@ fn test_resolve_refs_then_schema_to_clap_args() {
     let name_prop = resolved_schema
         .get("properties")
         .and_then(|p| p.get("name"));
-    assert!(name_prop.is_some(), "name property should exist after resolution");
+    assert!(
+        name_prop.is_some(),
+        "name property should exist after resolution"
+    );
     assert_eq!(
         name_prop.unwrap().get("type").and_then(|t| t.as_str()),
         Some("string"),
@@ -71,10 +80,15 @@ fn test_resolve_refs_then_schema_to_clap_args() {
     // Now generate clap args from the resolved schema.
     let schema_args = schema_to_clap_args(&resolved_schema)
         .expect("schema_to_clap_args should succeed on resolved schema");
-    let arg_names: Vec<&str> = schema_args.args.iter()
+    let arg_names: Vec<&str> = schema_args
+        .args
+        .iter()
         .filter_map(|a| a.get_long())
         .collect();
-    assert!(arg_names.contains(&"name"), "should have --name arg from schema");
+    assert!(
+        arg_names.contains(&"name"),
+        "should have --name arg from schema"
+    );
 }
 
 #[test]
@@ -82,5 +96,9 @@ fn test_format_module_list_empty() {
     // An empty module list must not panic and must return a valid string.
     let result = format_module_list(&[], "json", &[]);
     // JSON format of empty list should be "[]".
-    assert_eq!(result.trim(), "[]", "empty module list in JSON should be []");
+    assert_eq!(
+        result.trim(),
+        "[]",
+        "empty module list in JSON should be []"
+    );
 }

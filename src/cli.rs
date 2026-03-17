@@ -83,11 +83,37 @@ pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
 /// subcommand re-parser in main.rs.
 pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
     use clap::{Arg, ArgAction};
-    cmd.arg(Arg::new("input").long("input").value_name("SOURCE").help("Input source (file path or '-' for stdin)"))
-        .arg(Arg::new("yes").long("yes").short('y').action(ArgAction::SetTrue).help("Auto-approve all confirmation prompts"))
-        .arg(Arg::new("large-input").long("large-input").action(ArgAction::SetTrue).help("Allow larger-than-default input payloads"))
-        .arg(Arg::new("format").long("format").value_parser(["table", "json"]).help("Output format (table or json)"))
-        .arg(Arg::new("sandbox").long("sandbox").action(ArgAction::SetTrue).help("Run module in subprocess sandbox"))
+    cmd.arg(
+        Arg::new("input")
+            .long("input")
+            .value_name("SOURCE")
+            .help("Input source (file path or '-' for stdin)"),
+    )
+    .arg(
+        Arg::new("yes")
+            .long("yes")
+            .short('y')
+            .action(ArgAction::SetTrue)
+            .help("Auto-approve all confirmation prompts"),
+    )
+    .arg(
+        Arg::new("large-input")
+            .long("large-input")
+            .action(ArgAction::SetTrue)
+            .help("Allow larger-than-default input payloads"),
+    )
+    .arg(
+        Arg::new("format")
+            .long("format")
+            .value_parser(["table", "json"])
+            .help("Output format (table or json)"),
+    )
+    .arg(
+        Arg::new("sandbox")
+            .long("sandbox")
+            .action(ArgAction::SetTrue)
+            .help("Run module in subprocess sandbox"),
+    )
 }
 
 /// Build the `exec` clap subcommand.
@@ -96,14 +122,12 @@ pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
 pub fn exec_command() -> clap::Command {
     use clap::{Arg, Command};
 
-    let cmd = Command::new("exec")
-        .about("Execute an apcore module")
-        .arg(
-            Arg::new("module_id")
-                .required(true)
-                .value_name("MODULE_ID")
-                .help("Fully-qualified module ID to execute"),
-        );
+    let cmd = Command::new("exec").about("Execute an apcore module").arg(
+        Arg::new("module_id")
+            .required(true)
+            .value_name("MODULE_ID")
+            .help("Fully-qualified module ID to execute"),
+    );
     add_dispatch_flags(cmd)
 }
 
@@ -229,9 +253,9 @@ pub fn build_module_command(
     }
 
     // Resolve $ref pointers in the input schema before generating clap args.
-    let resolved_schema = crate::ref_resolver::resolve_refs(
-        &module_def.input_schema, 32, module_id,
-    ).unwrap_or_else(|_| module_def.input_schema.clone());
+    let resolved_schema =
+        crate::ref_resolver::resolve_refs(&module_def.input_schema, 32, module_id)
+            .unwrap_or_else(|_| module_def.input_schema.clone());
 
     // Build clap args from JSON Schema properties.
     let schema_args = crate::schema_parser::schema_to_clap_args(&resolved_schema)
@@ -719,13 +743,7 @@ pub async fn dispatch_module(
             // Audit log error.
             if let Ok(guard) = AUDIT_LOGGER.lock() {
                 if let Some(logger) = guard.as_ref() {
-                    logger.log_execution(
-                        module_id,
-                        &input_value,
-                        "error",
-                        exit_code,
-                        duration_ms,
-                    );
+                    logger.log_execution(module_id, &input_value, "error", exit_code, duration_ms);
                 }
             }
             eprintln!("Error: Module '{module_id}' execution failed: {msg}.");
@@ -760,10 +778,7 @@ mod tests {
     #[test]
     fn test_validate_module_id_invalid_format() {
         for id in ["INVALID!ID", "123abc", ".leading.dot", "a..b", "a."] {
-            assert!(
-                validate_module_id(id).is_err(),
-                "expected error for '{id}'"
-            );
+            assert!(validate_module_id(id).is_err(), "expected error for '{id}'");
         }
     }
 
@@ -814,8 +829,7 @@ mod tests {
         use std::io::Cursor;
         let big = vec![b' '; 10 * 1024 * 1024 + 1];
         let reader = Cursor::new(big);
-        let err =
-            collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
+        let err = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
         assert!(matches!(err, CliError::InputTooLarge { .. }));
     }
 
@@ -827,15 +841,17 @@ mod tests {
         payload.extend(b"\"}");
         let reader = Cursor::new(payload);
         let result = collect_input_from_reader(Some("-"), HashMap::new(), true, reader);
-        assert!(result.is_ok(), "large_input=true must accept oversized payload");
+        assert!(
+            result.is_ok(),
+            "large_input=true must accept oversized payload"
+        );
     }
 
     #[test]
     fn test_collect_input_invalid_json_returns_error() {
         use std::io::Cursor;
         let reader = Cursor::new(b"not json at all".to_vec());
-        let err =
-            collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
+        let err = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
         assert!(matches!(err, CliError::JsonParse(_)));
     }
 
@@ -843,8 +859,7 @@ mod tests {
     fn test_collect_input_non_object_json_returns_error() {
         use std::io::Cursor;
         let reader = Cursor::new(b"[1, 2, 3]".to_vec());
-        let err =
-            collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
+        let err = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap_err();
         assert!(matches!(err, CliError::NotAnObject));
     }
 
@@ -852,8 +867,7 @@ mod tests {
     fn test_collect_input_empty_stdin_returns_empty_map() {
         use std::io::Cursor;
         let reader = Cursor::new(b"".to_vec());
-        let result =
-            collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap();
+        let result = collect_input_from_reader(Some("-"), HashMap::new(), false, reader).unwrap();
         assert!(result.is_empty());
     }
 
@@ -921,7 +935,10 @@ mod tests {
         let executor = mock_executor();
         let cmd = build_module_command(&module, executor).unwrap();
         let names: Vec<&str> = cmd.get_opts().filter_map(|a| a.get_long()).collect();
-        assert!(names.contains(&"large-input"), "must have --large-input flag");
+        assert!(
+            names.contains(&"large-input"),
+            "must have --large-input flag"
+        );
     }
 
     #[test]
@@ -1063,8 +1080,10 @@ mod tests {
 
     #[test]
     fn test_lazy_module_group_list_commands_includes_modules() {
-        let group =
-            LazyModuleGroup::new(mock_registry(vec!["math.add", "text.summarize"]), mock_executor());
+        let group = LazyModuleGroup::new(
+            mock_registry(vec!["math.add", "text.summarize"]),
+            mock_executor(),
+        );
         let cmds = group.list_commands();
         assert!(cmds.contains(&"math.add".to_string()));
         assert!(cmds.contains(&"text.summarize".to_string()));
@@ -1095,15 +1114,18 @@ mod tests {
 
     #[test]
     fn test_lazy_module_group_get_command_caches_module() {
-        let mut group =
-            LazyModuleGroup::new(mock_registry(vec!["math.add"]), mock_executor());
+        let mut group = LazyModuleGroup::new(mock_registry(vec!["math.add"]), mock_executor());
         // First call builds and caches.
         let cmd1 = group.get_command("math.add");
         assert!(cmd1.is_some());
         // Second call returns from cache — registry lookup should not be called again.
         let cmd2 = group.get_command("math.add");
         assert!(cmd2.is_some());
-        assert_eq!(group.registry_lookup_count(), 1, "cached after first lookup");
+        assert_eq!(
+            group.registry_lookup_count(),
+            1,
+            "cached after first lookup"
+        );
     }
 
     #[test]
@@ -1112,7 +1134,8 @@ mod tests {
         let mut sorted = BUILTIN_COMMANDS.to_vec();
         sorted.sort_unstable();
         assert_eq!(
-            BUILTIN_COMMANDS, sorted.as_slice(),
+            BUILTIN_COMMANDS,
+            sorted.as_slice(),
             "BUILTIN_COMMANDS must be sorted"
         );
     }
@@ -1267,7 +1290,10 @@ mod tests {
         let mut input = std::collections::HashMap::new();
         input.insert("a".to_string(), serde_json::json!(42));
         let result = validate_against_schema(&input, &schema);
-        assert!(result.is_ok(), "present required field must pass: {result:?}");
+        assert!(
+            result.is_ok(),
+            "present required field must pass: {result:?}"
+        );
     }
 
     #[test]

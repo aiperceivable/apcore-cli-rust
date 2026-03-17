@@ -132,7 +132,11 @@ fn merge_anyof(branches: Vec<Value>) -> Value {
         let set: HashSet<String> = branch
             .get("required")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
         all_required_sets.push(set);
     }
@@ -182,10 +186,13 @@ fn resolve_node(
         // Extract key: "#/$defs/Address" → "Address"
         let key = ref_path.split('/').next_back().unwrap_or("").to_string();
 
-        let def = defs.get(&key).cloned().ok_or_else(|| RefResolverError::Unresolvable {
-            reference: ref_path.clone(),
-            module_id: module_id.to_string(),
-        })?;
+        let def = defs
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| RefResolverError::Unresolvable {
+                reference: ref_path.clone(),
+                module_id: module_id.to_string(),
+            })?;
 
         visiting.insert(ref_path.clone());
         let result = resolve_node(def, defs, depth + 1, max_depth, visiting, module_id)?;
@@ -366,7 +373,8 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(RefResolverError::Circular { .. }) | Err(RefResolverError::MaxDepthExceeded { .. })
+                Err(RefResolverError::Circular { .. })
+                    | Err(RefResolverError::MaxDepthExceeded { .. })
             ),
             "expected Circular or MaxDepthExceeded, got: {result:?}"
         );
@@ -531,9 +539,18 @@ mod tests {
             .filter_map(|v| v.as_str())
             .collect();
         // Only "a" appears in both branches — it is the intersection.
-        assert!(required.contains(&"a"), "a must be required (in both branches)");
-        assert!(!required.contains(&"b"), "b must not be required (only in first branch)");
-        assert!(!required.contains(&"c"), "c must not be required (only in second branch)");
+        assert!(
+            required.contains(&"a"),
+            "a must be required (in both branches)"
+        );
+        assert!(
+            !required.contains(&"b"),
+            "b must not be required (only in first branch)"
+        );
+        assert!(
+            !required.contains(&"c"),
+            "c must not be required (only in second branch)"
+        );
     }
 
     #[test]
@@ -546,7 +563,10 @@ mod tests {
         });
         let result = resolve_refs(&schema, 32, "mod").unwrap();
         let required = result["required"].as_array().unwrap();
-        assert!(required.is_empty(), "no fields are required in both branches");
+        assert!(
+            required.is_empty(),
+            "no fields are required in both branches"
+        );
     }
 
     #[test]

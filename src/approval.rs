@@ -273,13 +273,17 @@ mod tests {
 
     #[test]
     fn error_denied_display() {
-        let e = ApprovalError::Denied { module_id: "my-module".into() };
+        let e = ApprovalError::Denied {
+            module_id: "my-module".into(),
+        };
         assert_eq!(e.to_string(), "approval denied for module 'my-module'");
     }
 
     #[test]
     fn error_non_interactive_display() {
-        let e = ApprovalError::NonInteractive { module_id: "my-module".into() };
+        let e = ApprovalError::NonInteractive {
+            module_id: "my-module".into(),
+        };
         assert_eq!(
             e.to_string(),
             "no interactive terminal available for module 'my-module'"
@@ -288,7 +292,10 @@ mod tests {
 
     #[test]
     fn error_timeout_display() {
-        let e = ApprovalError::Timeout { module_id: "my-module".into(), seconds: 60 };
+        let e = ApprovalError::Timeout {
+            module_id: "my-module".into(),
+            seconds: 60,
+        };
         assert_eq!(
             e.to_string(),
             "approval timed out after 60s for module 'my-module'"
@@ -297,7 +304,12 @@ mod tests {
 
     #[test]
     fn error_variants_are_debug() {
-        let d = format!("{:?}", ApprovalError::Denied { module_id: "x".into() });
+        let d = format!(
+            "{:?}",
+            ApprovalError::Denied {
+                module_id: "x".into()
+            }
+        );
         assert!(d.contains("Denied"));
     }
 
@@ -404,7 +416,8 @@ mod tests {
 
     #[tokio::test]
     async fn skip_when_requires_approval_false() {
-        let result = check_approval(&json!({"annotations": {"requires_approval": false}}), false).await;
+        let result =
+            check_approval(&json!({"annotations": {"requires_approval": false}}), false).await;
         assert!(result.is_ok());
     }
 
@@ -416,7 +429,11 @@ mod tests {
 
     #[tokio::test]
     async fn skip_when_requires_approval_string_true() {
-        let result = check_approval(&json!({"annotations": {"requires_approval": "true"}}), false).await;
+        let result = check_approval(
+            &json!({"annotations": {"requires_approval": "true"}}),
+            false,
+        )
+        .await;
         assert!(result.is_ok());
     }
 
@@ -428,19 +445,29 @@ mod tests {
 
     #[tokio::test]
     async fn bypass_env_var_one() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        }
         let result = check_approval(&module(true), false).await;
-        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        }
         assert!(result.is_ok(), "APCORE_CLI_AUTO_APPROVE=1 must bypass");
     }
 
     #[tokio::test]
     async fn yes_flag_priority_over_env_var() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        }
         let result = check_approval(&module(true), true).await;
-        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        }
         assert!(result.is_ok());
     }
 
@@ -455,8 +482,10 @@ mod tests {
 
     #[tokio::test]
     async fn non_tty_no_bypass_returns_non_interactive_error() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        }
         let result = check_approval_with_tty(&module_requiring_approval(), false, false).await;
         match result {
             Err(ApprovalError::NonInteractive { module_id }) => {
@@ -474,19 +503,29 @@ mod tests {
 
     #[tokio::test]
     async fn non_tty_with_env_var_bypasses_before_tty_check() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        }
         let result = check_approval_with_tty(&module_requiring_approval(), false, false).await;
-        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        }
         assert!(result.is_ok(), "env var bypass happens before TTY check");
     }
 
     #[tokio::test]
     async fn non_tty_env_var_not_one_returns_non_interactive() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "true") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "true") };
+        }
         let result = check_approval_with_tty(&module_requiring_approval(), false, false).await;
-        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        {
+            let _guard = ENV_MUTEX.lock().unwrap();
+            unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        }
         assert!(matches!(result, Err(ApprovalError::NonInteractive { .. })));
     }
 
@@ -494,72 +533,54 @@ mod tests {
 
     #[tokio::test]
     async fn user_types_y_returns_ok() {
-        let result = prompt_with_reader(
-            "test-module",
-            "Requires approval.",
-            60,
-            || Ok("y\n".to_string()),
-        )
+        let result = prompt_with_reader("test-module", "Requires approval.", 60, || {
+            Ok("y\n".to_string())
+        })
         .await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn user_types_yes_returns_ok() {
-        let result = prompt_with_reader(
-            "test-module",
-            "Requires approval.",
-            60,
-            || Ok("yes\n".to_string()),
-        )
+        let result = prompt_with_reader("test-module", "Requires approval.", 60, || {
+            Ok("yes\n".to_string())
+        })
         .await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn user_types_yes_uppercase_returns_ok() {
-        let result = prompt_with_reader(
-            "test-module",
-            "Requires approval.",
-            60,
-            || Ok("YES\n".to_string()),
-        )
+        let result = prompt_with_reader("test-module", "Requires approval.", 60, || {
+            Ok("YES\n".to_string())
+        })
         .await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn user_types_n_returns_denied() {
-        let result = prompt_with_reader(
-            "test-module",
-            "Requires approval.",
-            60,
-            || Ok("n\n".to_string()),
-        )
+        let result = prompt_with_reader("test-module", "Requires approval.", 60, || {
+            Ok("n\n".to_string())
+        })
         .await;
         assert!(matches!(result, Err(ApprovalError::Denied { .. })));
     }
 
     #[tokio::test]
     async fn user_presses_enter_returns_denied() {
-        let result = prompt_with_reader(
-            "test-module",
-            "Requires approval.",
-            60,
-            || Ok("\n".to_string()),
-        )
+        let result = prompt_with_reader("test-module", "Requires approval.", 60, || {
+            Ok("\n".to_string())
+        })
         .await;
         assert!(matches!(result, Err(ApprovalError::Denied { .. })));
     }
 
     #[tokio::test]
     async fn user_types_garbage_returns_denied() {
-        let result = prompt_with_reader(
-            "test-module",
-            "Requires approval.",
-            60,
-            || Ok("maybe\n".to_string()),
-        )
+        let result = prompt_with_reader("test-module", "Requires approval.", 60, || {
+            Ok("maybe\n".to_string())
+        })
         .await;
         assert!(matches!(result, Err(ApprovalError::Denied { .. })));
     }

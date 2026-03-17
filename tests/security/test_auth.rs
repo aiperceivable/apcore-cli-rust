@@ -12,7 +12,6 @@ fn make_empty_resolver() -> ConfigResolver {
     ConfigResolver::new(None, None)
 }
 
-
 #[test]
 fn test_get_api_key_from_env_var() {
     // APCORE_AUTH_API_KEY must be returned when set.
@@ -48,7 +47,10 @@ fn test_authenticate_request_adds_bearer_header() {
     let result = provider.authenticate_request(builder);
     // SAFETY: cleanup.
     unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
-    assert!(result.is_ok(), "authenticate_request must succeed when key is set");
+    assert!(
+        result.is_ok(),
+        "authenticate_request must succeed when key is set"
+    );
 }
 
 #[test]

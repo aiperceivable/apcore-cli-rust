@@ -15,7 +15,10 @@ fn test_resolve_refs_no_refs_returns_unchanged() {
         }
     });
     let resolved = resolve_refs(&schema, 10, "test.module");
-    assert!(resolved.is_ok(), "schema with no $refs must resolve successfully");
+    assert!(
+        resolved.is_ok(),
+        "schema with no $refs must resolve successfully"
+    );
     let resolved = resolved.unwrap();
     assert_eq!(
         resolved["properties"]["name"]["type"],

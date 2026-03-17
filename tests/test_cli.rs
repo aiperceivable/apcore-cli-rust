@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use apcore_cli::cli::{collect_input_from_reader, validate_module_id, CliError};
-use apcore_cli::{build_module_command, collect_input};
+use apcore_cli::collect_input;
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
@@ -17,10 +17,7 @@ use serde_json::{json, Value};
 #[test]
 fn test_validate_module_id_valid_ids() {
     for id in ["math.add", "text.summarize", "a", "a.b.c"] {
-        assert!(
-            validate_module_id(id).is_ok(),
-            "expected ok for '{id}'"
-        );
+        assert!(validate_module_id(id).is_ok(), "expected ok for '{id}'");
     }
 }
 
@@ -33,10 +30,7 @@ fn test_validate_module_id_too_long() {
 #[test]
 fn test_validate_module_id_invalid_formats() {
     for id in ["INVALID!ID", "123abc", ".leading.dot", "a..b", "a."] {
-        assert!(
-            validate_module_id(id).is_err(),
-            "expected error for '{id}'"
-        );
+        assert!(validate_module_id(id).is_err(), "expected error for '{id}'");
     }
 }
 
@@ -93,7 +87,10 @@ fn test_collect_input_large_input_allowed() {
     payload.extend(b"\"}");
     let reader = Cursor::new(payload);
     let result = collect_input_from_reader(Some("-"), HashMap::new(), true, reader);
-    assert!(result.is_ok(), "large_input=true must accept oversized payload");
+    assert!(
+        result.is_ok(),
+        "large_input=true must accept oversized payload"
+    );
 }
 
 #[test]

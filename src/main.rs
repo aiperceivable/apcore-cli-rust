@@ -5,8 +5,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use apcore_cli::EXIT_CONFIG_NOT_FOUND;
-use tracing_subscriber::{reload, EnvFilter};
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::{reload, EnvFilter};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -78,10 +78,7 @@ pub fn init_tracing(log_level: &str) {
 
     let _ = tracing_subscriber::registry()
         .with(filtered_layer)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(false),
-        )
+        .with(tracing_subscriber::fmt::layer().with_target(false))
         .try_init();
 
     // Store handle for runtime reload; ignore if already set (e.g. in tests).
@@ -136,18 +133,20 @@ fn validate_extensions_dir(ext_dir: &str) -> Result<(), String> {
 /// When `validate` is true, prints an error and exits 47 if `extensions_dir` does not exist.
 /// When `validate` is false (used for completion/man page generation),
 /// skips the directory check.
-fn build_cli_command(extensions_dir: Option<String>, prog_name: Option<String>, validate: bool) -> clap::Command {
+fn build_cli_command(
+    extensions_dir: Option<String>,
+    prog_name: Option<String>,
+    validate: bool,
+) -> clap::Command {
     let name = resolve_prog_name(prog_name);
 
     // Resolve extensions_dir: flag > env var > default.
     let ext_dir = match extensions_dir {
         Some(dir) => dir,
-        None => {
-            std::env::var("APCORE_EXTENSIONS_ROOT")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "./extensions".to_string())
-        }
+        None => std::env::var("APCORE_EXTENSIONS_ROOT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "./extensions".to_string()),
     };
 
     // Validate extensions directory (only when running real commands).
@@ -183,8 +182,9 @@ fn build_cli_command(extensions_dir: Option<String>, prog_name: Option<String>, 
     // Register built-in subcommands from discovery and shell modules.
     // The registry parameter is unused during clap command registration —
     // it is only needed at dispatch time for cmd_list / cmd_describe.
-    let placeholder: std::sync::Arc<dyn apcore_cli::RegistryProvider> =
-        std::sync::Arc::new(apcore_cli::ApCoreRegistryProvider::new(apcore::Registry::new()));
+    let placeholder: std::sync::Arc<dyn apcore_cli::RegistryProvider> = std::sync::Arc::new(
+        apcore_cli::ApCoreRegistryProvider::new(apcore::Registry::new()),
+    );
     cmd = cmd.subcommand(apcore_cli::cli::exec_command());
     cmd = apcore_cli::discovery::register_discovery_commands(cmd, placeholder);
     cmd = apcore_cli::shell::register_shell_commands(cmd, &name);
@@ -277,15 +277,21 @@ async fn main() {
             }
         }
         Some(("describe", sub_m)) => {
-            let module_id = sub_m.get_one::<String>("module_id").expect("module_id is required");
+            let module_id = sub_m
+                .get_one::<String>("module_id")
+                .expect("module_id is required");
             let format = sub_m.get_one::<String>("format").map(|s| s.as_str());
-            match apcore_cli::discovery::cmd_describe(registry_provider.as_ref(), module_id, format) {
+            match apcore_cli::discovery::cmd_describe(registry_provider.as_ref(), module_id, format)
+            {
                 Ok(output) => {
                     println!("{output}");
                     std::process::exit(0);
                 }
                 Err(apcore_cli::discovery::DiscoveryError::ModuleNotFound(_)) => {
-                    eprintln!("Error: {}", apcore_cli::discovery::DiscoveryError::ModuleNotFound(module_id.clone()));
+                    eprintln!(
+                        "Error: {}",
+                        apcore_cli::discovery::DiscoveryError::ModuleNotFound(module_id.clone())
+                    );
                     std::process::exit(apcore_cli::EXIT_MODULE_NOT_FOUND);
                 }
                 Err(e) => {
@@ -295,7 +301,9 @@ async fn main() {
             }
         }
         Some(("completion", sub_m)) => {
-            let shell = *sub_m.get_one::<clap_complete::Shell>("shell").expect("shell is required");
+            let shell = *sub_m
+                .get_one::<clap_complete::Shell>("shell")
+                .expect("shell is required");
             let mut cmd = build_cli_command(None, Some(prog_name.clone()), false);
             let output = apcore_cli::shell::cmd_completion(shell, &prog_name, &mut cmd);
             print!("{output}");
@@ -306,7 +314,12 @@ async fn main() {
                 .get_one::<String>("command")
                 .expect("command is required");
             let cmd = build_cli_command(None, Some(prog_name.clone()), false);
-            match apcore_cli::shell::cmd_man(command_name, &cmd, &prog_name, env!("CARGO_PKG_VERSION")) {
+            match apcore_cli::shell::cmd_man(
+                command_name,
+                &cmd,
+                &prog_name,
+                env!("CARGO_PKG_VERSION"),
+            ) {
                 Ok(output) => {
                     println!("{output}");
                     std::process::exit(0);
@@ -318,11 +331,17 @@ async fn main() {
             }
         }
         Some(("exec", sub_m)) => {
-            let module_id = sub_m.get_one::<String>("module_id")
+            let module_id = sub_m
+                .get_one::<String>("module_id")
                 .expect("module_id is required");
             apcore_cli::cli::dispatch_module(
-                module_id, sub_m, &registry_provider, &executor, &apcore_executor,
-            ).await;
+                module_id,
+                sub_m,
+                &registry_provider,
+                &executor,
+                &apcore_executor,
+            )
+            .await;
         }
         Some((external, sub_m)) => {
             // External subcommand: re-parse trailing args through a temporary
@@ -333,13 +352,11 @@ async fn main() {
                 .get_many::<std::ffi::OsString>("")
                 .into_iter()
                 .flatten()
-                .filter_map(|s| {
-                    match s.to_str() {
-                        Some(v) => Some(v.to_string()),
-                        None => {
-                            tracing::warn!("Dropping non-UTF8 argument: {:?}", s);
-                            None
-                        }
+                .filter_map(|s| match s.to_str() {
+                    Some(v) => Some(v.to_string()),
+                    None => {
+                        tracing::warn!("Dropping non-UTF8 argument: {:?}", s);
+                        None
                     }
                 })
                 .collect();
@@ -349,20 +366,25 @@ async fn main() {
                 clap::Command::new(&external).no_binary_name(true),
             );
 
-            let ext_matches = temp_cmd.try_get_matches_from(&trailing)
+            let ext_matches = temp_cmd
+                .try_get_matches_from(&trailing)
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
                     std::process::exit(2);
                 });
 
             apcore_cli::cli::dispatch_module(
-                &external, &ext_matches, &registry_provider, &executor, &apcore_executor,
-            ).await;
+                &external,
+                &ext_matches,
+                &registry_provider,
+                &executor,
+                &apcore_executor,
+            )
+            .await;
         }
         None => {
             // No subcommand: print help.
-            let _ = clap::Command::new(env!("CARGO_PKG_NAME"))
-                .print_help();
+            let _ = clap::Command::new(env!("CARGO_PKG_NAME")).print_help();
             println!();
             std::process::exit(0);
         }
@@ -384,10 +406,7 @@ mod tests {
 
     #[test]
     fn test_extract_extensions_dir_flag_space_form() {
-        let args: Vec<String> = vec![
-            "--extensions-dir".to_string(),
-            "/tmp/ext".to_string(),
-        ];
+        let args: Vec<String> = vec!["--extensions-dir".to_string(), "/tmp/ext".to_string()];
         assert_eq!(extract_extensions_dir(&args), Some("/tmp/ext".to_string()));
     }
 
@@ -464,10 +483,11 @@ mod tests {
     #[test]
     fn test_exec_subcommand_exists() {
         let cmd = build_cli_command(None, None, false);
-        let exec = cmd
-            .get_subcommands()
-            .find(|c| c.get_name() == "exec");
-        assert!(exec.is_some(), "build_cli_command must include 'exec' subcommand");
+        let exec = cmd.get_subcommands().find(|c| c.get_name() == "exec");
+        assert!(
+            exec.is_some(),
+            "build_cli_command must include 'exec' subcommand"
+        );
     }
 
     #[test]
@@ -479,7 +499,10 @@ mod tests {
             .expect("exec subcommand must exist");
         let module_id = exec.get_arguments().find(|a| a.get_id() == "module_id");
         assert!(module_id.is_some(), "exec must have a 'module_id' argument");
-        assert!(module_id.unwrap().is_required_set(), "module_id must be required");
+        assert!(
+            module_id.unwrap().is_required_set(),
+            "module_id must be required"
+        );
     }
 
     #[test]
@@ -490,24 +513,35 @@ mod tests {
             .find(|c| c.get_name() == "exec")
             .expect("exec subcommand must exist");
 
-        let arg_names: Vec<&str> = exec
-            .get_arguments()
-            .map(|a| a.get_id().as_str())
-            .collect();
+        let arg_names: Vec<&str> = exec.get_arguments().map(|a| a.get_id().as_str()).collect();
 
         assert!(arg_names.contains(&"input"), "exec must have --input flag");
         assert!(arg_names.contains(&"yes"), "exec must have --yes flag");
-        assert!(arg_names.contains(&"large-input"), "exec must have --large-input flag");
-        assert!(arg_names.contains(&"format"), "exec must have --format flag");
+        assert!(
+            arg_names.contains(&"large-input"),
+            "exec must have --large-input flag"
+        );
+        assert!(
+            arg_names.contains(&"format"),
+            "exec must have --format flag"
+        );
     }
 
     #[test]
     fn test_exec_subcommand_parses_valid_args() {
         let cmd = build_cli_command(None, None, false);
         let matches = cmd.try_get_matches_from(vec![
-            "apcore-cli", "exec", "my.module", "--yes", "--format", "json",
+            "apcore-cli",
+            "exec",
+            "my.module",
+            "--yes",
+            "--format",
+            "json",
         ]);
-        assert!(matches.is_ok(), "exec with valid args must parse successfully");
+        assert!(
+            matches.is_ok(),
+            "exec with valid args must parse successfully"
+        );
         let m = matches.unwrap();
         let sub = m.subcommand_matches("exec").unwrap();
         assert_eq!(

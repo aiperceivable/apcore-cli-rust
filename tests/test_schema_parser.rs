@@ -55,7 +55,10 @@ fn test_schema_to_clap_args_required_field_is_required() {
     });
     let result = schema_to_clap_args(&schema).unwrap();
     let arg = find_arg(&result.args, "a").expect("--a must exist");
-    assert!(arg.is_required_set(), "required field must be marked required");
+    assert!(
+        arg.is_required_set(),
+        "required field must be marked required"
+    );
 }
 
 #[test]
@@ -71,8 +74,14 @@ fn test_schema_to_clap_args_enum_field() {
     let arg = find_arg(&result.args, "mode").expect("--mode must exist");
     let pvs = arg.get_possible_values();
     let names: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
-    assert!(names.contains(&"fast"), "possible values must contain 'fast'");
-    assert!(names.contains(&"slow"), "possible values must contain 'slow'");
+    assert!(
+        names.contains(&"fast"),
+        "possible values must contain 'fast'"
+    );
+    assert!(
+        names.contains(&"slow"),
+        "possible values must contain 'slow'"
+    );
 }
 
 #[test]
@@ -94,7 +103,10 @@ fn test_reconvert_enum_values_integer_coercion() {
     let schema_args = schema_to_clap_args(&schema).unwrap();
     let kwargs = make_kwargs(&[("level", "2")]);
     let result = reconvert_enum_values(kwargs, &schema_args);
-    assert!(result["level"].is_number(), "integer enum must be a JSON number");
+    assert!(
+        result["level"].is_number(),
+        "integer enum must be a JSON number"
+    );
     assert_eq!(result["level"], json!(2));
 }
 
@@ -120,10 +132,11 @@ fn test_full_pipeline_integer_enum_roundtrip() {
     });
     let schema_args = schema_to_clap_args(&schema).unwrap();
 
-    let cmd = schema_args.args.iter().cloned().fold(
-        clap::Command::new("test"),
-        |c, a| c.arg(a),
-    );
+    let cmd = schema_args
+        .args
+        .iter()
+        .cloned()
+        .fold(clap::Command::new("test"), |c, a| c.arg(a));
     let matches = cmd.try_get_matches_from(["test", "--level", "2"]).unwrap();
 
     let raw_val = matches.get_one::<String>("level").cloned().unwrap();
@@ -142,15 +155,25 @@ fn test_full_pipeline_boolean_flag_pair() {
     });
     let schema_args = schema_to_clap_args(&schema).unwrap();
 
-    let cmd = schema_args.args.iter().cloned().fold(
-        clap::Command::new("test"),
-        |c, a| c.arg(a),
-    );
+    let cmd = schema_args
+        .args
+        .iter()
+        .cloned()
+        .fold(clap::Command::new("test"), |c, a| c.arg(a));
 
-    let matches = cmd.clone().try_get_matches_from(["test", "--verbose"]).unwrap();
-    assert!(matches.get_flag("verbose"), "--verbose must set verbose=true");
+    let matches = cmd
+        .clone()
+        .try_get_matches_from(["test", "--verbose"])
+        .unwrap();
+    assert!(
+        matches.get_flag("verbose"),
+        "--verbose must set verbose=true"
+    );
 
     // --no-verbose can be parsed without error; verbose is not set (stays false default).
     let matches2 = cmd.try_get_matches_from(["test", "--no-verbose"]).unwrap();
-    assert!(!matches2.get_flag("verbose"), "--no-verbose must leave verbose unset");
+    assert!(
+        !matches2.get_flag("verbose"),
+        "--no-verbose must leave verbose unset"
+    );
 }

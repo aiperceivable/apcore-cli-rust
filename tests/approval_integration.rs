@@ -15,9 +15,16 @@ fn exit_code_for(e: &ApprovalError) -> i32 {
 
 #[tokio::test]
 async fn all_approval_errors_map_to_exit_46() {
-    let denied = ApprovalError::Denied { module_id: "m".into() };
-    let non_interactive = ApprovalError::NonInteractive { module_id: "m".into() };
-    let timeout = ApprovalError::Timeout { module_id: "m".into(), seconds: 60 };
+    let denied = ApprovalError::Denied {
+        module_id: "m".into(),
+    };
+    let non_interactive = ApprovalError::NonInteractive {
+        module_id: "m".into(),
+    };
+    let timeout = ApprovalError::Timeout {
+        module_id: "m".into(),
+        seconds: 60,
+    };
 
     assert_eq!(exit_code_for(&denied), 46);
     assert_eq!(exit_code_for(&non_interactive), 46);

@@ -45,7 +45,10 @@ pub trait RegistryProvider: Send + Sync {
     ///
     /// The default implementation deserializes from `get_definition`. Adapters
     /// wrapping a real `apcore::Registry` should override this for efficiency.
-    fn get_module_descriptor(&self, id: &str) -> Option<apcore::registry::registry::ModuleDescriptor> {
+    fn get_module_descriptor(
+        &self,
+        id: &str,
+    ) -> Option<apcore::registry::registry::ModuleDescriptor> {
         self.get_definition(id)
             .and_then(|v| serde_json::from_value(v).ok())
     }
@@ -165,10 +168,7 @@ pub fn cmd_describe(
 ///
 /// Returns the root command with the subcommands added. Follows the clap v4
 /// builder idiom (commands are consumed and returned, not mutated in-place).
-pub fn register_discovery_commands(
-    cli: Command,
-    _registry: Arc<dyn RegistryProvider>,
-) -> Command {
+pub fn register_discovery_commands(cli: Command, _registry: Arc<dyn RegistryProvider>) -> Command {
     cli.subcommand(list_command())
         .subcommand(describe_command())
 }
@@ -232,7 +232,11 @@ impl ApCoreRegistryProvider {
 
 impl RegistryProvider for ApCoreRegistryProvider {
     fn list(&self) -> Vec<String> {
-        self.registry.list(None, None).iter().map(|s| s.to_string()).collect()
+        self.registry
+            .list(None, None)
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     fn get_definition(&self, id: &str) -> Option<Value> {
@@ -241,7 +245,10 @@ impl RegistryProvider for ApCoreRegistryProvider {
             .and_then(|d| serde_json::to_value(d).ok())
     }
 
-    fn get_module_descriptor(&self, id: &str) -> Option<apcore::registry::registry::ModuleDescriptor> {
+    fn get_module_descriptor(
+        &self,
+        id: &str,
+    ) -> Option<apcore::registry::registry::ModuleDescriptor> {
         self.registry.get_definition(id).cloned()
     }
 }
@@ -270,7 +277,11 @@ impl RegistryProvider for MockRegistry {
     fn list(&self) -> Vec<String> {
         self.modules
             .iter()
-            .filter_map(|m| m.get("module_id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .filter_map(|m| {
+                m.get("module_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
             .collect()
     }
 
@@ -362,9 +373,7 @@ mod tests {
 
     #[test]
     fn test_mock_registry_get_definition_found() {
-        let registry = MockRegistry::new(vec![
-            mock_module("math.add", "Add numbers", &["math"]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module("math.add", "Add numbers", &["math"])]);
         let def = registry.get_definition("math.add");
         assert!(def.is_some());
         assert_eq!(def.unwrap()["module_id"], "math.add");
@@ -433,9 +442,7 @@ mod tests {
 
     #[test]
     fn test_cmd_list_tag_filter_no_match_table() {
-        let registry = MockRegistry::new(vec![
-            mock_module("math.add", "Add numbers", &["math"]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module("math.add", "Add numbers", &["math"])]);
         let output = cmd_list(&registry, &["nonexistent"], Some("table")).unwrap();
         assert!(output.contains("No modules found matching tags:"));
         assert!(output.contains("nonexistent"));
@@ -443,9 +450,7 @@ mod tests {
 
     #[test]
     fn test_cmd_list_tag_filter_no_match_json() {
-        let registry = MockRegistry::new(vec![
-            mock_module("math.add", "Add numbers", &["math"]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module("math.add", "Add numbers", &["math"])]);
         let output = cmd_list(&registry, &["nonexistent"], Some("json")).unwrap();
         assert_eq!(output.trim(), "[]");
     }
@@ -464,19 +469,18 @@ mod tests {
     #[test]
     fn test_cmd_list_description_truncated_in_table() {
         let long_desc = "x".repeat(100);
-        let registry = MockRegistry::new(vec![
-            mock_module("a.b", &long_desc, &[]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module("a.b", &long_desc, &[])]);
         let output = cmd_list(&registry, &[], Some("table")).unwrap();
         assert!(output.contains("..."), "long description must be truncated");
-        assert!(!output.contains(&"x".repeat(100)), "full description must not appear");
+        assert!(
+            !output.contains(&"x".repeat(100)),
+            "full description must not appear"
+        );
     }
 
     #[test]
     fn test_cmd_list_json_contains_id_description_tags() {
-        let registry = MockRegistry::new(vec![
-            mock_module("a.b", "Desc", &["x", "y"]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module("a.b", "Desc", &["x", "y"])]);
         let output = cmd_list(&registry, &[], Some("json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         let entry = &parsed[0];
@@ -489,9 +493,11 @@ mod tests {
 
     #[test]
     fn test_cmd_describe_valid_module_json() {
-        let registry = MockRegistry::new(vec![
-            mock_module("math.add", "Add two numbers", &["math", "core"]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module(
+            "math.add",
+            "Add two numbers",
+            &["math", "core"],
+        )]);
         let output = cmd_describe(&registry, "math.add", Some("json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(parsed["id"], "math.add");
@@ -500,12 +506,14 @@ mod tests {
 
     #[test]
     fn test_cmd_describe_valid_module_table() {
-        let registry = MockRegistry::new(vec![
-            mock_module("math.add", "Add two numbers", &["math"]),
-        ]);
+        let registry =
+            MockRegistry::new(vec![mock_module("math.add", "Add two numbers", &["math"])]);
         let output = cmd_describe(&registry, "math.add", Some("table")).unwrap();
         assert!(output.contains("math.add"), "table must contain module id");
-        assert!(output.contains("Add two numbers"), "table must contain description");
+        assert!(
+            output.contains("Add two numbers"),
+            "table must contain description"
+        );
     }
 
     #[test]
@@ -533,49 +541,50 @@ mod tests {
     #[test]
     fn test_cmd_describe_no_output_schema_table_omits_section() {
         // Module without output_schema: section must be absent from table output.
-        let registry = MockRegistry::new(vec![
-            serde_json::json!({
-                "module_id": "math.add",
-                "description": "Add numbers",
-                "input_schema": {"type": "object"},
-                "tags": ["math"]
-                // note: no output_schema key
-            }),
-        ]);
+        let registry = MockRegistry::new(vec![serde_json::json!({
+            "module_id": "math.add",
+            "description": "Add numbers",
+            "input_schema": {"type": "object"},
+            "tags": ["math"]
+            // note: no output_schema key
+        })]);
         let output = cmd_describe(&registry, "math.add", Some("table")).unwrap();
-        assert!(!output.contains("Output Schema:"), "output_schema section must be absent");
+        assert!(
+            !output.contains("Output Schema:"),
+            "output_schema section must be absent"
+        );
     }
 
     #[test]
     fn test_cmd_describe_no_annotations_table_omits_section() {
-        let registry = MockRegistry::new(vec![
-            mock_module("math.add", "Add numbers", &["math"]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module("math.add", "Add numbers", &["math"])]);
         let output = cmd_describe(&registry, "math.add", Some("table")).unwrap();
-        assert!(!output.contains("Annotations:"), "annotations section must be absent");
+        assert!(
+            !output.contains("Annotations:"),
+            "annotations section must be absent"
+        );
     }
 
     #[test]
     fn test_cmd_describe_with_annotations_table_shows_section() {
-        let registry = MockRegistry::new(vec![
-            serde_json::json!({
-                "module_id": "math.add",
-                "description": "Add numbers",
-                "annotations": {"readonly": true},
-                "tags": []
-            }),
-        ]);
+        let registry = MockRegistry::new(vec![serde_json::json!({
+            "module_id": "math.add",
+            "description": "Add numbers",
+            "annotations": {"readonly": true},
+            "tags": []
+        })]);
         let output = cmd_describe(&registry, "math.add", Some("table")).unwrap();
-        assert!(output.contains("Annotations:"), "annotations section must be present");
+        assert!(
+            output.contains("Annotations:"),
+            "annotations section must be present"
+        );
         assert!(output.contains("readonly"), "annotation key must appear");
     }
 
     #[test]
     fn test_cmd_describe_json_omits_null_fields() {
         // Module with no input_schema, output_schema, annotations.
-        let registry = MockRegistry::new(vec![
-            mock_module("a.b", "Desc", &[]),
-        ]);
+        let registry = MockRegistry::new(vec![mock_module("a.b", "Desc", &[])]);
         let output = cmd_describe(&registry, "a.b", Some("json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert!(parsed.get("input_schema").is_none());
@@ -585,16 +594,14 @@ mod tests {
 
     #[test]
     fn test_cmd_describe_json_includes_all_fields() {
-        let registry = MockRegistry::new(vec![
-            serde_json::json!({
-                "module_id": "math.add",
-                "description": "Add two numbers",
-                "input_schema": {"type": "object", "properties": {"a": {"type": "integer"}}},
-                "output_schema": {"type": "object", "properties": {"result": {"type": "integer"}}},
-                "annotations": {"readonly": false},
-                "tags": ["math", "core"]
-            }),
-        ]);
+        let registry = MockRegistry::new(vec![serde_json::json!({
+            "module_id": "math.add",
+            "description": "Add two numbers",
+            "input_schema": {"type": "object", "properties": {"a": {"type": "integer"}}},
+            "output_schema": {"type": "object", "properties": {"result": {"type": "integer"}}},
+            "annotations": {"readonly": false},
+            "tags": ["math", "core"]
+        })]);
         let output = cmd_describe(&registry, "math.add", Some("json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert!(parsed.get("input_schema").is_some());
@@ -605,14 +612,12 @@ mod tests {
 
     #[test]
     fn test_cmd_describe_with_x_fields_table_shows_extension_section() {
-        let registry = MockRegistry::new(vec![
-            serde_json::json!({
-                "module_id": "a.b",
-                "description": "Desc",
-                "x-custom": "custom-value",
-                "tags": []
-            }),
-        ]);
+        let registry = MockRegistry::new(vec![serde_json::json!({
+            "module_id": "a.b",
+            "description": "Desc",
+            "x-custom": "custom-value",
+            "tags": []
+        })]);
         let output = cmd_describe(&registry, "a.b", Some("table")).unwrap();
         assert!(
             output.contains("Extension Metadata:") || output.contains("x-custom"),
@@ -629,7 +634,10 @@ mod tests {
         let root = Command::new("apcore-cli");
         let cmd = register_discovery_commands(root, registry);
         let names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
-        assert!(names.contains(&"list"), "must have 'list' subcommand, got {names:?}");
+        assert!(
+            names.contains(&"list"),
+            "must have 'list' subcommand, got {names:?}"
+        );
     }
 
     #[test]

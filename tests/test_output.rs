@@ -3,7 +3,9 @@
 
 mod common;
 
-use apcore_cli::output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
+use apcore_cli::output::{
+    format_exec_result, format_module_detail, format_module_list, resolve_format,
+};
 use serde_json::json;
 
 // ---------------------------------------------------------------------------
@@ -54,19 +56,20 @@ fn test_format_module_list_json_valid() {
 
 #[test]
 fn test_format_module_list_table_has_headers() {
-    let modules = vec![
-        json!({"module_id": "math.add", "description": "Add two numbers", "tags": []}),
-    ];
+    let modules =
+        vec![json!({"module_id": "math.add", "description": "Add two numbers", "tags": []})];
     let output = format_module_list(&modules, "table", &[]);
     assert!(output.contains("ID"), "table must have ID column header");
-    assert!(output.contains("Description"), "table must have Description column header");
+    assert!(
+        output.contains("Description"),
+        "table must have Description column header"
+    );
 }
 
 #[test]
 fn test_format_module_list_table_contains_module_id() {
-    let modules = vec![
-        json!({"module_id": "math.add", "description": "Add two numbers", "tags": []}),
-    ];
+    let modules =
+        vec![json!({"module_id": "math.add", "description": "Add two numbers", "tags": []})];
     let output = format_module_list(&modules, "table", &[]);
     assert!(output.contains("math.add"));
 }

@@ -42,10 +42,7 @@ fn build_root(registry: Arc<MockRegistry>) -> Command {
 #[test]
 fn test_register_discovery_adds_list_subcommand() {
     let root = build_root(make_registry());
-    let subcommand_names: Vec<&str> = root
-        .get_subcommands()
-        .map(|c| c.get_name())
-        .collect();
+    let subcommand_names: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
     assert!(
         subcommand_names.contains(&"list"),
         "root must have 'list' subcommand; found: {subcommand_names:?}"
@@ -55,10 +52,7 @@ fn test_register_discovery_adds_list_subcommand() {
 #[test]
 fn test_register_discovery_adds_describe_subcommand() {
     let root = build_root(make_registry());
-    let subcommand_names: Vec<&str> = root
-        .get_subcommands()
-        .map(|c| c.get_name())
-        .collect();
+    let subcommand_names: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
     assert!(
         subcommand_names.contains(&"describe"),
         "root must have 'describe' subcommand; found: {subcommand_names:?}"
@@ -102,7 +96,9 @@ fn test_describe_has_module_id_argument() {
         .get_subcommands()
         .find(|c| c.get_name() == "describe")
         .expect("describe subcommand must exist");
-    let has_id = describe_cmd.get_arguments().any(|a| a.get_id() == "module_id");
+    let has_id = describe_cmd
+        .get_arguments()
+        .any(|a| a.get_id() == "module_id");
     assert!(has_id, "describe must have module_id positional argument");
 }
 
@@ -135,7 +131,10 @@ fn test_list_command_table_format() {
     let registry = make_registry();
     let output = cmd_list(registry.as_ref(), &[], Some("table")).unwrap();
     assert!(output.contains("math.add"), "table must contain math.add");
-    assert!(output.contains("text.upper"), "table must contain text.upper");
+    assert!(
+        output.contains("text.upper"),
+        "table must contain text.upper"
+    );
 }
 
 #[test]
@@ -194,7 +193,10 @@ fn test_describe_command_known_module_json() {
     let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
     assert_eq!(parsed["id"], "math.add");
     assert!(
-        parsed["description"].as_str().unwrap().contains("Add two numbers"),
+        parsed["description"]
+            .as_str()
+            .unwrap()
+            .contains("Add two numbers"),
         "description must be present"
     );
 }

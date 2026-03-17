@@ -48,7 +48,10 @@ async fn test_sandbox_timeout_returns_error() {
     // Both are acceptable since the subprocess may or may not start within 1 ms.
     let sandbox = Sandbox::new(true, 1); // 1 ms timeout
     let result = sandbox.execute("slow.module", json!({})).await;
-    assert!(result.is_err(), "sandbox with 1ms timeout must return an error");
+    assert!(
+        result.is_err(),
+        "sandbox with 1ms timeout must return an error"
+    );
     // Must not be the "not wired" placeholder from the disabled path.
     match &result {
         Err(ModuleExecutionError::SpawnFailed(msg)) if msg.contains("not wired") => {

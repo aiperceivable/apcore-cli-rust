@@ -69,7 +69,9 @@ fn test_completion_invalid_shell_rejected_at_parse() {
         "completion_command must have a 'shell' argument"
     );
     // Verify parse-time rejection by attempting to parse an invalid value.
-    let result = cmd.clone().try_get_matches_from(["completion", "invalid-shell"]);
+    let result = cmd
+        .clone()
+        .try_get_matches_from(["completion", "invalid-shell"]);
     assert!(
         result.is_err(),
         "completion with invalid shell must be rejected by clap"
@@ -94,7 +96,10 @@ fn test_man_command_outputs_nonempty_for_exec() {
     let result = cmd_man("exec", &root, "apcore-cli", "0.2.0");
     assert!(result.is_ok(), "man for 'exec' must succeed");
     let page = result.unwrap();
-    assert!(page.contains(".SH EXIT CODES"), "man page must have EXIT CODES section");
+    assert!(
+        page.contains(".SH EXIT CODES"),
+        "man page must have EXIT CODES section"
+    );
 }
 
 #[test]

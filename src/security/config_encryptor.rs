@@ -126,11 +126,7 @@ impl ConfigEncryptor {
     /// - `"keyring:<ref>"` — fetch from OS keyring.
     /// - `"enc:<base64>"` — base64-decode then AES-GCM decrypt.
     /// - anything else — return as-is (plain passthrough).
-    pub fn retrieve(
-        &self,
-        config_value: &str,
-        key: &str,
-    ) -> Result<String, ConfigDecryptionError> {
+    pub fn retrieve(&self, config_value: &str, key: &str) -> Result<String, ConfigDecryptionError> {
         if let Some(ref_key) = config_value.strip_prefix("keyring:") {
             let entry = keyring::Entry::new(SERVICE_NAME, ref_key)
                 .map_err(|e| ConfigDecryptionError::KeyringError(e.to_string()))?;
@@ -169,10 +165,7 @@ impl ConfigEncryptor {
             Ok(e) => e,
             Err(_) => return false,
         };
-        matches!(
-            entry.get_password(),
-            Ok(_) | Err(keyring::Error::NoEntry)
-        )
+        matches!(entry.get_password(), Ok(_) | Err(keyring::Error::NoEntry))
     }
 
     /// Derive a 32-byte AES key via PBKDF2-HMAC-SHA256.
@@ -195,7 +188,12 @@ impl ConfigEncryptor {
             .unwrap_or_else(|_| "unknown".to_string());
         let material = format!("{hostname}:{username}");
         let mut key = [0u8; 32];
-        pbkdf2_hmac::<Sha256>(material.as_bytes(), PBKDF2_SALT, PBKDF2_ITERATIONS, &mut key);
+        pbkdf2_hmac::<Sha256>(
+            material.as_bytes(),
+            PBKDF2_SALT,
+            PBKDF2_ITERATIONS,
+            &mut key,
+        );
         Ok(key)
     }
 
@@ -272,7 +270,10 @@ mod tests {
     fn test_store_without_keyring_returns_enc_prefix() {
         let enc = aes_encryptor();
         let token = enc.store("auth.api_key", "secret123").expect("store");
-        assert!(token.starts_with("enc:"), "expected enc: prefix, got {token}");
+        assert!(
+            token.starts_with("enc:"),
+            "expected enc: prefix, got {token}"
+        );
     }
 
     #[test]
@@ -299,7 +300,10 @@ mod tests {
         let b64 = B64.encode(&bad);
         let config_value = format!("enc:{b64}");
         let result = enc.retrieve(&config_value, "some.key");
-        assert!(matches!(result, Err(ConfigDecryptionError::AuthTagMismatch)));
+        assert!(matches!(
+            result,
+            Err(ConfigDecryptionError::AuthTagMismatch)
+        ));
     }
 
     #[test]
@@ -309,7 +313,10 @@ mod tests {
         let b64 = B64.encode([0u8; 10]);
         let config_value = format!("enc:{b64}");
         let result = enc.retrieve(&config_value, "some.key");
-        assert!(matches!(result, Err(ConfigDecryptionError::AuthTagMismatch)));
+        assert!(matches!(
+            result,
+            Err(ConfigDecryptionError::AuthTagMismatch)
+        ));
     }
 
     #[test]

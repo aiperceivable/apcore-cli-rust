@@ -1,0 +1,76 @@
+{
+  "feature": "dispatch-integration",
+  "created": "2026-03-17T05:00:00Z",
+  "updated": "2026-03-17T06:30:00Z",
+  "status": "completed",
+  "execution_order": [
+    "exec-subcommand",
+    "validate-extensions-result",
+    "resolve-refs-signature",
+    "test-cleanup",
+    "dispatch-wiring"
+  ],
+  "progress": {
+    "total_tasks": 5,
+    "completed": 5,
+    "in_progress": 0,
+    "pending": 0
+  },
+  "tasks": [
+    {
+      "id": "exec-subcommand",
+      "file": "tasks/exec-subcommand.md",
+      "title": "Register exec subcommand in clap tree",
+      "status": "completed",
+      "started_at": "2026-03-17T05:10:00Z",
+      "completed_at": "2026-03-17T05:25:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "validate-extensions-result",
+      "file": "tasks/validate-extensions-result.md",
+      "title": "validate_extensions_dir returns Result instead of process::exit",
+      "status": "completed",
+      "started_at": "2026-03-17T05:10:00Z",
+      "completed_at": "2026-03-17T05:20:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "resolve-refs-signature",
+      "file": "tasks/resolve-refs-signature.md",
+      "title": "Change resolve_refs signature from &mut Value to &Value",
+      "status": "completed",
+      "started_at": "2026-03-17T05:10:00Z",
+      "completed_at": "2026-03-17T05:22:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "test-cleanup",
+      "file": "tasks/test-cleanup.md",
+      "title": "Gate MockRegistry behind #[cfg(test)], remove unused helpers and imports",
+      "status": "completed",
+      "started_at": "2026-03-17T05:10:00Z",
+      "completed_at": "2026-03-17T05:24:00Z",
+      "assignee": null,
+      "commits": []
+    },
+    {
+      "id": "dispatch-wiring",
+      "file": "tasks/dispatch-wiring.md",
+      "title": "Wire external + exec match arms to dispatch_module",
+      "status": "completed",
+      "started_at": "2026-03-17T05:30:00Z",
+      "completed_at": "2026-03-17T06:15:00Z",
+      "assignee": null,
+      "commits": []
+    }
+  ],
+  "metadata": {
+    "source_doc": "feature-spec.md",
+    "created_by": "code-forge",
+    "version": "1.0"
+  }
+}

@@ -18,7 +18,10 @@ fn test_audit_logger_disabled_no_file_written() {
     // Logger for a completely different path — confirm the first logger doesn't
     // write to our watched dir.
     drop(logger);
-    assert!(!unrelated_path.exists(), "no file should be created in unrelated dir");
+    assert!(
+        !unrelated_path.exists(),
+        "no file should be created in unrelated dir"
+    );
 }
 
 #[test]
@@ -42,13 +45,7 @@ fn test_audit_logger_appends_multiple_records() {
     let log_path = dir.path().join("audit.jsonl");
     let logger = AuditLogger::new(Some(log_path.clone()));
     for i in 0..3 {
-        logger.log_execution(
-            "math.add",
-            &json!({"a": i}),
-            "success",
-            0,
-            i as u64,
-        );
+        logger.log_execution("math.add", &json!({"a": i}), "success", 0, i as u64);
     }
     let raw = std::fs::read_to_string(&log_path).expect("log file must exist");
     let lines: Vec<&str> = raw.lines().collect();
@@ -65,14 +62,23 @@ fn test_audit_logger_record_has_required_fields() {
     let entry: serde_json::Value =
         serde_json::from_str(raw.trim()).expect("log line must be valid JSON");
     // All seven required fields must be present.
-    assert!(entry["timestamp"].as_str().unwrap().ends_with('Z'), "timestamp must be ISO 8601 UTC");
+    assert!(
+        entry["timestamp"].as_str().unwrap().ends_with('Z'),
+        "timestamp must be ISO 8601 UTC"
+    );
     assert!(entry["user"].is_string(), "user field must be a string");
     assert_eq!(entry["module_id"], "math.add");
     assert!(
-        entry["input_hash"].as_str().map(|s| s.len() == 64).unwrap_or(false),
+        entry["input_hash"]
+            .as_str()
+            .map(|s| s.len() == 64)
+            .unwrap_or(false),
         "input_hash must be a 64-char hex SHA-256"
     );
     assert_eq!(entry["status"], "success");
     assert!(entry["exit_code"].is_number(), "exit_code must be a number");
-    assert!(entry["duration_ms"].is_number(), "duration_ms must be a number");
+    assert!(
+        entry["duration_ms"].is_number(),
+        "duration_ms must be a number"
+    );
 }

@@ -85,7 +85,7 @@ fn test_e2e_stdin_piping() {
     // External subcommand "math.add --input -" now routes through dispatch_module.
     // stdin is /dev/null so collect_input reads empty input.
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
-        .args(&[
+        .args([
             "--extensions-dir",
             "./tests/fixtures/extensions",
             "exec",
@@ -161,11 +161,7 @@ fn test_e2e_exec_invalid_module_id_exits_2() {
 #[test]
 fn test_e2e_external_invalid_module_id_exits_2() {
     // An invalid module ID format via external subcommand should exit 2.
-    let out = run_apcore(&[
-        "--extensions-dir",
-        "./tests/fixtures/extensions",
-        "INVALID",
-    ]);
+    let out = run_apcore(&["--extensions-dir", "./tests/fixtures/extensions", "INVALID"]);
     assert_eq!(
         out.status.code(),
         Some(2),
@@ -225,7 +221,10 @@ fn test_version_flag_format() {
 
 #[test]
 fn test_extensions_dir_missing_exits_47() {
-    let out = run_apcore(&["--extensions-dir", "/tmp/definitely_does_not_exist_apcore_test"]);
+    let out = run_apcore(&[
+        "--extensions-dir",
+        "/tmp/definitely_does_not_exist_apcore_test",
+    ]);
     assert_eq!(out.status.code(), Some(47));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("Extensions directory not found") || stderr.contains("not found"));
@@ -235,7 +234,7 @@ fn test_extensions_dir_missing_exits_47() {
 fn test_extensions_dir_env_var_respected() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .env("APCORE_EXTENSIONS_ROOT", "./tests/fixtures/extensions")
-        .args(&["--help"])
+        .args(["--help"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
@@ -246,7 +245,7 @@ fn test_extensions_dir_flag_overrides_env() {
     // --extensions-dir flag takes precedence over APCORE_EXTENSIONS_ROOT.
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .env("APCORE_EXTENSIONS_ROOT", "/nonexistent/path")
-        .args(&["--extensions-dir", "./tests/fixtures/extensions", "--help"])
+        .args(["--extensions-dir", "./tests/fixtures/extensions", "--help"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));

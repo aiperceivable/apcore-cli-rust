@@ -88,13 +88,7 @@ impl AuditLogger {
                 let sorted: std::collections::BTreeMap<_, _> = map.iter().collect();
                 let pairs: Vec<String> = sorted
                     .iter()
-                    .map(|(k, val)| {
-                        format!(
-                            "{}:{}",
-                            serde_json::json!(k),
-                            Self::stable_json(val)
-                        )
-                    })
+                    .map(|(k, val)| format!("{}:{}", serde_json::json!(k), Self::stable_json(val)))
                     .collect();
                 format!("{{{}}}", pairs.join(","))
             }
@@ -145,8 +139,7 @@ impl AuditLogger {
                 .append(true)
                 .open(path)?;
             let mut writer = BufWriter::new(file);
-            serde_json::to_writer(&mut writer, &entry)
-                .map_err(std::io::Error::other)?;
+            serde_json::to_writer(&mut writer, &entry).map_err(std::io::Error::other)?;
             writeln!(writer)?;
             writer.flush()?;
             Ok(())

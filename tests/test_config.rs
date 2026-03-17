@@ -32,7 +32,10 @@ fn test_defaults_contains_expected_keys() {
         "sandbox.enabled",
         "cli.stdin_buffer_limit",
     ] {
-        assert!(resolver.defaults.contains_key(key), "missing default: {key}");
+        assert!(
+            resolver.defaults.contains_key(key),
+            "missing default: {key}"
+        );
     }
 }
 
@@ -48,7 +51,10 @@ fn test_resolve_tier1_cli_flag_wins() {
     std::fs::write(&config_path, "extensions:\n  root: /config-path\n").unwrap(); // safe: tempdir is writable
 
     let mut flags = HashMap::new();
-    flags.insert("--extensions-dir".to_string(), Some("/cli-path".to_string()));
+    flags.insert(
+        "--extensions-dir".to_string(),
+        Some("/cli-path".to_string()),
+    );
     let resolver = ConfigResolver::new(Some(flags), Some(config_path));
 
     let result = resolver.resolve(
@@ -79,7 +85,11 @@ fn test_resolve_tier2_env_var_wins() {
         Some("--extensions-dir"),
         Some("TCFG02_EXT_ROOT"),
     );
-    assert_eq!(result, Some("/env-path".to_string()), "env var must win over config file");
+    assert_eq!(
+        result,
+        Some("/env-path".to_string()),
+        "env var must win over config file"
+    );
 
     unsafe { std::env::remove_var("TCFG02_EXT_ROOT") };
 }
@@ -130,7 +140,11 @@ fn test_resolve_cli_flag_none_skips_tier1() {
         Some("--extensions-dir"),
         Some("TCFG09_EXT_ROOT"),
     );
-    assert_eq!(result, Some("/env-path".to_string()), "None CLI flag must fall through to env var");
+    assert_eq!(
+        result,
+        Some("/env-path".to_string()),
+        "None CLI flag must fall through to env var"
+    );
 
     unsafe { std::env::remove_var("TCFG09_EXT_ROOT") };
 }
@@ -147,11 +161,7 @@ fn test_resolve_env_var_empty_string_skips_tier2() {
     std::fs::write(&config_path, "extensions:\n  root: /config-path\n").unwrap(); // safe: tempdir is writable
 
     let resolver = ConfigResolver::new(None, Some(config_path));
-    let result = resolver.resolve(
-        "extensions.root",
-        None,
-        Some("TCFG08_EXT_ROOT"),
-    );
+    let result = resolver.resolve("extensions.root", None, Some("TCFG08_EXT_ROOT"));
     assert_eq!(
         result,
         Some("/config-path".to_string()),
@@ -182,8 +192,14 @@ fn test_load_config_file_valid_yaml() {
     .unwrap(); // safe: tempdir is writable
 
     let resolver = ConfigResolver::new(None, Some(config_path));
-    let file_map = resolver.config_file.as_ref().expect("config file must be loaded");
-    assert_eq!(file_map.get("extensions.root"), Some(&"/custom/path".to_string()));
+    let file_map = resolver
+        .config_file
+        .as_ref()
+        .expect("config file must be loaded");
+    assert_eq!(
+        file_map.get("extensions.root"),
+        Some(&"/custom/path".to_string())
+    );
     assert_eq!(file_map.get("logging.level"), Some(&"DEBUG".to_string()));
 }
 

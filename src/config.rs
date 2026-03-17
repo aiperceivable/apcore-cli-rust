@@ -259,7 +259,10 @@ mod tests {
             "cli.stdin_buffer_limit",
             "cli.auto_approve",
         ] {
-            assert!(resolver.defaults.contains_key(key), "missing default: {key}");
+            assert!(
+                resolver.defaults.contains_key(key),
+                "missing default: {key}"
+            );
         }
     }
 
@@ -286,7 +289,10 @@ mod tests {
     #[test]
     fn test_resolve_tier1_cli_flag_wins() {
         let mut flags = HashMap::new();
-        flags.insert("--extensions-dir".to_string(), Some("/cli-path".to_string()));
+        flags.insert(
+            "--extensions-dir".to_string(),
+            Some("/cli-path".to_string()),
+        );
         let resolver = ConfigResolver::new(Some(flags), None);
         let result = resolver.resolve(
             "extensions.root",
@@ -300,8 +306,7 @@ mod tests {
     fn test_resolve_tier2_env_var_wins() {
         unsafe { std::env::set_var("APCORE_EXTENSIONS_ROOT_UNIT", "/env-path") };
         let resolver = ConfigResolver::new(None, None);
-        let result =
-            resolver.resolve("extensions.root", None, Some("APCORE_EXTENSIONS_ROOT_UNIT"));
+        let result = resolver.resolve("extensions.root", None, Some("APCORE_EXTENSIONS_ROOT_UNIT"));
         assert_eq!(result, Some("/env-path".to_string()));
         unsafe { std::env::remove_var("APCORE_EXTENSIONS_ROOT_UNIT") };
     }

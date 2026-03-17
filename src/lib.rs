@@ -37,8 +37,8 @@ pub use cli::{
 };
 pub use config::ConfigResolver;
 pub use discovery::{
-    cmd_describe, cmd_list, register_discovery_commands, ApCoreRegistryProvider,
-    DiscoveryError, RegistryProvider,
+    cmd_describe, cmd_list, register_discovery_commands, ApCoreRegistryProvider, DiscoveryError,
+    RegistryProvider,
 };
 // Test utilities — available but hidden from docs.
 // Gated behind cfg(test) for unit tests and the test-support feature for
@@ -53,12 +53,6 @@ pub use schema_parser::{
 };
 pub use security::{AuditLogger, AuthProvider, ConfigEncryptor, Sandbox};
 pub use shell::{
-    build_synopsis,
-    cmd_completion,
-    cmd_man,
-    completion_command,
-    generate_man_page,
-    register_shell_commands,
-    ShellError,
-    KNOWN_BUILTINS,
+    build_synopsis, cmd_completion, cmd_man, completion_command, generate_man_page,
+    register_shell_commands, ShellError, KNOWN_BUILTINS,
 };

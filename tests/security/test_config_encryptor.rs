@@ -15,8 +15,12 @@ fn aes_enc() -> ConfigEncryptor {
 fn test_store_and_retrieve_roundtrip() {
     // store("key", "val") then retrieve(<token>, "key") must return "val".
     let enc = aes_enc();
-    let token = enc.store("auth.api_key", "my-secret").expect("store must succeed");
-    let result = enc.retrieve(&token, "auth.api_key").expect("retrieve must succeed");
+    let token = enc
+        .store("auth.api_key", "my-secret")
+        .expect("store must succeed");
+    let result = enc
+        .retrieve(&token, "auth.api_key")
+        .expect("retrieve must succeed");
     assert_eq!(result, "my-secret");
 }
 

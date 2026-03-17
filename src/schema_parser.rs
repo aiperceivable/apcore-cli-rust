@@ -18,9 +18,7 @@ use tracing::warn;
 pub enum SchemaParserError {
     /// Two properties normalise to the same --flag-name.
     /// Caller must exit 48.
-    #[error(
-        "Flag name collision: properties '{prop_a}' and '{prop_b}' both map to '{flag_name}'"
-    )]
+    #[error("Flag name collision: properties '{prop_a}' and '{prop_b}' both map to '{flag_name}'")]
     FlagCollision {
         prop_a: String,
         prop_b: String,
@@ -674,7 +672,10 @@ mod tests {
         let result = schema_to_clap_args(&schema).unwrap();
         let pair = result.bool_pairs.iter().find(|p| p.prop_name == "debug");
         assert!(pair.is_some());
-        assert!(!pair.unwrap().default_val, "default must be false when not specified");
+        assert!(
+            !pair.unwrap().default_val,
+            "default must be false when not specified"
+        );
     }
 
     #[test]
@@ -688,7 +689,10 @@ mod tests {
             .iter()
             .find(|p| p.prop_name == "enabled")
             .expect("BoolFlagPair must be recorded");
-        assert!(pair.default_val, "default must be true when schema says true");
+        assert!(
+            pair.default_val,
+            "default must be true when schema says true"
+        );
     }
 
     #[test]
@@ -713,7 +717,10 @@ mod tests {
         });
         let result = schema_to_clap_args(&schema).unwrap();
         assert!(find_arg(&result.args, "dry-run").is_some(), "--dry-run");
-        assert!(find_arg(&result.args, "no-dry-run").is_some(), "--no-dry-run");
+        assert!(
+            find_arg(&result.args, "no-dry-run").is_some(),
+            "--no-dry-run"
+        );
     }
 
     #[test]
@@ -768,7 +775,10 @@ mod tests {
         let pvs = arg.get_possible_values();
         let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
         assert_eq!(possible, vec!["1", "2", "3"]);
-        let map = result.enum_maps.get("level").expect("enum_maps must have 'level'");
+        let map = result
+            .enum_maps
+            .get("level")
+            .expect("enum_maps must have 'level'");
         assert_eq!(map[0], serde_json::Value::Number(1.into()));
     }
 
@@ -839,7 +849,10 @@ mod tests {
         });
         let result = schema_to_clap_args(&schema).unwrap();
         let arg = find_arg(&result.args, "mode").unwrap();
-        assert!(!arg.is_required_set(), "required enforced post-parse, not at clap level");
+        assert!(
+            !arg.is_required_set(),
+            "required enforced post-parse, not at clap level"
+        );
     }
 
     #[test]

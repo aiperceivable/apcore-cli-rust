@@ -107,11 +107,7 @@ pub fn man_command() -> Command {
 }
 
 /// Build the roff SYNOPSIS line from a clap Command's arguments.
-pub fn build_synopsis(
-    cmd: Option<&clap::Command>,
-    prog_name: &str,
-    command_name: &str,
-) -> String {
+pub fn build_synopsis(cmd: Option<&clap::Command>, prog_name: &str, command_name: &str) -> String {
     let Some(cmd) = cmd else {
         return format!("\\fB{prog_name} {command_name}\\fR [OPTIONS]");
     };
@@ -211,10 +207,7 @@ pub fn generate_man_page(
     // .SH DESCRIPTION (using about text)
     if let Some(about) = cmd.and_then(|c| c.get_about()) {
         sections.push(".SH DESCRIPTION".to_string());
-        let escaped = about
-            .to_string()
-            .replace('\\', "\\\\")
-            .replace('-', "\\-");
+        let escaped = about.to_string().replace('\\', "\\\\").replace('-', "\\-");
         sections.push(escaped);
     } else {
         // Emit a stub DESCRIPTION section so it's always present
@@ -333,7 +326,10 @@ pub const EXIT_CODES: &[(&str, &str)] = &[
         "Configuration error (extensions directory not found or unreadable).",
     ),
     ("48", "Schema contains a circular \\fB$ref\\fR."),
-    ("77", "ACL denied \\- insufficient permissions for this module."),
+    (
+        "77",
+        "ACL denied \\- insufficient permissions for this module.",
+    ),
     ("130", "Execution cancelled by user (SIGINT / Ctrl\\-C)."),
 ];
 
@@ -444,28 +440,40 @@ mod tests {
     fn test_cmd_completion_bash_nonempty() {
         let mut cmd = make_test_cmd("apcore-cli");
         let output = cmd_completion(Shell::Bash, "apcore-cli", &mut cmd);
-        assert!(!output.is_empty(), "bash completion output must not be empty");
+        assert!(
+            !output.is_empty(),
+            "bash completion output must not be empty"
+        );
     }
 
     #[test]
     fn test_cmd_completion_zsh_nonempty() {
         let mut cmd = make_test_cmd("apcore-cli");
         let output = cmd_completion(Shell::Zsh, "apcore-cli", &mut cmd);
-        assert!(!output.is_empty(), "zsh completion output must not be empty");
+        assert!(
+            !output.is_empty(),
+            "zsh completion output must not be empty"
+        );
     }
 
     #[test]
     fn test_cmd_completion_fish_nonempty() {
         let mut cmd = make_test_cmd("apcore-cli");
         let output = cmd_completion(Shell::Fish, "apcore-cli", &mut cmd);
-        assert!(!output.is_empty(), "fish completion output must not be empty");
+        assert!(
+            !output.is_empty(),
+            "fish completion output must not be empty"
+        );
     }
 
     #[test]
     fn test_cmd_completion_elvish_nonempty() {
         let mut cmd = make_test_cmd("apcore-cli");
         let output = cmd_completion(Shell::Elvish, "apcore-cli", &mut cmd);
-        assert!(!output.is_empty(), "elvish completion output must not be empty");
+        assert!(
+            !output.is_empty(),
+            "elvish completion output must not be empty"
+        );
     }
 
     #[test]
@@ -482,7 +490,10 @@ mod tests {
     fn test_completion_command_has_shell_arg() {
         let cmd = completion_command();
         let arg = cmd.get_arguments().find(|a| a.get_id() == "shell");
-        assert!(arg.is_some(), "completion_command must have a 'shell' argument");
+        assert!(
+            arg.is_some(),
+            "completion_command must have a 'shell' argument"
+        );
     }
 
     #[test]
@@ -533,7 +544,10 @@ mod tests {
     fn test_build_synopsis_optional_option_has_brackets() {
         let cmd = make_exec_cmd();
         let synopsis = build_synopsis(Some(&cmd), "apcore-cli", "exec");
-        assert!(synopsis.contains('['), "optional option must be wrapped in brackets");
+        assert!(
+            synopsis.contains('['),
+            "optional option must be wrapped in brackets"
+        );
     }
 
     #[test]
@@ -554,14 +568,20 @@ mod tests {
     fn test_generate_man_page_contains_sh_synopsis() {
         let cmd = make_exec_cmd();
         let page = generate_man_page("exec", Some(&cmd), "apcore-cli", "0.2.0");
-        assert!(page.contains(".SH SYNOPSIS"), "man page must have SYNOPSIS section");
+        assert!(
+            page.contains(".SH SYNOPSIS"),
+            "man page must have SYNOPSIS section"
+        );
     }
 
     #[test]
     fn test_generate_man_page_contains_exit_codes() {
         let cmd = make_exec_cmd();
         let page = generate_man_page("exec", Some(&cmd), "apcore-cli", "0.2.0");
-        assert!(page.contains(".SH EXIT CODES"), "man page must have EXIT CODES section");
+        assert!(
+            page.contains(".SH EXIT CODES"),
+            "man page must have EXIT CODES section"
+        );
         assert!(page.contains("\\fB0\\fR"), "must contain exit code 0");
         assert!(page.contains("\\fB44\\fR"), "must contain exit code 44");
         assert!(page.contains("\\fB130\\fR"), "must contain exit code 130");
@@ -571,7 +591,10 @@ mod tests {
     fn test_generate_man_page_contains_environment() {
         let cmd = make_exec_cmd();
         let page = generate_man_page("exec", Some(&cmd), "apcore-cli", "0.2.0");
-        assert!(page.contains(".SH ENVIRONMENT"), "man page must have ENVIRONMENT section");
+        assert!(
+            page.contains(".SH ENVIRONMENT"),
+            "man page must have ENVIRONMENT section"
+        );
         assert!(page.contains("APCORE_EXTENSIONS_ROOT"));
         assert!(page.contains("APCORE_CLI_LOGGING_LEVEL"));
     }
@@ -580,7 +603,10 @@ mod tests {
     fn test_generate_man_page_contains_see_also() {
         let cmd = make_exec_cmd();
         let page = generate_man_page("exec", Some(&cmd), "apcore-cli", "0.2.0");
-        assert!(page.contains(".SH SEE ALSO"), "man page must have SEE ALSO section");
+        assert!(
+            page.contains(".SH SEE ALSO"),
+            "man page must have SEE ALSO section"
+        );
         assert!(page.contains("apcore-cli"));
     }
 
@@ -589,7 +615,10 @@ mod tests {
         let cmd = make_exec_cmd();
         let page = generate_man_page("exec", Some(&cmd), "apcore-cli", "0.2.0");
         let th_line = page.lines().find(|l| l.starts_with(".TH")).unwrap();
-        assert!(th_line.contains("APCORE-CLI-EXEC"), "TH must contain uppercased title");
+        assert!(
+            th_line.contains("APCORE-CLI-EXEC"),
+            "TH must contain uppercased title"
+        );
         assert!(th_line.contains("0.2.0"), "TH must contain version");
     }
 
@@ -597,7 +626,10 @@ mod tests {
     fn test_generate_man_page_name_uses_description() {
         let cmd = make_exec_cmd();
         let page = generate_man_page("exec", Some(&cmd), "apcore-cli", "0.2.0");
-        assert!(page.contains("Execute an apcore module"), "NAME must use about text");
+        assert!(
+            page.contains("Execute an apcore module"),
+            "NAME must use about text"
+        );
     }
 
     #[test]
@@ -618,7 +650,10 @@ mod tests {
     fn test_cmd_man_registered_subcommand_returns_ok() {
         let root = clap::Command::new("apcore-cli").subcommand(make_exec_cmd());
         let result = cmd_man("exec", &root, "apcore-cli", "0.2.0");
-        assert!(result.is_ok(), "registered subcommand 'exec' must return Ok");
+        assert!(
+            result.is_ok(),
+            "registered subcommand 'exec' must return Ok"
+        );
         let page = result.unwrap();
         assert!(page.contains(".TH"));
     }
@@ -637,7 +672,10 @@ mod tests {
     fn test_cmd_man_exec_contains_options_section() {
         let root = clap::Command::new("apcore-cli").subcommand(make_exec_cmd());
         let page = cmd_man("exec", &root, "apcore-cli", "0.2.0").unwrap();
-        assert!(page.contains(".SH OPTIONS"), "exec man page must have OPTIONS section");
+        assert!(
+            page.contains(".SH OPTIONS"),
+            "exec man page must have OPTIONS section"
+        );
     }
 
     // --- Task 4: register_shell_commands ---
@@ -658,7 +696,10 @@ mod tests {
         let root = Command::new("apcore-cli");
         let cmd = register_shell_commands(root, "apcore-cli");
         let names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
-        assert!(names.contains(&"man"), "must have 'man' subcommand, got {names:?}");
+        assert!(
+            names.contains(&"man"),
+            "must have 'man' subcommand, got {names:?}"
+        );
     }
 
     #[test]

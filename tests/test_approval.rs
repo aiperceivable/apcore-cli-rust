@@ -14,7 +14,10 @@ async fn test_check_approval_auto_approve_skips_prompt() {
         "annotations": {"requires_approval": true}
     });
     let result = check_approval(&module_def, true).await;
-    assert!(result.is_ok(), "expected Ok for auto_approve=true: {result:?}");
+    assert!(
+        result.is_ok(),
+        "expected Ok for auto_approve=true: {result:?}"
+    );
 }
 
 #[tokio::test]

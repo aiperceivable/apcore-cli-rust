@@ -93,7 +93,9 @@ impl AuthProvider {
         &self,
         builder: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder, AuthenticationError> {
-        let key = self.get_api_key().ok_or(AuthenticationError::MissingApiKey)?;
+        let key = self
+            .get_api_key()
+            .ok_or(AuthenticationError::MissingApiKey)?;
         Ok(builder.header("Authorization", format!("Bearer {key}")))
     }
 
@@ -212,7 +214,10 @@ mod tests {
         );
 
         let invalid = AuthenticationError::InvalidApiKey;
-        assert_eq!(invalid.to_string(), "Authentication failed. Verify your API key.");
+        assert_eq!(
+            invalid.to_string(),
+            "Authentication failed. Verify your API key."
+        );
     }
 
     #[test]
