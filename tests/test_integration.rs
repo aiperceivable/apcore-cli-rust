@@ -45,7 +45,7 @@ fn test_resolve_refs_then_schema_to_clap_args() {
 #[test]
 fn test_format_module_list_empty() {
     // An empty module list must not panic and must return a valid string.
-    let result = format_module_list(&[], "json");
+    let result = format_module_list(&[], "json", &[]);
     // TODO: assert result is valid JSON array "[]".
     assert!(false, "not implemented");
 }
