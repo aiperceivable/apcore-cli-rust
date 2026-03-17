@@ -183,7 +183,7 @@ pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserErr
     }
 
     let mut args: Vec<Arg> = Vec::new();
-    let bool_pairs: Vec<BoolFlagPair> = Vec::new();
+    let mut bool_pairs: Vec<BoolFlagPair> = Vec::new();
     let enum_maps: HashMap<String, Vec<Value>> = HashMap::new(); // populated in enum-choices task
     let mut seen_flags: HashMap<String, String> = HashMap::new(); // flag_long → prop_name
 
@@ -205,8 +205,42 @@ pub fn schema_to_clap_args(schema: &Value) -> Result<SchemaArgs, SchemaParserErr
         let help_text = extract_help(prop_schema);
         let default_val = prop_schema.get("default");
 
-        // Boolean is handled in boolean-flag-pairs task — skip for now.
+        // Boolean → --flag / --no-flag pair. Must be checked before enum.
         if schema_type == Some("boolean") {
+            let bool_default = prop_schema
+                .get("default")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let mut pos_arg = Arg::new(prop_name.clone())
+                .long(flag_long.clone())
+                .action(clap::ArgAction::SetTrue);
+            let mut neg_arg = Arg::new(format!("no-{}", prop_name))
+                .long(format!("no-{}", flag_long))
+                .action(clap::ArgAction::SetFalse);
+
+            if let Some(ref help) = help_text {
+                pos_arg = pos_arg.help(help.clone());
+                neg_arg = neg_arg.help(format!("Disable --{flag_long}"));
+            }
+
+            // Also register the no- flag in seen_flags to detect collisions.
+            let no_flag_long = format!("no-{}", flag_long);
+            seen_flags.insert(no_flag_long, format!("no-{}", prop_name));
+
+            args.push(pos_arg);
+            args.push(neg_arg);
+
+            bool_pairs.push(BoolFlagPair {
+                prop_name: prop_name.clone(),
+                flag_long,
+                default_val: bool_default,
+            });
+
+            // Suppress unused variable warning; is_required is intentionally
+            // not applied to boolean flags.
+            let _ = is_required;
+
             continue;
         }
 
@@ -514,5 +548,109 @@ mod tests {
         let prop = json!({"type": "foobar"});
         let arg = map_type("x", &prop).unwrap();
         assert_eq!(arg.get_long(), Some("x"));
+    }
+
+    // --- boolean flag pair tests ---
+
+    #[test]
+    fn test_boolean_flag_pair_produced() {
+        let schema = json!({
+            "properties": {"verbose": {"type": "boolean"}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        assert!(
+            find_arg(&result.args, "verbose").is_some(),
+            "--verbose must be present"
+        );
+        assert!(
+            find_arg(&result.args, "no-verbose").is_some(),
+            "--no-verbose must be present"
+        );
+    }
+
+    #[test]
+    fn test_boolean_pair_actions() {
+        let schema = json!({
+            "properties": {"verbose": {"type": "boolean"}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let pos_arg = find_arg(&result.args, "verbose").unwrap();
+        let neg_arg = find_arg(&result.args, "no-verbose").unwrap();
+        assert!(matches!(pos_arg.get_action(), clap::ArgAction::SetTrue));
+        assert!(matches!(neg_arg.get_action(), clap::ArgAction::SetFalse));
+    }
+
+    #[test]
+    fn test_boolean_default_false() {
+        let schema = json!({
+            "properties": {"debug": {"type": "boolean"}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let pair = result.bool_pairs.iter().find(|p| p.prop_name == "debug");
+        assert!(pair.is_some());
+        assert!(!pair.unwrap().default_val, "default must be false when not specified");
+    }
+
+    #[test]
+    fn test_boolean_default_true() {
+        let schema = json!({
+            "properties": {"enabled": {"type": "boolean", "default": true}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let pair = result
+            .bool_pairs
+            .iter()
+            .find(|p| p.prop_name == "enabled")
+            .expect("BoolFlagPair must be recorded");
+        assert!(pair.default_val, "default must be true when schema says true");
+    }
+
+    #[test]
+    fn test_boolean_pair_recorded_in_bool_pairs() {
+        let schema = json!({
+            "properties": {"dry_run": {"type": "boolean"}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let pair = result.bool_pairs.iter().find(|p| p.prop_name == "dry_run");
+        assert!(pair.is_some(), "BoolFlagPair must be recorded for dry_run");
+        assert_eq!(
+            pair.unwrap().flag_long,
+            "dry-run",
+            "flag_long must use hyphen form"
+        );
+    }
+
+    #[test]
+    fn test_boolean_underscore_to_hyphen() {
+        let schema = json!({
+            "properties": {"dry_run": {"type": "boolean"}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        assert!(find_arg(&result.args, "dry-run").is_some(), "--dry-run");
+        assert!(find_arg(&result.args, "no-dry-run").is_some(), "--no-dry-run");
+    }
+
+    #[test]
+    fn test_boolean_with_enum_true_treated_as_flag() {
+        let schema = json!({
+            "properties": {"strict": {"type": "boolean", "enum": [true]}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        assert!(find_arg(&result.args, "strict").is_some());
+        assert!(find_arg(&result.args, "no-strict").is_some());
+        assert!(!result.enum_maps.contains_key("strict"));
+    }
+
+    #[test]
+    fn test_boolean_not_counted_as_required_arg() {
+        let schema = json!({
+            "properties": {"active": {"type": "boolean"}},
+            "required": ["active"]
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let pos = find_arg(&result.args, "active").unwrap();
+        let neg = find_arg(&result.args, "no-active").unwrap();
+        assert!(!pos.is_required_set());
+        assert!(!neg.is_required_set());
     }
 }
