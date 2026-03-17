@@ -12,7 +12,7 @@ use serde_json::Value;
 /// JSON result to stdout.
 ///
 /// Exit codes mirror the main CLI conventions (0, 1, 44, 45, …).
-pub(crate) async fn run_sandbox_subprocess() -> Result<(), anyhow::Error> {
+pub async fn run_sandbox_subprocess() -> Result<(), anyhow::Error> {
     use tokio::io::AsyncReadExt;
 
     let module_id = std::env::args()
@@ -37,11 +37,11 @@ pub(crate) async fn run_sandbox_subprocess() -> Result<(), anyhow::Error> {
 }
 
 /// Serialise the sandbox result for IPC.
-pub(crate) fn encode_result(result: &Value) -> String {
+pub fn encode_result(result: &Value) -> String {
     serde_json::to_string(result).unwrap_or_else(|_| "null".to_string())
 }
 
 /// Deserialise the sandbox result received by the parent process.
-pub(crate) fn decode_result(raw: &str) -> Result<Value, serde_json::Error> {
+pub fn decode_result(raw: &str) -> Result<Value, serde_json::Error> {
     serde_json::from_str(raw)
 }
