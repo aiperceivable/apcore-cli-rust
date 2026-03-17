@@ -1,4 +1,4 @@
-.PHONY: setup check test lint fmt clean
+.PHONY: setup check test lint fmt clean build
 
 # One-time dev environment setup
 setup:
@@ -25,8 +25,17 @@ lint:
 test:
 	cargo test --all-features
 
+# Build release binary and symlink to .bin/
+build:
+	cargo build --release
+	@mkdir -p .bin
+	@ln -sf ../target/release/apcore-cli .bin/apcore-cli
+	@echo "Binary ready: .bin/apcore-cli"
+	@echo "Usage: PATH=.bin:\$$PATH apcore-cli --extensions-dir examples/extensions list"
+
 fmt:
 	cargo fmt --all
 
 clean:
 	cargo clean
+	@rm -rf .bin
