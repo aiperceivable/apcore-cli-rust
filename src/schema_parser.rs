@@ -33,6 +33,7 @@ pub enum SchemaParserError {
 // ---------------------------------------------------------------------------
 
 /// A single boolean --flag / --no-flag pair generated from a `type: boolean` property.
+#[derive(Debug)]
 pub struct BoolFlagPair {
     /// Original schema property name (e.g. "verbose").
     pub prop_name: String,
@@ -43,6 +44,7 @@ pub struct BoolFlagPair {
 }
 
 /// Full output of schema_to_clap_args.
+#[derive(Debug)]
 pub struct SchemaArgs {
     /// clap Args ready to attach to a clap::Command.
     pub args: Vec<Arg>,
@@ -744,5 +746,330 @@ mod tests {
         let neg = find_arg(&result.args, "no-active").unwrap();
         assert!(!pos.is_required_set());
         assert!(!neg.is_required_set());
+    }
+
+    // --- enum-choices tests ---
+
+    #[test]
+    fn test_enum_string_choices() {
+        let schema = json!({
+            "properties": {
+                "format": {"type": "string", "enum": ["json", "csv", "xml"]}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "format").expect("--format must exist");
+        let pvs = arg.get_possible_values();
+        let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
+        assert_eq!(possible, vec!["json", "csv", "xml"]);
+    }
+
+    #[test]
+    fn test_enum_integer_choices_as_strings() {
+        let schema = json!({
+            "properties": {
+                "level": {"type": "integer", "enum": [1, 2, 3]}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "level").expect("--level must exist");
+        let pvs = arg.get_possible_values();
+        let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
+        assert_eq!(possible, vec!["1", "2", "3"]);
+        let map = result.enum_maps.get("level").expect("enum_maps must have 'level'");
+        assert_eq!(map[0], serde_json::Value::Number(1.into()));
+    }
+
+    #[test]
+    fn test_enum_float_choices_as_strings() {
+        let schema = json!({
+            "properties": {
+                "ratio": {"type": "number", "enum": [0.5, 1.0, 1.5]}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "ratio").unwrap();
+        let pvs = arg.get_possible_values();
+        let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
+        assert!(possible.contains(&"0.5"));
+    }
+
+    #[test]
+    fn test_enum_bool_choices_as_strings() {
+        let schema = json!({
+            "properties": {
+                "flag": {"type": "string", "enum": [true, false]}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "flag").expect("--flag must exist");
+        let pvs = arg.get_possible_values();
+        let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
+        assert!(possible.contains(&"true"));
+        assert!(possible.contains(&"false"));
+    }
+
+    #[test]
+    fn test_enum_empty_array_falls_through_to_string() {
+        let schema = json!({
+            "properties": {
+                "x": {"type": "string", "enum": []}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "x").expect("--x must exist");
+        assert!(arg.get_possible_values().is_empty());
+        assert!(!result.enum_maps.contains_key("x"));
+    }
+
+    #[test]
+    fn test_enum_with_default() {
+        let schema = json!({
+            "properties": {
+                "format": {"type": "string", "enum": ["json", "table"], "default": "json"}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "format").unwrap();
+        assert_eq!(
+            arg.get_default_values().first().and_then(|v| v.to_str()),
+            Some("json")
+        );
+    }
+
+    #[test]
+    fn test_enum_required_property() {
+        let schema = json!({
+            "properties": {
+                "mode": {"type": "string", "enum": ["a", "b"]}
+            },
+            "required": ["mode"]
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "mode").unwrap();
+        assert!(!arg.is_required_set(), "required enforced post-parse, not at clap level");
+    }
+
+    #[test]
+    fn test_enum_stored_in_enum_maps() {
+        let schema = json!({
+            "properties": {
+                "priority": {"type": "integer", "enum": [1, 2, 3]}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        assert!(result.enum_maps.contains_key("priority"));
+        let map = &result.enum_maps["priority"];
+        assert_eq!(map.len(), 3);
+    }
+
+    // --- help-text-and-collision tests ---
+
+    #[test]
+    fn test_help_prefers_x_llm_description() {
+        let schema = json!({
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "description": "plain description",
+                    "x-llm-description": "LLM-optimised description"
+                }
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "q").unwrap();
+        let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
+        assert!(
+            help.contains("LLM-optimised"),
+            "help must come from x-llm-description, got: {help}"
+        );
+        assert!(
+            !help.contains("plain description"),
+            "help must NOT come from description when x-llm-description is present"
+        );
+    }
+
+    #[test]
+    fn test_help_falls_back_to_description() {
+        let schema = json!({
+            "properties": {
+                "q": {"type": "string", "description": "fallback text"}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "q").unwrap();
+        let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
+        assert!(help.contains("fallback text"));
+    }
+
+    #[test]
+    fn test_help_truncated_at_200_chars() {
+        let long_desc = "A".repeat(210);
+        let schema = json!({
+            "properties": {
+                "q": {"type": "string", "description": long_desc}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "q").unwrap();
+        let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
+        assert_eq!(help.len(), 200, "truncated help must be exactly 200 chars");
+        assert!(help.ends_with("..."), "truncated help must end with '...'");
+    }
+
+    #[test]
+    fn test_help_exactly_200_chars_not_truncated() {
+        let desc = "B".repeat(200);
+        let schema = json!({
+            "properties": {
+                "q": {"type": "string", "description": desc}
+            }
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "q").unwrap();
+        let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
+        assert_eq!(help.len(), 200);
+        assert!(!help.ends_with("..."));
+    }
+
+    #[test]
+    fn test_help_none_when_no_description_fields() {
+        let schema = json!({
+            "properties": {"q": {"type": "string"}}
+        });
+        let result = schema_to_clap_args(&schema).unwrap();
+        let arg = find_arg(&result.args, "q").unwrap();
+        assert!(arg.get_help().is_none());
+    }
+
+    #[test]
+    fn test_flag_collision_detection() {
+        let schema = json!({
+            "properties": {
+                "foo_bar": {"type": "string"},
+                "foo-bar": {"type": "string"}
+            }
+        });
+        let result = schema_to_clap_args(&schema);
+        assert!(
+            matches!(result, Err(SchemaParserError::FlagCollision { .. })),
+            "expected FlagCollision, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_flag_collision_error_message_contains_both_names() {
+        let schema = json!({
+            "properties": {
+                "my_flag": {"type": "string"},
+                "my-flag": {"type": "string"}
+            }
+        });
+        let err = schema_to_clap_args(&schema).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("my_flag") || msg.contains("my-flag"));
+        assert!(msg.contains("my-flag") || msg.contains("--my-flag"));
+    }
+
+    #[test]
+    fn test_no_collision_for_distinct_flags() {
+        let schema = json!({
+            "properties": {
+                "alpha": {"type": "string"},
+                "beta": {"type": "string"}
+            }
+        });
+        let result = schema_to_clap_args(&schema);
+        assert!(result.is_ok());
+    }
+
+    // --- reconvert_enum_values tests ---
+
+    fn make_kwargs(pairs: &[(&str, &str)]) -> HashMap<String, Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+            .collect()
+    }
+
+    #[test]
+    fn test_reconvert_string_enum_passthrough() {
+        let schema = json!({
+            "properties": {"format": {"type": "string", "enum": ["json", "csv"]}}
+        });
+        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let kwargs = make_kwargs(&[("format", "json")]);
+        let result = reconvert_enum_values(kwargs, &schema_args);
+        assert_eq!(result["format"], Value::String("json".to_string()));
+    }
+
+    #[test]
+    fn test_reconvert_integer_enum() {
+        let schema = json!({
+            "properties": {"level": {"type": "integer", "enum": [1, 2, 3]}}
+        });
+        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let kwargs = make_kwargs(&[("level", "2")]);
+        let result = reconvert_enum_values(kwargs, &schema_args);
+        assert_eq!(result["level"], json!(2));
+        assert!(result["level"].is_number());
+    }
+
+    #[test]
+    fn test_reconvert_float_enum() {
+        let schema = json!({
+            "properties": {"ratio": {"type": "number", "enum": [0.5, 1.0, 1.5]}}
+        });
+        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let kwargs = make_kwargs(&[("ratio", "1.5")]);
+        let result = reconvert_enum_values(kwargs, &schema_args);
+        assert!(result["ratio"].is_number());
+        assert_eq!(result["ratio"].as_f64(), Some(1.5));
+    }
+
+    #[test]
+    fn test_reconvert_bool_enum() {
+        let schema = json!({
+            "properties": {"strict": {"type": "string", "enum": [true, false]}}
+        });
+        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let kwargs = make_kwargs(&[("strict", "true")]);
+        let result = reconvert_enum_values(kwargs, &schema_args);
+        assert_eq!(result["strict"], Value::Bool(true));
+    }
+
+    #[test]
+    fn test_reconvert_non_enum_field_unchanged() {
+        let schema = json!({
+            "properties": {"name": {"type": "string"}}
+        });
+        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let kwargs = make_kwargs(&[("name", "alice")]);
+        let result = reconvert_enum_values(kwargs, &schema_args);
+        assert_eq!(result["name"], Value::String("alice".to_string()));
+    }
+
+    #[test]
+    fn test_reconvert_null_value_unchanged() {
+        let schema = json!({
+            "properties": {"mode": {"type": "string", "enum": ["a", "b"]}}
+        });
+        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let mut kwargs: HashMap<String, Value> = HashMap::new();
+        kwargs.insert("mode".to_string(), Value::Null);
+        let result = reconvert_enum_values(kwargs, &schema_args);
+        assert_eq!(result["mode"], Value::Null);
+    }
+
+    #[test]
+    fn test_reconvert_preserves_non_enum_keys() {
+        let schema = json!({
+            "properties": {"format": {"type": "string", "enum": ["json"]}}
+        });
+        let schema_args = schema_to_clap_args(&schema).unwrap();
+        let mut kwargs = make_kwargs(&[("format", "json")]);
+        kwargs.insert("extra".to_string(), Value::String("untouched".to_string()));
+        let result = reconvert_enum_values(kwargs, &schema_args);
+        assert_eq!(result["extra"], Value::String("untouched".to_string()));
     }
 }
