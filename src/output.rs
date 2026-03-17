@@ -167,16 +167,164 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
 // format_module_detail
 // ---------------------------------------------------------------------------
 
+/// Render a minimal bordered panel heading. Returns a String with a box around `title`.
+fn render_panel(title: &str) -> String {
+    use comfy_table::Table;
+    let mut table = Table::new();
+    table.load_preset(comfy_table::presets::UTF8_FULL);
+    table.add_row(vec![title]);
+    table.to_string()
+}
+
+/// Render an optional section with a label and preformatted content.
+/// Returns None if content is empty.
+fn render_section(title: &str, content: &str) -> Option<String> {
+    if content.is_empty() {
+        return None;
+    }
+    Some(format!("\n{}:\n{}", title, content))
+}
+
 /// Render a single module descriptor with its full schema.
 ///
 /// # Arguments
 /// * `module` — `serde_json::Value` module descriptor
 /// * `format` — `"table"` or `"json"`
 pub fn format_module_detail(module: &Value, format: &str) -> String {
-    // TODO: table → multi-section comfy-table (metadata + schema fields)
-    //       json  → serde_json::to_string_pretty
-    let _ = (module, format);
-    todo!("format_module_detail")
+    let id = extract_str(module, &["module_id", "id", "canonical_id"]);
+    let description = extract_str(module, &["description"]);
+
+    match format {
+        "table" => {
+            let mut parts: Vec<String> = Vec::new();
+
+            // Header panel.
+            parts.push(render_panel(&format!("Module: {}", id)));
+
+            // Description.
+            parts.push(format!("\nDescription:\n  {}", description));
+
+            // Input schema.
+            if let Some(input_schema) = module.get("input_schema").filter(|v| !v.is_null()) {
+                let content = serde_json::to_string_pretty(input_schema)
+                    .unwrap_or_else(|_| "{}".to_string());
+                if let Some(section) = render_section("Input Schema", &content) {
+                    parts.push(section);
+                }
+            }
+
+            // Output schema.
+            if let Some(output_schema) = module.get("output_schema").filter(|v| !v.is_null()) {
+                let content = serde_json::to_string_pretty(output_schema)
+                    .unwrap_or_else(|_| "{}".to_string());
+                if let Some(section) = render_section("Output Schema", &content) {
+                    parts.push(section);
+                }
+            }
+
+            // Annotations.
+            if let Some(ann) = module.get("annotations").and_then(|v| v.as_object()) {
+                if !ann.is_empty() {
+                    let content: String = ann
+                        .iter()
+                        .map(|(k, v)| {
+                            let val = v.as_str().unwrap_or(&v.to_string()).to_string();
+                            format!("  {}: {}", k, val)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if let Some(section) = render_section("Annotations", &content) {
+                        parts.push(section);
+                    }
+                }
+            }
+
+            // Extension metadata (x- or x_ prefixed keys at the top level).
+            let x_fields: Vec<(String, String)> = module
+                .as_object()
+                .map(|obj| {
+                    obj.iter()
+                        .filter(|(k, _)| k.starts_with("x-") || k.starts_with("x_"))
+                        .map(|(k, v)| {
+                            let val = v.as_str().unwrap_or(&v.to_string()).to_string();
+                            (k.clone(), val)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !x_fields.is_empty() {
+                let content: String = x_fields
+                    .iter()
+                    .map(|(k, v)| format!("  {}: {}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if let Some(section) = render_section("Extension Metadata", &content) {
+                    parts.push(section);
+                }
+            }
+
+            // Tags.
+            let tags = extract_tags(module);
+            if !tags.is_empty() {
+                if let Some(section) = render_section("Tags", &format!("  {}", tags.join(", "))) {
+                    parts.push(section);
+                }
+            }
+
+            parts.join("\n")
+        }
+        "json" => {
+            let mut result = serde_json::Map::new();
+            result.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+            result.insert(
+                "description".to_string(),
+                serde_json::Value::String(description.to_string()),
+            );
+
+            // Optional fields: only include if present and non-null.
+            for key in &["input_schema", "output_schema"] {
+                if let Some(v) = module.get(*key).filter(|v| !v.is_null()) {
+                    result.insert(key.to_string(), v.clone());
+                }
+            }
+
+            if let Some(ann) = module
+                .get("annotations")
+                .filter(|v| !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty()))
+            {
+                result.insert("annotations".to_string(), ann.clone());
+            }
+
+            let tags = extract_tags(module);
+            if !tags.is_empty() {
+                result.insert(
+                    "tags".to_string(),
+                    serde_json::Value::Array(
+                        tags.into_iter().map(serde_json::Value::String).collect(),
+                    ),
+                );
+            }
+
+            // Extension metadata.
+            if let Some(obj) = module.as_object() {
+                for (k, v) in obj {
+                    if k.starts_with("x-") || k.starts_with("x_") {
+                        result.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+
+            serde_json::to_string_pretty(&serde_json::Value::Object(result))
+                .unwrap_or_else(|_| "{}".to_string())
+        }
+        unknown => {
+            tracing::warn!(
+                "Unknown format '{}' in format_module_detail, using json.",
+                unknown
+            );
+            format_module_detail(module, "json")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -346,12 +494,6 @@ mod tests {
 
     // Placeholder tests for future tasks (kept to avoid removing stubs needed by other tasks)
     #[test]
-    fn test_format_module_detail_json() {
-        // TODO: verify detail JSON output structure.
-        assert!(false, "not implemented");
-    }
-
-    #[test]
     fn test_format_exec_result_json() {
         // TODO: verify execution result JSON round-trips correctly.
         assert!(false, "not implemented");
@@ -361,5 +503,135 @@ mod tests {
     fn test_format_exec_result_table() {
         // TODO: verify table output contains result key-value pairs.
         assert!(false, "not implemented");
+    }
+
+    // --- format_module_detail ---
+
+    #[test]
+    fn test_format_module_detail_json_full() {
+        let module = json!({
+            "module_id": "math.add",
+            "description": "Add two numbers",
+            "input_schema": {"type": "object", "properties": {"a": {"type": "integer"}}},
+            "output_schema": {"type": "object", "properties": {"result": {"type": "integer"}}},
+            "tags": ["math"],
+            "annotations": {"author": "test"}
+        });
+        let output = format_module_detail(&module, "json");
+        let parsed: serde_json::Value = serde_json::from_str(&output).expect("must be valid JSON");
+        assert_eq!(parsed["id"], "math.add");
+        assert_eq!(parsed["description"], "Add two numbers");
+        assert!(parsed.get("input_schema").is_some(), "input_schema must be present");
+        assert!(parsed.get("output_schema").is_some(), "output_schema must be present");
+        let tags = parsed["tags"].as_array().unwrap();
+        assert_eq!(tags[0], "math");
+    }
+
+    #[test]
+    fn test_format_module_detail_json_no_output_schema() {
+        let module = json!({
+            "module_id": "text.upper",
+            "description": "Uppercase",
+        });
+        let output = format_module_detail(&module, "json");
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(parsed.get("output_schema").is_none(), "output_schema must be absent when not set");
+    }
+
+    #[test]
+    fn test_format_module_detail_json_no_none_fields() {
+        let module = json!({
+            "module_id": "a.b",
+            "description": "desc",
+            "input_schema": null,
+            "output_schema": null,
+            "tags": null,
+        });
+        let output = format_module_detail(&module, "json");
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(parsed.get("input_schema").is_none(), "null input_schema must be absent");
+        assert!(parsed.get("tags").is_none(), "null tags must be absent");
+    }
+
+    #[test]
+    fn test_format_module_detail_table_contains_description() {
+        let module = json!({
+            "module_id": "math.add",
+            "description": "Add two numbers",
+        });
+        let output = format_module_detail(&module, "table");
+        assert!(output.contains("Add two numbers"), "table must contain description");
+    }
+
+    #[test]
+    fn test_format_module_detail_table_contains_module_id() {
+        let module = json!({
+            "module_id": "math.add",
+            "description": "desc",
+        });
+        let output = format_module_detail(&module, "table");
+        assert!(output.contains("math.add"), "table must contain module ID");
+    }
+
+    #[test]
+    fn test_format_module_detail_table_input_schema_section() {
+        let module = json!({
+            "module_id": "math.add",
+            "description": "desc",
+            "input_schema": {"type": "object"}
+        });
+        let output = format_module_detail(&module, "table");
+        assert!(output.contains("Input Schema"), "table must contain Input Schema section");
+    }
+
+    #[test]
+    fn test_format_module_detail_table_no_output_schema_section_when_absent() {
+        let module = json!({
+            "module_id": "text.upper",
+            "description": "desc",
+        });
+        let output = format_module_detail(&module, "table");
+        assert!(
+            !output.contains("Output Schema"),
+            "Output Schema section must be absent when not set"
+        );
+    }
+
+    #[test]
+    fn test_format_module_detail_table_tags_section() {
+        let module = json!({
+            "module_id": "math.add",
+            "description": "desc",
+            "tags": ["math", "arithmetic"]
+        });
+        let output = format_module_detail(&module, "table");
+        assert!(output.contains("Tags"), "table must contain Tags section");
+        assert!(output.contains("math"), "table must contain tag value");
+    }
+
+    #[test]
+    fn test_format_module_detail_table_annotations_section() {
+        let module = json!({
+            "module_id": "a.b",
+            "description": "desc",
+            "annotations": {"author": "alice", "version": "1.0"}
+        });
+        let output = format_module_detail(&module, "table");
+        assert!(output.contains("Annotations"), "table must contain Annotations section");
+        assert!(output.contains("author"), "table must contain annotation key");
+        assert!(output.contains("alice"), "table must contain annotation value");
+    }
+
+    #[test]
+    fn test_format_module_detail_table_extension_metadata() {
+        let module = json!({
+            "module_id": "a.b",
+            "description": "desc",
+            "x-category": "utility"
+        });
+        let output = format_module_detail(&module, "table");
+        assert!(output.contains("Extension Metadata"), "must contain Extension Metadata section");
+        assert!(output.contains("x-category"), "must contain x- key");
+        assert!(output.contains("utility"), "must contain x- value");
     }
 }
