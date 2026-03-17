@@ -290,7 +290,7 @@ pub fn format_module_detail(module: &Value, format: &str) -> String {
 
             if let Some(ann) = module
                 .get("annotations")
-                .filter(|v| !v.is_null() && v.as_object().map_or(false, |o| !o.is_empty()))
+                .filter(|v| !v.is_null() && v.as_object().is_some_and(|o| !o.is_empty()))
             {
                 result.insert("annotations".to_string(), ann.clone());
             }

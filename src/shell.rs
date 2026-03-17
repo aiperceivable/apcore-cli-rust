@@ -145,7 +145,7 @@ pub fn build_synopsis(
             } else {
                 format!("\\-{}", arg.get_short().unwrap())
             };
-            let is_flag = arg.get_num_args().map_or(false, |r| r.max_values() == 0);
+            let is_flag = arg.get_num_args().is_some_and(|r| r.max_values() == 0);
             if is_flag {
                 parts.push(format!("[{flag}]"));
             } else {
@@ -245,7 +245,7 @@ pub fn generate_man_page(
                 };
                 let flag_str = flag_parts.join(", ");
 
-                let is_flag = arg.get_num_args().map_or(false, |r| r.max_values() == 0);
+                let is_flag = arg.get_num_args().is_some_and(|r| r.max_values() == 0);
                 sections.push(".TP".to_string());
                 if is_flag {
                     sections.push(format!("\\fB{flag_str}\\fR"));

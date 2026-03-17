@@ -245,10 +245,15 @@ async fn main() {
         }
     }
 
-    // Build a real registry from the extensions directory for dispatch.
+    // Build shared registry, executor, and apcore executor for dispatch.
     let registry = apcore::Registry::new();
     let registry_provider: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
         std::sync::Arc::new(apcore_cli::discovery::ApCoreRegistryProvider::new(registry));
+    let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
+        std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
+            apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
+        ));
+    let apcore_executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
 
     let prog_name = resolve_prog_name(None);
 
@@ -315,11 +320,6 @@ async fn main() {
         Some(("exec", sub_m)) => {
             let module_id = sub_m.get_one::<String>("module_id")
                 .expect("module_id is required");
-            let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
-                std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
-                    apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
-                ));
-            let apcore_executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
             apcore_cli::cli::dispatch_module(
                 module_id, sub_m, &registry_provider, &executor, &apcore_executor,
             ).await;
@@ -333,18 +333,21 @@ async fn main() {
                 .get_many::<std::ffi::OsString>("")
                 .into_iter()
                 .flatten()
-                .filter_map(|s| s.to_str().map(|v| v.to_string()))
+                .filter_map(|s| {
+                    match s.to_str() {
+                        Some(v) => Some(v.to_string()),
+                        None => {
+                            tracing::warn!("Dropping non-UTF8 argument: {:?}", s);
+                            None
+                        }
+                    }
+                })
                 .collect();
 
-            // Build a temporary command with the same flags as exec_command
-            // (minus the positional module_id arg).
-            let temp_cmd = clap::Command::new(&external)
-                .arg(clap::Arg::new("input").long("input").value_name("SOURCE"))
-                .arg(clap::Arg::new("yes").long("yes").short('y').action(clap::ArgAction::SetTrue))
-                .arg(clap::Arg::new("large-input").long("large-input").action(clap::ArgAction::SetTrue))
-                .arg(clap::Arg::new("format").long("format").value_parser(["table", "json"]))
-                .arg(clap::Arg::new("sandbox").long("sandbox").action(clap::ArgAction::SetTrue))
-                .no_binary_name(true);
+            // Reuse the shared dispatch flags via add_dispatch_flags.
+            let temp_cmd = apcore_cli::cli::add_dispatch_flags(
+                clap::Command::new(&external).no_binary_name(true),
+            );
 
             let ext_matches = temp_cmd.try_get_matches_from(&trailing)
                 .unwrap_or_else(|e| {
@@ -352,11 +355,6 @@ async fn main() {
                     std::process::exit(2);
                 });
 
-            let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
-                std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
-                    apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
-                ));
-            let apcore_executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
             apcore_cli::cli::dispatch_module(
                 &external, &ext_matches, &registry_provider, &executor, &apcore_executor,
             ).await;

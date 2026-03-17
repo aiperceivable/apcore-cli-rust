@@ -56,7 +56,7 @@ impl ConfigResolver {
 
         Self {
             cli_flags: cli_flags.unwrap_or_default(),
-            config_file: config_file,
+            config_file,
             config_path,
             defaults,
         }

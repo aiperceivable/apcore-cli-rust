@@ -78,51 +78,33 @@ pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
 // exec_command — clap subcommand builder for `exec`
 // ---------------------------------------------------------------------------
 
+/// Add the standard dispatch flags (--input, --yes, --large-input, --format,
+/// --sandbox) to a clap Command. Used by both `exec_command()` and the external
+/// subcommand re-parser in main.rs.
+pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
+    use clap::{Arg, ArgAction};
+    cmd.arg(Arg::new("input").long("input").value_name("SOURCE").help("Input source (file path or '-' for stdin)"))
+        .arg(Arg::new("yes").long("yes").short('y').action(ArgAction::SetTrue).help("Auto-approve all confirmation prompts"))
+        .arg(Arg::new("large-input").long("large-input").action(ArgAction::SetTrue).help("Allow larger-than-default input payloads"))
+        .arg(Arg::new("format").long("format").value_parser(["table", "json"]).help("Output format (table or json)"))
+        .arg(Arg::new("sandbox").long("sandbox").action(ArgAction::SetTrue).help("Run module in subprocess sandbox"))
+}
+
 /// Build the `exec` clap subcommand.
 ///
 /// `exec` runs an apcore module by its fully-qualified module ID.
 pub fn exec_command() -> clap::Command {
-    use clap::{Arg, ArgAction, Command};
+    use clap::{Arg, Command};
 
-    Command::new("exec")
+    let cmd = Command::new("exec")
         .about("Execute an apcore module")
         .arg(
             Arg::new("module_id")
                 .required(true)
                 .value_name("MODULE_ID")
                 .help("Fully-qualified module ID to execute"),
-        )
-        .arg(
-            Arg::new("input")
-                .long("input")
-                .value_name("SOURCE")
-                .help("Input source (file path or '-' for stdin)"),
-        )
-        .arg(
-            Arg::new("yes")
-                .long("yes")
-                .short('y')
-                .action(ArgAction::SetTrue)
-                .help("Auto-approve all confirmation prompts"),
-        )
-        .arg(
-            Arg::new("large-input")
-                .long("large-input")
-                .action(ArgAction::SetTrue)
-                .help("Allow larger-than-default input payloads"),
-        )
-        .arg(
-            Arg::new("format")
-                .long("format")
-                .value_parser(["table", "json"])
-                .help("Output format (table or json)"),
-        )
-        .arg(
-            Arg::new("sandbox")
-                .long("sandbox")
-                .action(ArgAction::SetTrue)
-                .help("Run module in subprocess sandbox"),
-        )
+        );
+    add_dispatch_flags(cmd)
 }
 
 // ---------------------------------------------------------------------------
@@ -214,13 +196,6 @@ impl LazyModuleGroup {
 // build_module_command
 // ---------------------------------------------------------------------------
 
-/// Module IDs that are reserved for built-in commands. Passing one of these
-/// as the module name to `build_module_command` returns a
-/// `CliError::ReservedModuleId` error.
-///
-/// Must stay in sync with `BUILTIN_COMMANDS`.
-pub const RESERVED_COMMAND_NAMES: &[&str] = &["completion", "describe", "exec", "list", "man"];
-
 /// Built-in flag names added to every generated module command. A schema
 /// property that collides with one of these names will cause
 /// `std::process::exit(2)`.
@@ -249,7 +224,7 @@ pub fn build_module_command(
     let module_id = &module_def.name;
 
     // Guard: reject reserved command names immediately.
-    if RESERVED_COMMAND_NAMES.contains(&module_id.as_str()) {
+    if BUILTIN_COMMANDS.contains(&module_id.as_str()) {
         return Err(CliError::ReservedModuleId(module_id.clone()));
     }
 
@@ -500,7 +475,7 @@ pub(crate) fn map_apcore_error_to_exit_code(error_code: &str) -> i32 {
 /// `map_apcore_error_to_exit_code`.
 pub(crate) fn map_module_error_to_exit_code(err: &apcore::errors::ModuleError) -> i32 {
     // Serialise the ErrorCode enum to its SCREAMING_SNAKE_CASE string.
-    let code_str = serde_json::to_value(&err.code)
+    let code_str = serde_json::to_value(err.code)
         .ok()
         .and_then(|v| v.as_str().map(|s| s.to_string()))
         .unwrap_or_default();
@@ -976,7 +951,7 @@ mod tests {
 
     #[test]
     fn test_build_module_command_reserved_name_returns_error() {
-        for reserved in RESERVED_COMMAND_NAMES {
+        for reserved in BUILTIN_COMMANDS {
             let module = make_module_descriptor(reserved, "desc", None);
             let executor = mock_executor();
             let result = build_module_command(&module, executor);
