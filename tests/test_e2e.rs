@@ -17,8 +17,8 @@ fn run_apcore(args: &[&str]) -> std::process::Output {
 
 #[test]
 fn test_e2e_help_flag_exits_0() {
-    // `apcore-cli --extensions-dir ./tests/fixtures/extensions --help` must exit 0.
-    let out = run_apcore(&["--extensions-dir", "./tests/fixtures/extensions", "--help"]);
+    // `apcore-cli --extensions-dir ./examples/extensions --help` must exit 0.
+    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "--help"]);
     assert_eq!(out.status.code(), Some(0));
 }
 
@@ -34,78 +34,87 @@ fn test_e2e_version_flag() {
 #[test]
 fn test_e2e_list_command() {
     // `apcore-cli --extensions-dir ... list` must exit 0.
-    let out = run_apcore(&["--extensions-dir", "./tests/fixtures/extensions", "list"]);
+    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "list"]);
     assert_eq!(out.status.code(), Some(0));
 }
 
 #[test]
 fn test_e2e_describe_command() {
-    // `apcore-cli --extensions-dir ... describe math.add` must exit 0.
     let out = run_apcore(&[
         "--extensions-dir",
-        "./tests/fixtures/extensions",
+        "./examples/extensions",
         "describe",
         "math.add",
     ]);
-    // Exit 0 once fully implemented; currently exits 0 (stub).
-    assert!(
-        out.status.code() == Some(0) || out.status.code() == Some(44),
-        "describe exits 0 or 44 (stub)"
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "describe math.add must exit 0 with real extensions"
     );
 }
 
 #[test]
 fn test_e2e_execute_math_add() {
-    // External subcommand "math.add" now routes through dispatch_module.
-    // With a real extensions dir the module should be found; exit 0 on success
-    // or 44 if not found in registry (valid module ID format).
+    // External subcommand "math.add" routes through dispatch_module and
+    // executes via run.sh with real example extensions.
     let out = run_apcore(&[
         "--extensions-dir",
-        "./tests/fixtures/extensions",
+        "./examples/extensions",
         "math.add",
+        "--a",
+        "3",
+        "--b",
+        "4",
     ]);
-    // dispatch_module validates the module ID (exit 2 if invalid format)
-    // then looks it up in the registry (exit 44 if not found).
-    // math.add is a valid ID format, so we expect 0 (found) or 44 (not found).
-    assert!(
-        out.status.code() == Some(0) || out.status.code() == Some(44),
-        "math.add via external subcommand must route to dispatch_module, got {:?}",
-        out.status.code()
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "math.add --a 3 --b 4 must exit 0, got {:?}\nstderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
     );
-    // Must NOT contain the old "not yet implemented" message.
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        !stderr.contains("not yet implemented"),
-        "external subcommand must not print 'not yet implemented'"
+        stdout.contains("\"sum\""),
+        "output must contain sum field: {stdout}"
     );
 }
 
 #[test]
 fn test_e2e_stdin_piping() {
-    // External subcommand "math.add --input -" now routes through dispatch_module.
-    // stdin is /dev/null so collect_input reads empty input.
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
+    // Pipe JSON input via stdin to exec math.add.
+    use std::io::Write;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .args([
             "--extensions-dir",
-            "./tests/fixtures/extensions",
+            "./examples/extensions",
             "exec",
             "math.add",
             "--input",
             "-",
         ])
-        .stdin(std::process::Stdio::null())
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
-    // dispatch_module validates ID then does registry lookup; expect 0 or 44.
-    assert!(
-        out.status.code() == Some(0) || out.status.code() == Some(44),
-        "exec math.add --input - must route to dispatch_module, got {:?}",
-        out.status.code()
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"{\"a\": 10, \"b\": 20}")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "exec math.add --input - must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        !stderr.contains("not yet implemented"),
-        "exec subcommand must not print 'not yet implemented'"
+        stdout.contains("\"sum\""),
+        "output must contain sum: {stdout}"
     );
 }
 
@@ -113,7 +122,7 @@ fn test_e2e_stdin_piping() {
 fn test_e2e_unknown_module_exits_44() {
     let out = run_apcore(&[
         "--extensions-dir",
-        "./tests/fixtures/extensions",
+        "./examples/extensions",
         "nonexistent.module",
     ]);
     assert_eq!(out.status.code(), Some(44));
@@ -121,23 +130,40 @@ fn test_e2e_unknown_module_exits_44() {
 
 #[test]
 fn test_e2e_exec_subcommand_routes_to_dispatch() {
-    // `apcore-cli exec math.add` must route through dispatch_module.
-    let out = run_apcore(&[
-        "--extensions-dir",
-        "./tests/fixtures/extensions",
-        "exec",
-        "math.add",
-    ]);
-    // Valid module ID format; exit 0 (found) or 44 (not in registry).
-    assert!(
-        out.status.code() == Some(0) || out.status.code() == Some(44),
-        "exec math.add must route to dispatch_module, got {:?}",
-        out.status.code()
+    // exec subcommand uses --input - for JSON input (schema flags like --a
+    // are only available via the external subcommand path, not exec).
+    use std::io::Write;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
+        .args([
+            "--extensions-dir",
+            "./examples/extensions",
+            "exec",
+            "math.add",
+            "--input",
+            "-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"{\"a\": 1, \"b\": 2}")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "exec math.add must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        !stderr.contains("not yet implemented"),
-        "exec subcommand must not print 'not yet implemented'"
+        stdout.contains("\"sum\""),
+        "output must contain sum: {stdout}"
     );
 }
 
@@ -146,7 +172,7 @@ fn test_e2e_exec_invalid_module_id_exits_2() {
     // An invalid module ID format (no dot separator) should exit 2.
     let out = run_apcore(&[
         "--extensions-dir",
-        "./tests/fixtures/extensions",
+        "./examples/extensions",
         "exec",
         "INVALID",
     ]);
@@ -161,7 +187,7 @@ fn test_e2e_exec_invalid_module_id_exits_2() {
 #[test]
 fn test_e2e_external_invalid_module_id_exits_2() {
     // An invalid module ID format via external subcommand should exit 2.
-    let out = run_apcore(&["--extensions-dir", "./tests/fixtures/extensions", "INVALID"]);
+    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "INVALID"]);
     assert_eq!(
         out.status.code(),
         Some(2),
@@ -173,11 +199,7 @@ fn test_e2e_external_invalid_module_id_exits_2() {
 #[test]
 fn test_e2e_invalid_input_exits_2() {
     // Missing required positional for describe exits 2.
-    let out = run_apcore(&[
-        "--extensions-dir",
-        "./tests/fixtures/extensions",
-        "describe",
-    ]);
+    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "describe"]);
     assert_eq!(out.status.code(), Some(2));
 }
 
@@ -186,7 +208,7 @@ fn test_e2e_completion_bash() {
     // `apcore-cli --extensions-dir ... completion bash` must exit 0.
     let out = run_apcore(&[
         "--extensions-dir",
-        "./tests/fixtures/extensions",
+        "./examples/extensions",
         "completion",
         "bash",
     ]);
@@ -199,7 +221,7 @@ fn test_e2e_completion_bash() {
 
 #[test]
 fn test_help_flag_exits_0_contains_builtins() {
-    let out = run_apcore(&["--extensions-dir", "./tests/fixtures/extensions", "--help"]);
+    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "--help"]);
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
     for builtin in ["list", "describe", "completion"] {
@@ -233,7 +255,7 @@ fn test_extensions_dir_missing_exits_47() {
 #[test]
 fn test_extensions_dir_env_var_respected() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
-        .env("APCORE_EXTENSIONS_ROOT", "./tests/fixtures/extensions")
+        .env("APCORE_EXTENSIONS_ROOT", "./examples/extensions")
         .args(["--help"])
         .output()
         .unwrap();
@@ -245,7 +267,7 @@ fn test_extensions_dir_flag_overrides_env() {
     // --extensions-dir flag takes precedence over APCORE_EXTENSIONS_ROOT.
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .env("APCORE_EXTENSIONS_ROOT", "/nonexistent/path")
-        .args(["--extensions-dir", "./tests/fixtures/extensions", "--help"])
+        .args(["--extensions-dir", "./examples/extensions", "--help"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));

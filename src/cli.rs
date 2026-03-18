@@ -567,9 +567,21 @@ pub fn reconcile_bool_pairs(
 ) -> HashMap<String, Value> {
     let mut result = HashMap::new();
     for pair in bool_pairs {
-        let pos_set = matches.get_flag(&pair.prop_name);
+        // Use try_get_one to avoid panicking when the flag doesn't exist
+        // in ArgMatches (e.g. exec subcommand doesn't have schema-derived flags).
+        let pos_set = matches
+            .try_get_one::<bool>(&pair.prop_name)
+            .ok()
+            .flatten()
+            .copied()
+            .unwrap_or(false);
         let neg_id = format!("no-{}", pair.prop_name);
-        let neg_set = matches.get_flag(&neg_id);
+        let neg_set = matches
+            .try_get_one::<bool>(&neg_id)
+            .ok()
+            .flatten()
+            .copied()
+            .unwrap_or(false);
         let val = if pos_set {
             true
         } else if neg_set {
@@ -606,9 +618,11 @@ fn extract_cli_kwargs(
         if id.starts_with("no-") {
             continue;
         }
-        if let Some(val) = matches.get_one::<String>(&id) {
+        // Use try_get_one to avoid panicking when the arg doesn't exist
+        // in ArgMatches (e.g. exec subcommand doesn't have schema-derived flags).
+        if let Ok(Some(val)) = matches.try_get_one::<String>(&id) {
             kwargs.insert(id, Value::String(val.clone()));
-        } else if let Some(val) = matches.get_one::<std::path::PathBuf>(&id) {
+        } else if let Ok(Some(val)) = matches.try_get_one::<std::path::PathBuf>(&id) {
             kwargs.insert(id, Value::String(val.to_string_lossy().to_string()));
         } else {
             kwargs.insert(id, Value::Null);
