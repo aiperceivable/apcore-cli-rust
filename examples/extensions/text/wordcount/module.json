@@ -16,5 +16,6 @@
       "words": { "type": "integer", "description": "Number of whitespace-delimited words" },
       "lines": { "type": "integer", "description": "Number of newline-delimited lines" }
     }
-  }
+  },
+  "executable": "run.sh"
 }

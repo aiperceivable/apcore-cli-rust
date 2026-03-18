@@ -17,5 +17,6 @@
       "user": { "type": "string", "description": "Current user name" },
       "rust_version": { "type": "string", "description": "Rust compiler version" }
     }
-  }
+  },
+  "executable": "run.sh"
 }

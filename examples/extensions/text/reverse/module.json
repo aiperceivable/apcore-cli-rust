@@ -14,5 +14,6 @@
     "properties": {
       "result": { "type": "string", "description": "The reversed string" }
     }
-  }
+  },
+  "executable": "run.sh"
 }

@@ -4,7 +4,8 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -58,6 +59,19 @@ pub enum CliError {
 // ---------------------------------------------------------------------------
 
 static AUDIT_LOGGER: Mutex<Option<AuditLogger>> = Mutex::new(None);
+
+// ---------------------------------------------------------------------------
+// Global executable map (module name -> script path, set once at startup)
+// ---------------------------------------------------------------------------
+
+static EXECUTABLES: OnceLock<HashMap<String, PathBuf>> = OnceLock::new();
+
+/// Store the executable map built during module discovery.
+///
+/// Must be called once before any `dispatch_module` invocation.
+pub fn set_executables(map: HashMap<String, PathBuf>) {
+    let _ = EXECUTABLES.set(map);
+}
 
 /// Set (or clear) the global audit logger used by all module commands.
 ///
@@ -609,6 +623,53 @@ fn extract_cli_kwargs(
     crate::schema_parser::reconvert_enum_values(kwargs, &schema_args)
 }
 
+/// Execute a script-based module by spawning the executable as a subprocess.
+///
+/// JSON input is written to stdin; JSON output is read from stdout.
+/// Stderr is inherited so script diagnostics appear in the terminal.
+async fn execute_script(executable: &std::path::Path, input: &Value) -> Result<Value, String> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = tokio::process::Command::new(executable)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("failed to spawn {}: {}", executable.display(), e))?;
+
+    // Write JSON input to child stdin then close it.
+    if let Some(mut stdin) = child.stdin.take() {
+        let payload =
+            serde_json::to_vec(input).map_err(|e| format!("failed to serialize input: {e}"))?;
+        stdin
+            .write_all(&payload)
+            .await
+            .map_err(|e| format!("failed to write to stdin: {e}"))?;
+        drop(stdin);
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| format!("failed to read output: {e}"))?;
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(1);
+        let stderr_hint = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "script exited with code {code}{}",
+            if stderr_hint.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr_hint.trim())
+            }
+        ));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("script stdout is not valid JSON: {e}"))
+}
+
 /// Execute a module by ID: validate → collect input → validate schema
 /// → approve → execute → audit → output.
 ///
@@ -694,12 +755,29 @@ pub async fn dispatch_module(
     // Determine sandbox flag.
     let use_sandbox = matches.get_flag("sandbox");
 
+    // Check if this module has a script-based executable.
+    let script_executable = EXECUTABLES
+        .get()
+        .and_then(|map| map.get(module_id))
+        .cloned();
+
     // 9. Execute with SIGINT race (exit 130 on Ctrl-C).
     let start = std::time::Instant::now();
 
-    // Unify the two execution paths into Result<Value, (i32, String)> where
+    // Unify the execution paths into Result<Value, (i32, String)> where
     // the error tuple is (exit_code, display_message).
-    let result: Result<Value, (i32, String)> = if use_sandbox {
+    let result: Result<Value, (i32, String)> = if let Some(exec_path) = script_executable {
+        // Script-based execution: spawn subprocess, pipe JSON via stdin/stdout.
+        tokio::select! {
+            res = execute_script(&exec_path, &input_value) => {
+                res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e))
+            }
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Execution cancelled.");
+                std::process::exit(EXIT_SIGINT);
+            }
+        }
+    } else if use_sandbox {
         let sandbox = crate::security::Sandbox::new(true, 0);
         tokio::select! {
             res = sandbox.execute(module_id, input_value.clone()) => {

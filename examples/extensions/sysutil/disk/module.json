@@ -17,5 +17,6 @@
       "free": { "type": "string", "description": "Free space (human-readable)" },
       "percent_used": { "type": "number", "description": "Percentage of used space (0.0-100.0)" }
     }
-  }
+  },
+  "executable": "run.sh"
 }

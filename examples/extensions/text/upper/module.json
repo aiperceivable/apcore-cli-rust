@@ -14,5 +14,6 @@
     "properties": {
       "result": { "type": "string", "description": "The uppercased result" }
     }
-  }
+  },
+  "executable": "run.sh"
 }

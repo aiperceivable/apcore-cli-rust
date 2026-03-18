@@ -15,5 +15,6 @@
     "properties": {
       "sum": { "type": "integer", "description": "The sum of a and b" }
     }
-  }
+  },
+  "executable": "run.sh"
 }

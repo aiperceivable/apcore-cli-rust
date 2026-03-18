@@ -17,5 +17,6 @@
       "value": { "type": "string", "description": "The resolved value" },
       "exists": { "type": "boolean", "description": "Whether the variable was set" }
     }
-  }
+  },
+  "executable": "run.sh"
 }

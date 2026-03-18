@@ -34,7 +34,7 @@ pub const EXIT_SIGINT: i32 = 130;
 pub use approval::{check_approval, ApprovalError};
 pub use cli::{
     build_module_command, collect_input, collect_input_from_reader, set_audit_logger,
-    validate_module_id, ModuleExecutor,
+    set_executables, validate_module_id, ModuleExecutor,
 };
 pub use config::ConfigResolver;
 pub use discovery::{

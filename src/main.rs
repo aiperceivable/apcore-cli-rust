@@ -272,6 +272,9 @@ async fn main() {
         tracing::warn!("Module discovery failed for executor registry: {e}");
     }
 
+    // Store discovered executables in the global map for dispatch_module.
+    apcore_cli::set_executables(discoverer.executables_snapshot());
+
     let mut provider = apcore_cli::discovery::ApCoreRegistryProvider::new(registry);
     provider.set_discovered_names(discovered_names);
     provider.set_descriptions(discoverer.load_descriptions());

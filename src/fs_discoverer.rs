@@ -2,6 +2,7 @@
 // Scans a directory recursively for module.json descriptor files and
 // produces DiscoveredModule entries for registration in the apcore Registry.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -26,6 +27,9 @@ struct ModuleJson {
     input_schema: serde_json::Value,
     #[serde(default = "default_schema")]
     output_schema: serde_json::Value,
+    /// Optional relative path to an executable script (e.g. "run.sh").
+    #[serde(default)]
+    executable: Option<String>,
 }
 
 fn default_schema() -> serde_json::Value {
@@ -38,12 +42,33 @@ fn default_schema() -> serde_json::Value {
 /// one into a `DiscoveredModule`, and returns them all from `discover()`.
 pub struct FsDiscoverer {
     root: PathBuf,
+    /// Map of module name to resolved executable path (built during discovery).
+    executables: std::sync::Mutex<HashMap<String, PathBuf>>,
 }
 
 impl FsDiscoverer {
     /// Create a new discoverer rooted at the given directory path.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            executables: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Return the resolved executable path for a module, if one was declared.
+    pub fn get_executable(&self, module_name: &str) -> Option<PathBuf> {
+        self.executables
+            .lock()
+            .ok()
+            .and_then(|map| map.get(module_name).cloned())
+    }
+
+    /// Return a snapshot of all executable paths discovered so far.
+    pub fn executables_snapshot(&self) -> HashMap<String, PathBuf> {
+        self.executables
+            .lock()
+            .map(|map| map.clone())
+            .unwrap_or_default()
     }
 
     /// Scan the extensions directory and return a map of module name to description.
@@ -104,6 +129,18 @@ impl Discoverer for FsDiscoverer {
                     format!("Failed to parse {}: {}", path.display(), e),
                 )
             })?;
+
+            // Resolve executable path relative to module.json directory.
+            if let Some(ref exec_rel) = mj.executable {
+                if let Some(parent) = path.parent() {
+                    let exec_path = parent.join(exec_rel);
+                    if exec_path.exists() {
+                        if let Ok(mut map) = self.executables.lock() {
+                            map.insert(mj.name.clone(), exec_path);
+                        }
+                    }
+                }
+            }
 
             let descriptor = ModuleDescriptor {
                 name: mj.name.clone(),
