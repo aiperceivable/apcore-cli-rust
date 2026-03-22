@@ -227,12 +227,12 @@ Additional Rust-specific criteria:
 
 ## References
 
-- Feature spec: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli/docs/features/schema-parser.md`
-- Python implementation: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/src/apcore_cli/schema_parser.py`, `ref_resolver.py`
-- Python planning: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/planning/schema-parser.md`
-- Type mapping spec: `/Users/tercel/WorkSpace/aipartnerup/apcore/docs/spec/type-mapping.md`
-- Existing stubs: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/src/schema_parser.rs`, `ref_resolver.rs`
-- Existing test stubs: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/tests/test_schema_parser.rs`, `test_ref_resolver.rs`
+- Feature spec: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli/docs/features/schema-parser.md`
+- Python implementation: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/src/apcore_cli/schema_parser.py`, `ref_resolver.py`
+- Python planning: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/planning/schema-parser.md`
+- Type mapping spec: `/Users/tercel/WorkSpace/aiperceivable/apcore/docs/spec/type-mapping.md`
+- Existing stubs: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/src/schema_parser.rs`, `ref_resolver.rs`
+- Existing test stubs: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/tests/test_schema_parser.rs`, `test_ref_resolver.rs`
 - clap v4 `Arg` builder: https://docs.rs/clap/latest/clap/struct.Arg.html
 - clap v4 `ArgAction`: https://docs.rs/clap/latest/clap/enum.ArgAction.html
 - clap `PossibleValuesParser`: https://docs.rs/clap/latest/clap/builder/struct.PossibleValuesParser.html

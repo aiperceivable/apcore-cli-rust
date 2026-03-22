@@ -28,7 +28,7 @@ Audit and finalise the `ConfigResolver` struct definition, its `DEFAULTS` consta
 ### 1. Run existing passing tests to establish a baseline
 
 ```bash
-cd /Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust
+cd /Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust
 cargo test config -- --include-ignored 2>&1 | grep -E "^(test |FAILED|ok |error)"
 ```
 

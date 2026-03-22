@@ -244,12 +244,12 @@ Additional Rust-specific criteria:
 
 ## References
 
-- Feature spec: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli/docs/features/shell-integration.md`
-- Python implementation: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/src/apcore_cli/shell.py`
-- Python planning: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/planning/shell-integration.md`
-- Type mapping spec: `/Users/tercel/WorkSpace/aipartnerup/apcore/docs/spec/type-mapping.md`
-- Existing stub: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/src/shell.rs`
-- Existing test stub: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/tests/test_shell.rs`
-- Discovery plan (pattern reference): `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/planning/discovery/plan.md`
+- Feature spec: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli/docs/features/shell-integration.md`
+- Python implementation: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/src/apcore_cli/shell.py`
+- Python planning: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/planning/shell-integration.md`
+- Type mapping spec: `/Users/tercel/WorkSpace/aiperceivable/apcore/docs/spec/type-mapping.md`
+- Existing stub: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/src/shell.rs`
+- Existing test stub: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/tests/test_shell.rs`
+- Discovery plan (pattern reference): `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/planning/discovery/plan.md`
 - `clap_complete` v4 docs: https://docs.rs/clap_complete/latest/clap_complete/
 - `clap` v4 docs: https://docs.rs/clap/latest/clap/

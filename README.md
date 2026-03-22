@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/aipartnerup/apcore-cli/main/apcore-cli-logo.svg" alt="apcore-cli logo" width="200"/>
+  <img src="https://raw.githubusercontent.com/aiperceivable/apcore-cli/main/apcore-cli-logo.svg" alt="apcore-cli logo" width="200"/>
 </div>
 
 # apcore-cli (Rust)
@@ -12,12 +12,12 @@ Terminal adapter for apcore. Execute AI-Perceivable modules from the command lin
 
 | | |
 |---|---|
-| **Rust SDK** | [github.com/aipartnerup/apcore-cli-rust](https://github.com/aipartnerup/apcore-cli-rust) |
-| **Python SDK** | [github.com/aipartnerup/apcore-cli-python](https://github.com/aipartnerup/apcore-cli-python) |
-| **Spec repo** | [github.com/aipartnerup/apcore-cli](https://github.com/aipartnerup/apcore-cli) |
-| **apcore core** | [github.com/aipartnerup/apcore](https://github.com/aipartnerup/apcore) |
+| **Rust SDK** | [github.com/aiperceivable/apcore-cli-rust](https://github.com/aiperceivable/apcore-cli-rust) |
+| **Python SDK** | [github.com/aiperceivable/apcore-cli-python](https://github.com/aiperceivable/apcore-cli-python) |
+| **Spec repo** | [github.com/aiperceivable/apcore-cli](https://github.com/aiperceivable/apcore-cli) |
+| **apcore core** | [github.com/aiperceivable/apcore](https://github.com/aiperceivable/apcore) |
 
-**apcore-cli** turns any [apcore](https://github.com/aipartnerup/apcore)-based project into a fully featured CLI tool -- with **zero code changes** to your existing modules.
+**apcore-cli** turns any [apcore](https://github.com/aiperceivable/apcore)-based project into a fully featured CLI tool -- with **zero code changes** to your existing modules.
 
 ```
 ┌──────────────────┐
@@ -57,7 +57,7 @@ Requires Rust 1.75+ and `apcore >= 0.13.0`.
 The repo includes 8 example modules you can run immediately:
 
 ```bash
-git clone https://github.com/aipartnerup/apcore-cli-rust.git
+git clone https://github.com/aiperceivable/apcore-cli-rust.git
 cd apcore-cli-rust
 make build                       # compile release binary to .bin/
 
@@ -281,7 +281,7 @@ apcore Registry + Executor (your modules, unchanged)
 ### Getting Started
 
 ```bash
-git clone https://github.com/aipartnerup/apcore-cli-rust.git
+git clone https://github.com/aiperceivable/apcore-cli-rust.git
 cd apcore-cli-rust
 make setup                       # install apdev-rs + git pre-commit hook
 make build                       # compile release binary to .bin/

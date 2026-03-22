@@ -203,11 +203,11 @@ Additional Rust-specific criteria:
 
 ## References
 
-- Feature spec: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli/docs/features/output-formatter.md`
-- Python implementation: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/src/apcore_cli/output.py`
-- Python planning: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/planning/output-formatter.md`
-- Type mapping spec: `/Users/tercel/WorkSpace/aipartnerup/apcore/docs/spec/type-mapping.md`
-- Existing stub: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/src/output.rs`
-- Existing test stub: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/tests/test_output.rs`
+- Feature spec: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli/docs/features/output-formatter.md`
+- Python implementation: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/src/apcore_cli/output.py`
+- Python planning: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/planning/output-formatter.md`
+- Type mapping spec: `/Users/tercel/WorkSpace/aiperceivable/apcore/docs/spec/type-mapping.md`
+- Existing stub: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/src/output.rs`
+- Existing test stub: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/tests/test_output.rs`
 - `comfy-table` docs: https://docs.rs/comfy-table/latest/comfy_table/
 - `std::io::IsTerminal` docs: https://doc.rust-lang.org/std/io/trait.IsTerminal.html

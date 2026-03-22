@@ -236,13 +236,13 @@ Additional Rust-specific criteria:
 
 ## References
 
-- Feature spec: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli/docs/features/discovery.md`
-- Python implementation: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/src/apcore_cli/discovery.py`
-- Python planning: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-python/planning/discovery.md`
-- Type mapping spec: `/Users/tercel/WorkSpace/aipartnerup/apcore/docs/spec/type-mapping.md`
-- Output formatter plan: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/planning/output-formatter/plan.md`
-- Core dispatcher plan: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/planning/core-dispatcher/plan.md`
-- Existing stub: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/src/discovery.rs`
-- Existing test stub: `/Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/tests/test_discovery.rs`
+- Feature spec: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli/docs/features/discovery.md`
+- Python implementation: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/src/apcore_cli/discovery.py`
+- Python planning: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-python/planning/discovery.md`
+- Type mapping spec: `/Users/tercel/WorkSpace/aiperceivable/apcore/docs/spec/type-mapping.md`
+- Output formatter plan: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/planning/output-formatter/plan.md`
+- Core dispatcher plan: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/planning/core-dispatcher/plan.md`
+- Existing stub: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/src/discovery.rs`
+- Existing test stub: `/Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/tests/test_discovery.rs`
 - `clap` v4 docs: https://docs.rs/clap/latest/clap/
 - `comfy-table` v7 docs: https://docs.rs/comfy-table/latest/comfy_table/

@@ -291,8 +291,8 @@ cargo test 2>&1 | grep "FAILED" || echo "no failures"
 ### 12. Final check: no stubs remain
 
 ```bash
-grep -n "assert!(false" /Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/tests/test_config.rs
-grep -n "todo!" /Users/tercel/WorkSpace/aipartnerup/apcore-cli-rust/src/config.rs
+grep -n "assert!(false" /Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/tests/test_config.rs
+grep -n "todo!" /Users/tercel/WorkSpace/aiperceivable/apcore-cli-rust/src/config.rs
 ```
 
 Both commands must return no output.
