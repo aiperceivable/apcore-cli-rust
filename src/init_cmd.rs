@@ -74,7 +74,10 @@ pub fn handle_init(matches: &clap::ArgMatches) {
 /// Validate that the output directory does not contain `..` path
 /// components, preventing path traversal outside the project directory.
 fn validate_dir(dir: &str) {
-    if dir.contains("..") {
+    let has_dotdot = std::path::Path::new(dir)
+        .components()
+        .any(|c| c == std::path::Component::ParentDir);
+    if has_dotdot {
         eprintln!("Error: Output directory must not contain '..' path components.");
         std::process::exit(2);
     }
