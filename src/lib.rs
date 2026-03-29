@@ -36,8 +36,8 @@ pub const EXIT_SIGINT: i32 = 130;
 pub use approval::{check_approval, ApprovalError};
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
-    collect_input_from_reader, set_audit_logger, set_executables, validate_module_id,
-    GroupedModuleGroup, ModuleExecutor,
+    collect_input_from_reader, get_docs_url, is_verbose_help, set_audit_logger, set_docs_url,
+    set_executables, set_verbose_help, validate_module_id, GroupedModuleGroup, ModuleExecutor,
 };
 pub use config::ConfigResolver;
 pub use discovery::{
@@ -61,6 +61,6 @@ pub use schema_parser::{
 };
 pub use security::{AuditLogger, AuthProvider, ConfigEncryptor, Sandbox};
 pub use shell::{
-    build_synopsis, cmd_completion, cmd_man, completion_command, generate_man_page,
-    register_shell_commands, ShellError, KNOWN_BUILTINS,
+    build_program_man_page, build_synopsis, cmd_completion, cmd_man, completion_command,
+    generate_man_page, has_man_flag, register_shell_commands, ShellError, KNOWN_BUILTINS,
 };

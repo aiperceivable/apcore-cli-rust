@@ -45,6 +45,11 @@ fn extract_argv_option(args: &[String], flag: &str) -> Option<String> {
     None
 }
 
+/// Check if `--verbose` is present in raw argv (pre-parse, before clap).
+fn has_verbose_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--verbose")
+}
+
 /// Pre-parse `--extensions-dir` from raw argv before clap processes arguments.
 pub fn extract_extensions_dir(args: &[String]) -> Option<String> {
     extract_argv_option(args, "--extensions-dir")
@@ -206,6 +211,27 @@ fn build_cli_command(
                 .value_parser(clap::builder::PossibleValuesParser::new(LOG_LEVELS))
                 .ignore_case(true)
                 .help("Log verbosity (DEBUG|INFO|WARNING|ERROR)."),
+        )
+        .arg(
+            clap::Arg::new("verbose")
+                .long("verbose")
+                .global(true)
+                .action(clap::ArgAction::SetTrue)
+                .help(
+                    "Show all options in help output \
+                     (including built-in apcore options).",
+                ),
+        )
+        .arg(
+            clap::Arg::new("man")
+                .long("man")
+                .global(true)
+                .action(clap::ArgAction::SetTrue)
+                .hide(true)
+                .help(
+                    "Output man page in roff format \
+                     (use with --help).",
+                ),
         );
 
     // Register built-in subcommands from discovery and shell modules.
@@ -248,6 +274,23 @@ async fn main() {
         return;
     }
 
+    // Intercept --help --man: generate full program man page and exit.
+    if apcore_cli::shell::has_man_flag(&raw_args)
+        && raw_args.iter().any(|a| a == "--help" || a == "-h")
+    {
+        let name = resolve_prog_name(None);
+        let cmd = build_cli_command(None, Some(name.clone()), false);
+        let roff = apcore_cli::shell::build_program_man_page(
+            &cmd,
+            &name,
+            env!("CARGO_PKG_VERSION"),
+            None,
+            None,
+        );
+        println!("{roff}");
+        std::process::exit(0);
+    }
+
     // Intercept --version before validating the extensions directory.
     // Clap exits 0 on --version; we just need to print and exit here.
     if raw_args.len() > 1 && raw_args[1..].iter().any(|a| a == "--version" || a == "-V") {
@@ -255,6 +298,11 @@ async fn main() {
         println!("{}, version {}", name, env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
     }
+
+    // Pre-parse --verbose before clap sees argv (must happen before
+    // create_cli, since clap renders help during parsing).
+    let verbose = has_verbose_flag(&raw_args);
+    apcore_cli::cli::set_verbose_help(verbose);
 
     // Pre-parse --extensions-dir before clap sees argv.
     let extensions_dir = extract_extensions_dir(&raw_args[1..]);

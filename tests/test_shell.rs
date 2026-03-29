@@ -134,3 +134,76 @@ fn test_completion_bash_valid_syntax() {
         Err(e) => panic!("failed to run bash: {e}"),
     }
 }
+
+// --- build_program_man_page ---
+
+#[test]
+fn build_program_man_page_generates_roff() {
+    let cmd = clap::Command::new("test-cli").about("Test CLI").subcommand(
+        clap::Command::new("hello")
+            .about("Say hello")
+            .arg(clap::Arg::new("name").long("name").help("Your name")),
+    );
+    let roff = apcore_cli::shell::build_program_man_page(&cmd, "test-cli", "1.0.0", None, None);
+    assert!(roff.contains(".TH \"TEST-CLI\""));
+    assert!(roff.contains(".SH COMMANDS"));
+    assert!(roff.contains("hello"));
+    assert!(roff.contains("\\-\\-name"));
+}
+
+#[test]
+fn build_program_man_page_includes_nested() {
+    let cmd = clap::Command::new("mycli").subcommand(
+        clap::Command::new("grp").subcommand(
+            clap::Command::new("sub")
+                .about("A sub")
+                .arg(clap::Arg::new("flag").long("flag").help("A flag")),
+        ),
+    );
+    let roff = apcore_cli::shell::build_program_man_page(&cmd, "mycli", "1.0.0", None, None);
+    assert!(roff.contains("mycli grp sub"));
+}
+
+#[test]
+fn build_program_man_page_uses_explicit_description() {
+    let cmd = clap::Command::new("mycli").about("Default desc");
+    let roff = apcore_cli::shell::build_program_man_page(
+        &cmd,
+        "mycli",
+        "1.0.0",
+        Some("Custom description"),
+        None,
+    );
+    assert!(roff.contains("Custom description"));
+}
+
+#[test]
+fn build_program_man_page_includes_environment() {
+    let cmd = clap::Command::new("mycli");
+    let roff = apcore_cli::shell::build_program_man_page(&cmd, "mycli", "1.0.0", None, None);
+    assert!(roff.contains(".SH ENVIRONMENT"));
+    assert!(roff.contains("APCORE_EXTENSIONS_ROOT"));
+}
+
+#[test]
+fn build_program_man_page_includes_exit_codes() {
+    let cmd = clap::Command::new("mycli");
+    let roff = apcore_cli::shell::build_program_man_page(&cmd, "mycli", "1.0.0", None, None);
+    assert!(roff.contains(".SH EXIT CODES"));
+    assert!(roff.contains("\\fB0\\fR"));
+    assert!(roff.contains("\\fB130\\fR"));
+}
+
+// --- has_man_flag ---
+
+#[test]
+fn has_man_flag_detects_flag() {
+    let args: Vec<String> = vec!["--help".into(), "--man".into()];
+    assert!(apcore_cli::shell::has_man_flag(&args));
+}
+
+#[test]
+fn has_man_flag_returns_false_when_absent() {
+    let args: Vec<String> = vec!["--help".into()];
+    assert!(!apcore_cli::shell::has_man_flag(&args));
+}

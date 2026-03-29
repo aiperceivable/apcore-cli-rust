@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
@@ -55,6 +56,53 @@ pub enum CliError {
 }
 
 // ---------------------------------------------------------------------------
+// Global verbose help flag (controls built-in option visibility in help)
+// ---------------------------------------------------------------------------
+
+/// Whether --verbose was passed (controls help detail level).
+static VERBOSE_HELP: AtomicBool = AtomicBool::new(false);
+
+/// Set the verbose help flag. When false, built-in options are hidden
+/// from help.
+pub fn set_verbose_help(verbose: bool) {
+    VERBOSE_HELP.store(verbose, Ordering::Relaxed);
+}
+
+/// Check the verbose help flag.
+pub fn is_verbose_help() -> bool {
+    VERBOSE_HELP.load(Ordering::Relaxed)
+}
+
+// ---------------------------------------------------------------------------
+// Global docs URL (shown in help and man pages)
+// ---------------------------------------------------------------------------
+
+/// Base URL for online documentation. `None` means no link shown.
+static DOCS_URL: Mutex<Option<String>> = Mutex::new(None);
+
+/// Set the base URL for online documentation links in help and man
+/// pages. Pass `None` to disable. Command-level help appends
+/// `/commands/{name}` automatically.
+///
+/// # Example
+/// ```
+/// apcore_cli::cli::set_docs_url(Some("https://docs.apcore.dev/cli".into()));
+/// ```
+pub fn set_docs_url(url: Option<String>) {
+    if let Ok(mut guard) = DOCS_URL.lock() {
+        *guard = url;
+    }
+}
+
+/// Get the current docs URL (if set).
+pub fn get_docs_url() -> Option<String> {
+    match DOCS_URL.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Global audit logger (module-level singleton, set once at startup)
 // ---------------------------------------------------------------------------
 
@@ -97,36 +145,61 @@ pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
 /// subcommand re-parser in main.rs.
 pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
     use clap::{Arg, ArgAction};
+    let hide = !is_verbose_help();
     cmd.arg(
         Arg::new("input")
             .long("input")
             .value_name("SOURCE")
-            .help("Input source (file path or '-' for stdin)"),
+            .help(
+                "Read JSON input from a file path, \
+                 or use '-' to read from stdin pipe",
+            )
+            .hide(hide),
     )
     .arg(
         Arg::new("yes")
             .long("yes")
             .short('y')
             .action(ArgAction::SetTrue)
-            .help("Auto-approve all confirmation prompts"),
+            .help(
+                "Skip interactive approval prompts \
+                 (for scripts and CI)",
+            )
+            .hide(hide),
     )
     .arg(
         Arg::new("large-input")
             .long("large-input")
             .action(ArgAction::SetTrue)
-            .help("Allow larger-than-default input payloads"),
+            .help(
+                "Allow stdin input larger than 10MB \
+                 (default limit protects against \
+                 accidental pipes)",
+            )
+            .hide(hide),
     )
     .arg(
         Arg::new("format")
             .long("format")
             .value_parser(["table", "json"])
-            .help("Output format (table or json)"),
+            .help(
+                "Set output format: 'json' for \
+                 machine-readable, 'table' for \
+                 human-readable",
+            )
+            .hide(hide),
     )
     .arg(
+        // --sandbox is always hidden (not yet implemented)
         Arg::new("sandbox")
             .long("sandbox")
             .action(ArgAction::SetTrue)
-            .help("Run module in subprocess sandbox"),
+            .help(
+                "Run module in an isolated subprocess \
+                 with restricted filesystem and env \
+                 access",
+            )
+            .hide(true),
     )
 }
 
@@ -430,7 +503,14 @@ fn is_valid_group_name(s: &str) -> bool {
 /// Built-in flag names added to every generated module command. A schema
 /// property that collides with one of these names will cause
 /// `std::process::exit(2)`.
-const RESERVED_FLAG_NAMES: &[&str] = &["input", "yes", "large-input", "format", "sandbox"];
+const RESERVED_FLAG_NAMES: &[&str] = &[
+    "input",
+    "yes",
+    "large-input",
+    "format",
+    "sandbox",
+    "verbose",
+];
 
 /// Build a clap `Command` for a single module definition.
 ///
@@ -500,38 +580,79 @@ pub fn build_module_command_with_limit(
     // Suppress unused-variable warning; executor is kept for API symmetry.
     let _ = executor;
 
+    let hide = !is_verbose_help();
+
+    // Build after_help footer: verbose hint + optional docs link
+    let mut footer_parts = Vec::new();
+    if hide {
+        footer_parts.push(
+            "Use --verbose to show all options \
+             (including built-in apcore options)."
+                .to_string(),
+        );
+    }
+    if let Some(url) = get_docs_url() {
+        footer_parts.push(format!("Docs: {url}/commands/{module_id}"));
+    }
+    let footer = footer_parts.join("\n");
+
     let mut cmd = clap::Command::new(module_id.clone())
+        .after_help(footer)
         // Built-in flags present on every generated command.
         .arg(
             clap::Arg::new("input")
                 .long("input")
                 .value_name("SOURCE")
-                .help("Read input from file or STDIN ('-')."),
+                .help(
+                    "Read JSON input from a file path, \
+                     or use '-' to read from stdin pipe.",
+                )
+                .hide(hide),
         )
         .arg(
             clap::Arg::new("yes")
                 .long("yes")
                 .short('y')
                 .action(clap::ArgAction::SetTrue)
-                .help("Bypass approval prompts."),
+                .help(
+                    "Skip interactive approval prompts \
+                     (for scripts and CI).",
+                )
+                .hide(hide),
         )
         .arg(
             clap::Arg::new("large-input")
                 .long("large-input")
                 .action(clap::ArgAction::SetTrue)
-                .help("Allow STDIN input larger than 10MB."),
+                .help(
+                    "Allow stdin input larger than 10MB \
+                     (default limit protects against \
+                     accidental pipes).",
+                )
+                .hide(hide),
         )
         .arg(
             clap::Arg::new("format")
                 .long("format")
                 .value_parser(["json", "table"])
-                .help("Output format."),
+                .help(
+                    "Set output format: 'json' for \
+                     machine-readable, 'table' for \
+                     human-readable.",
+                )
+                .hide(hide),
         )
+        // --sandbox is always hidden (not yet implemented)
         .arg(
             clap::Arg::new("sandbox")
                 .long("sandbox")
                 .action(clap::ArgAction::SetTrue)
-                .help("Run module in subprocess sandbox."),
+                .help(
+                    "Run module in an isolated subprocess \
+                     with restricted filesystem and env \
+                     access.",
+                )
+                .hide(true),
         );
 
     // Attach schema-derived args.

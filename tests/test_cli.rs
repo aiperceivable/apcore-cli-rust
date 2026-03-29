@@ -5,10 +5,17 @@ mod common;
 
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::Mutex;
 
 use apcore_cli::cli::{collect_input_from_reader, validate_module_id, CliError};
 use apcore_cli::collect_input;
 use serde_json::{json, Value};
+
+/// Mutex serializes tests that manipulate the global verbose help flag.
+/// (`dead_code` false positive: statics in integration test files trigger
+/// this warning even when used, because each test file is a separate crate.)
+#[allow(dead_code)]
+static VERBOSE_MUTEX: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // validate_module_id
@@ -126,8 +133,8 @@ fn test_collect_input_no_stdin_flag_returns_cli_kwargs() {
 // build_module_command
 // ---------------------------------------------------------------------------
 
-#[test]
-fn test_build_module_command_creates_command() {
+/// Helper: build a test module command with a simple two-property schema.
+fn build_test_module_command(name: &str) -> clap::Command {
     use apcore_cli::cli::{build_module_command, ModuleExecutor};
     use std::sync::Arc;
 
@@ -135,7 +142,7 @@ fn test_build_module_command_creates_command() {
     impl ModuleExecutor for NoOpExecutor {}
 
     let module_def = apcore::registry::registry::ModuleDescriptor {
-        name: "math.add".to_string(),
+        name: name.to_string(),
         annotations: apcore::module::ModuleAnnotations::default(),
         input_schema: json!({
             "type": "object",
@@ -150,7 +157,17 @@ fn test_build_module_command_creates_command() {
         dependencies: vec![],
     };
     let executor: Arc<dyn ModuleExecutor> = Arc::new(NoOpExecutor);
-    let cmd = build_module_command(&module_def, executor).expect("should build command");
+    build_module_command(&module_def, executor).expect("should build command")
+}
+
+#[test]
+fn test_build_module_command_creates_command() {
+    let _guard = VERBOSE_MUTEX.lock().unwrap();
+    // Ensure verbose is on so built-in flags are visible, then restore.
+    apcore_cli::cli::set_verbose_help(true);
+    let cmd = build_test_module_command("math.add");
+    apcore_cli::cli::set_verbose_help(false);
+
     assert_eq!(cmd.get_name(), "math.add");
     // Verify built-in flags are present.
     let arg_names: Vec<&str> = cmd.get_arguments().map(|a| a.get_id().as_str()).collect();
@@ -161,4 +178,61 @@ fn test_build_module_command_creates_command() {
     // Verify schema-derived args are present.
     assert!(arg_names.contains(&"a"), "missing schema arg --a");
     assert!(arg_names.contains(&"b"), "missing schema arg --b");
+}
+
+// ---------------------------------------------------------------------------
+// verbose help flag — built-in option visibility
+// ---------------------------------------------------------------------------
+
+#[test]
+fn builtin_flags_hidden_by_default() {
+    let _guard = VERBOSE_MUTEX.lock().unwrap();
+    apcore_cli::cli::set_verbose_help(false);
+    let cmd = build_test_module_command("test.hidden");
+    let input_arg = cmd.get_arguments().find(|a| a.get_id() == "input").unwrap();
+    assert!(
+        input_arg.is_hide_set(),
+        "--input should be hidden when verbose is off"
+    );
+    let yes_arg = cmd.get_arguments().find(|a| a.get_id() == "yes").unwrap();
+    assert!(
+        yes_arg.is_hide_set(),
+        "--yes should be hidden when verbose is off"
+    );
+    let sandbox_arg = cmd
+        .get_arguments()
+        .find(|a| a.get_id() == "sandbox")
+        .unwrap();
+    assert!(
+        sandbox_arg.is_hide_set(),
+        "--sandbox should be hidden when verbose is off"
+    );
+}
+
+#[test]
+fn builtin_flags_shown_when_verbose() {
+    let _guard = VERBOSE_MUTEX.lock().unwrap();
+    apcore_cli::cli::set_verbose_help(true);
+    let cmd = build_test_module_command("test.visible");
+    let input_arg = cmd.get_arguments().find(|a| a.get_id() == "input").unwrap();
+    assert!(
+        !input_arg.is_hide_set(),
+        "--input should be visible when verbose is on"
+    );
+    let yes_arg = cmd.get_arguments().find(|a| a.get_id() == "yes").unwrap();
+    assert!(
+        !yes_arg.is_hide_set(),
+        "--yes should be visible when verbose is on"
+    );
+    // sandbox is always hidden (not yet implemented)
+    let sandbox_arg = cmd
+        .get_arguments()
+        .find(|a| a.get_id() == "sandbox")
+        .unwrap();
+    assert!(
+        sandbox_arg.is_hide_set(),
+        "--sandbox should always be hidden (not yet implemented)"
+    );
+    // Reset to default state.
+    apcore_cli::cli::set_verbose_help(false);
 }

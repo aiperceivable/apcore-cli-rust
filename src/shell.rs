@@ -637,6 +637,173 @@ pub fn cmd_man(
     Ok(generate_man_page(command_name, cmd_opt, prog_name, version))
 }
 
+// ---------------------------------------------------------------------------
+// Full program man page generation
+// ---------------------------------------------------------------------------
+
+/// Escape a string for roff output.
+fn roff_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('-', "\\-")
+        .replace('\'', "\\(aq")
+}
+
+/// Pre-parse `--man` from raw argv. Returns true if present.
+pub fn has_man_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--man")
+}
+
+/// Build a complete roff man page for the entire CLI program.
+///
+/// Covers all registered commands including downstream business
+/// commands. The `cmd` should be the fully-built root
+/// `clap::Command`.
+pub fn build_program_man_page(
+    cmd: &clap::Command,
+    prog_name: &str,
+    version: &str,
+    description: Option<&str>,
+    docs_url: Option<&str>,
+) -> String {
+    let desc = description
+        .map(|s| s.to_string())
+        .or_else(|| cmd.get_about().map(|s| s.to_string()))
+        .unwrap_or_else(|| "CLI".to_string());
+    let upper = prog_name.to_uppercase();
+    let mut s = Vec::new();
+
+    s.push(format!(
+        ".TH \"{upper}\" \"1\" \"\" \
+         \"{prog_name} {version}\" \"{prog_name} Manual\""
+    ));
+
+    s.push(".SH NAME".to_string());
+    s.push(format!("{prog_name} \\- {}", roff_escape(&desc)));
+
+    s.push(".SH SYNOPSIS".to_string());
+    s.push(format!(
+        "\\fB{prog_name}\\fR [\\fIglobal\\-options\\fR] \
+         \\fIcommand\\fR [\\fIcommand\\-options\\fR]"
+    ));
+
+    s.push(".SH DESCRIPTION".to_string());
+    s.push(roff_escape(&desc));
+
+    // Global options
+    let global_args: Vec<_> = cmd
+        .get_arguments()
+        .filter(|a| !a.is_hide_set() && !matches!(a.get_id().as_str(), "help" | "version" | "man"))
+        .collect();
+    if !global_args.is_empty() {
+        s.push(".SH GLOBAL OPTIONS".to_string());
+        for arg in &global_args {
+            if let Some(long) = arg.get_long() {
+                s.push(".TP".to_string());
+                s.push(format!("\\fB\\-\\-{}\\fR", roff_escape(long)));
+                if let Some(help) = arg.get_help() {
+                    s.push(roff_escape(&help.to_string()));
+                }
+            }
+        }
+    }
+
+    // Commands
+    let subcmds: Vec<_> = cmd
+        .get_subcommands()
+        .filter(|c| c.get_name() != "help")
+        .collect();
+    if !subcmds.is_empty() {
+        s.push(".SH COMMANDS".to_string());
+        for sub in &subcmds {
+            let name = sub.get_name();
+            let about = sub.get_about().map(|a| a.to_string()).unwrap_or_default();
+            s.push(".TP".to_string());
+            s.push(format!("\\fB{prog_name} {}\\fR", roff_escape(name)));
+            if !about.is_empty() {
+                s.push(roff_escape(&about));
+            }
+
+            // Command args
+            for arg in sub.get_arguments() {
+                if arg.is_hide_set() || arg.get_id().as_str() == "help" {
+                    continue;
+                }
+                if let Some(long) = arg.get_long() {
+                    s.push(".RS".to_string());
+                    s.push(".TP".to_string());
+                    s.push(format!("\\fB\\-\\-{}\\fR", roff_escape(long)));
+                    if let Some(help) = arg.get_help() {
+                        s.push(roff_escape(&help.to_string()));
+                    }
+                    s.push(".RE".to_string());
+                }
+            }
+
+            // Nested subcommands
+            for nested in sub.get_subcommands() {
+                if nested.get_name() == "help" {
+                    continue;
+                }
+                let nested_about = nested
+                    .get_about()
+                    .map(|a| a.to_string())
+                    .unwrap_or_default();
+                s.push(".TP".to_string());
+                s.push(format!(
+                    "\\fB{prog_name} {} {}\\fR",
+                    roff_escape(name),
+                    roff_escape(nested.get_name())
+                ));
+                if !nested_about.is_empty() {
+                    s.push(roff_escape(&nested_about));
+                }
+                for arg in nested.get_arguments() {
+                    if arg.is_hide_set() || arg.get_id().as_str() == "help" {
+                        continue;
+                    }
+                    if let Some(long) = arg.get_long() {
+                        s.push(".RS".to_string());
+                        s.push(".TP".to_string());
+                        s.push(format!("\\fB\\-\\-{}\\fR", roff_escape(long)));
+                        if let Some(help) = arg.get_help() {
+                            s.push(roff_escape(&help.to_string()));
+                        }
+                        s.push(".RE".to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Environment
+    s.push(".SH ENVIRONMENT".to_string());
+    for (name, env_desc) in ENV_ENTRIES {
+        s.push(".TP".to_string());
+        s.push(format!("\\fB{name}\\fR"));
+        s.push(env_desc.to_string());
+    }
+
+    // Exit codes
+    s.push(".SH EXIT CODES".to_string());
+    for (code, meaning) in EXIT_CODES {
+        s.push(format!(".TP\n\\fB{code}\\fR\n{meaning}"));
+    }
+
+    s.push(".SH SEE ALSO".to_string());
+    s.push(format!(
+        "\\fB{prog_name} \\-\\-help \\-\\-verbose\\fR \
+         for full option list."
+    ));
+    if let Some(url) = docs_url {
+        s.push(format!(
+            ".PP\nFull documentation at \\fI{}\\fR",
+            roff_escape(url)
+        ));
+    }
+
+    s.join("\n")
+}
+
 /// Format Unix epoch days as YYYY-MM-DD without external crates.
 fn format_roff_date(days_since_epoch: u64) -> String {
     let mut remaining = days_since_epoch;
@@ -957,6 +1124,58 @@ mod tests {
             page.contains(".SH OPTIONS"),
             "exec man page must have OPTIONS section"
         );
+    }
+
+    // --- roff_escape ---
+
+    #[test]
+    fn test_roff_escape_backslash() {
+        assert_eq!(roff_escape("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn test_roff_escape_hyphen() {
+        assert_eq!(roff_escape("foo-bar"), "foo\\-bar");
+    }
+
+    #[test]
+    fn test_roff_escape_single_quote() {
+        assert_eq!(roff_escape("it's"), "it\\(aqs");
+    }
+
+    // --- has_man_flag ---
+
+    #[test]
+    fn test_has_man_flag_present() {
+        let args = vec!["--man".to_string()];
+        assert!(has_man_flag(&args));
+    }
+
+    #[test]
+    fn test_has_man_flag_absent() {
+        let args = vec!["--help".to_string()];
+        assert!(!has_man_flag(&args));
+    }
+
+    // --- build_program_man_page ---
+
+    #[test]
+    fn test_build_program_man_page_basic() {
+        let cmd = clap::Command::new("t")
+            .about("Test")
+            .subcommand(clap::Command::new("sub").about("A sub"));
+        let roff = build_program_man_page(&cmd, "t", "0.1.0", None, None);
+        assert!(roff.contains(".TH \"T\""));
+        assert!(roff.contains(".SH COMMANDS"));
+        assert!(roff.contains("sub"));
+        assert!(roff.contains(".SH EXIT CODES"));
+    }
+
+    #[test]
+    fn test_build_program_man_page_custom_description() {
+        let cmd = clap::Command::new("t").about("Default");
+        let roff = build_program_man_page(&cmd, "t", "0.1.0", Some("Custom"), None);
+        assert!(roff.contains("Custom"));
     }
 
     // --- Task 4: register_shell_commands ---
