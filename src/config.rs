@@ -41,6 +41,22 @@ impl ConfigResolver {
         ("cli.stdin_buffer_limit", "10485760"),
         ("cli.auto_approve", "false"),
         ("cli.help_text_max_length", "1000"),
+        // Namespace-mode aliases (apcore >= 0.15.0 Config Bus)
+        ("apcore-cli.stdin_buffer_limit", "10485760"),
+        ("apcore-cli.auto_approve", "false"),
+        ("apcore-cli.help_text_max_length", "1000"),
+        ("apcore-cli.logging_level", "WARNING"),
+    ];
+
+    /// Namespace key → legacy key mapping for backward compatibility.
+    const NAMESPACE_MAP: &'static [(&'static str, &'static str)] = &[
+        ("apcore-cli.stdin_buffer_limit", "cli.stdin_buffer_limit"),
+        ("apcore-cli.auto_approve", "cli.auto_approve"),
+        (
+            "apcore-cli.help_text_max_length",
+            "cli.help_text_max_length",
+        ),
+        ("apcore-cli.logging_level", "logging.level"),
     ];
 
     /// Create a new `ConfigResolver`.
@@ -94,14 +110,34 @@ impl ConfigResolver {
         }
 
         // Tier 3: Config file — key must be present in the flattened map.
+        // Try both namespace and legacy keys for backward compatibility.
         if let Some(ref file_map) = self.config_file {
             if let Some(value) = file_map.get(key) {
                 return Some(value.clone());
+            }
+            // Try alternate key (namespace ↔ legacy)
+            if let Some(alt) = Self::alternate_key(key) {
+                if let Some(value) = file_map.get(alt) {
+                    return Some(value.clone());
+                }
             }
         }
 
         // Tier 4: Built-in defaults.
         self.defaults.get(key).map(|s| s.to_string())
+    }
+
+    /// Look up the alternate key (namespace ↔ legacy) for backward compatibility.
+    fn alternate_key(key: &str) -> Option<&'static str> {
+        for &(ns, legacy) in Self::NAMESPACE_MAP {
+            if key == ns {
+                return Some(legacy);
+            }
+            if key == legacy {
+                return Some(ns);
+            }
+        }
+        None
     }
 
     /// Load and flatten a YAML config file into dot-notation keys.
@@ -345,5 +381,117 @@ mod tests {
         let map = serde_json::json!({"a": {"b": {"c": "deep"}}});
         let result = resolver.flatten_dict(map);
         assert_eq!(result.get("a.b.c"), Some(&"deep".to_string()));
+    }
+
+    // ---- Namespace-aware config resolution (apcore >= 0.15.0) ----
+
+    #[test]
+    fn test_defaults_contain_namespace_keys() {
+        let resolver = ConfigResolver::new(None, None);
+        for key in [
+            "apcore-cli.stdin_buffer_limit",
+            "apcore-cli.auto_approve",
+            "apcore-cli.help_text_max_length",
+            "apcore-cli.logging_level",
+        ] {
+            assert!(
+                resolver.defaults.contains_key(key),
+                "missing namespace default: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_alternate_key_namespace_to_legacy() {
+        assert_eq!(
+            ConfigResolver::alternate_key("apcore-cli.stdin_buffer_limit"),
+            Some("cli.stdin_buffer_limit")
+        );
+        assert_eq!(
+            ConfigResolver::alternate_key("apcore-cli.auto_approve"),
+            Some("cli.auto_approve")
+        );
+        assert_eq!(
+            ConfigResolver::alternate_key("apcore-cli.logging_level"),
+            Some("logging.level")
+        );
+    }
+
+    #[test]
+    fn test_alternate_key_legacy_to_namespace() {
+        assert_eq!(
+            ConfigResolver::alternate_key("cli.stdin_buffer_limit"),
+            Some("apcore-cli.stdin_buffer_limit")
+        );
+        assert_eq!(
+            ConfigResolver::alternate_key("cli.auto_approve"),
+            Some("apcore-cli.auto_approve")
+        );
+        assert_eq!(
+            ConfigResolver::alternate_key("logging.level"),
+            Some("apcore-cli.logging_level")
+        );
+    }
+
+    #[test]
+    fn test_alternate_key_unknown_returns_none() {
+        assert_eq!(ConfigResolver::alternate_key("unknown.key"), None);
+        assert_eq!(ConfigResolver::alternate_key("extensions.root"), None);
+    }
+
+    #[test]
+    fn test_resolve_namespace_key_from_legacy_file() {
+        // Simulate a config file with legacy "cli.stdin_buffer_limit" key
+        let mut file_map = HashMap::new();
+        file_map.insert("cli.stdin_buffer_limit".to_string(), "5242880".to_string());
+        let resolver = ConfigResolver {
+            cli_flags: HashMap::new(),
+            config_file: Some(file_map),
+            config_path: None,
+            defaults: ConfigResolver::DEFAULTS.iter().copied().collect(),
+        };
+        // Querying the namespace key should find the legacy key via fallback
+        let result = resolver.resolve("apcore-cli.stdin_buffer_limit", None, None);
+        assert_eq!(result, Some("5242880".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_legacy_key_from_namespace_file() {
+        // Simulate a config file with namespace "apcore-cli.auto_approve" key
+        let mut file_map = HashMap::new();
+        file_map.insert("apcore-cli.auto_approve".to_string(), "true".to_string());
+        let resolver = ConfigResolver {
+            cli_flags: HashMap::new(),
+            config_file: Some(file_map),
+            config_path: None,
+            defaults: ConfigResolver::DEFAULTS.iter().copied().collect(),
+        };
+        // Querying the legacy key should find the namespace key via fallback
+        let result = resolver.resolve("cli.auto_approve", None, None);
+        assert_eq!(result, Some("true".to_string()));
+    }
+
+    #[test]
+    fn test_direct_key_takes_precedence_over_alternate() {
+        let mut file_map = HashMap::new();
+        file_map.insert("cli.help_text_max_length".to_string(), "500".to_string());
+        file_map.insert(
+            "apcore-cli.help_text_max_length".to_string(),
+            "2000".to_string(),
+        );
+        let resolver = ConfigResolver {
+            cli_flags: HashMap::new(),
+            config_file: Some(file_map),
+            config_path: None,
+            defaults: ConfigResolver::DEFAULTS.iter().copied().collect(),
+        };
+        assert_eq!(
+            resolver.resolve("cli.help_text_max_length", None, None),
+            Some("500".to_string())
+        );
+        assert_eq!(
+            resolver.resolve("apcore-cli.help_text_max_length", None, None),
+            Some("2000".to_string())
+        );
     }
 }

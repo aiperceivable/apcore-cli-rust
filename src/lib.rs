@@ -30,6 +30,13 @@ pub const EXIT_APPROVAL_DENIED: i32 = 46;
 pub const EXIT_CONFIG_NOT_FOUND: i32 = 47;
 pub const EXIT_SCHEMA_CIRCULAR_REF: i32 = 48;
 pub const EXIT_ACL_DENIED: i32 = 77;
+// Config Bus errors (apcore >= 0.15.0)
+pub const EXIT_CONFIG_NAMESPACE_RESERVED: i32 = 78;
+pub const EXIT_CONFIG_NAMESPACE_DUPLICATE: i32 = 78;
+pub const EXIT_CONFIG_ENV_PREFIX_CONFLICT: i32 = 78;
+pub const EXIT_CONFIG_MOUNT_ERROR: i32 = 66;
+pub const EXIT_CONFIG_BIND_ERROR: i32 = 65;
+pub const EXIT_ERROR_FORMATTER_DUPLICATE: i32 = 70;
 pub const EXIT_SIGINT: i32 = 130;
 
 // Re-export primary public types at crate root.

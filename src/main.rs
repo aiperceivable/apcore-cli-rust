@@ -66,6 +66,67 @@ pub fn extract_binding_path(args: &[String]) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// render_man_page
+// ---------------------------------------------------------------------------
+
+/// Render a roff man page to stdout.
+///
+/// When stdout is a TTY, attempts to render through `mandoc` or `groff` and
+/// pipe through a pager for formatted display. When stdout is not a TTY
+/// (piped or redirected), outputs raw roff for file redirection.
+fn render_man_page(roff: &str) {
+    use std::io::{IsTerminal, Write};
+    use std::process::{Command, Stdio};
+
+    let is_tty = std::io::stdout().is_terminal();
+    if !is_tty {
+        print!("{roff}");
+        return;
+    }
+
+    // Try mandoc first (macOS/BSD), then groff.
+    let renderers: &[(&str, &[&str])] = &[("mandoc", &["-a"]), ("groff", &["-man", "-Tutf8"])];
+    for &(cmd, args) in renderers {
+        let Ok(mut child) = Command::new(cmd)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            continue;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(roff.as_bytes());
+        }
+        let Ok(output) = child.wait_with_output() else {
+            continue;
+        };
+        if !output.status.success() || output.stdout.is_empty() {
+            continue;
+        }
+        // Pipe rendered output through PAGER or less.
+        let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_string());
+        if let Ok(mut pager_child) = Command::new(&pager)
+            .arg("-R")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+        {
+            if let Some(mut stdin) = pager_child.stdin.take() {
+                let _ = stdin.write_all(&output.stdout);
+            }
+            let _ = pager_child.wait();
+            return;
+        }
+    }
+
+    // Fallback: raw roff output.
+    print!("{roff}");
+}
+
+// ---------------------------------------------------------------------------
 // resolve_prog_name
 // ---------------------------------------------------------------------------
 
@@ -182,6 +243,10 @@ fn build_cli_command(
         .version(env!("CARGO_PKG_VERSION"))
         .long_version(format!("{}, version {}", name, env!("CARGO_PKG_VERSION")))
         .about("CLI adapter for the apcore module ecosystem.")
+        .after_help(
+            "Use --help --verbose to show all options (including built-in apcore options).\n\
+             Use --help --man to display a formatted man page.",
+        )
         .allow_external_subcommands(true)
         .arg(
             clap::Arg::new("extensions-dir")
@@ -287,7 +352,7 @@ async fn main() {
             None,
             None,
         );
-        println!("{roff}");
+        render_man_page(&roff);
         std::process::exit(0);
     }
 
