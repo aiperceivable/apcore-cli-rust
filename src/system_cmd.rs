@@ -244,9 +244,10 @@ fn call_system_module(
         Ok(handle) => {
             // We are inside a tokio runtime -- use block_in_place.
             tokio::task::block_in_place(|| {
-                handle.block_on(executor.call(module_id, inputs, None, None))
+                handle
+                    .block_on(executor.call(module_id, inputs, None, None))
+                    .map_err(|e| e.to_string())
             })
-            .map_err(|e| e.to_string())
         }
         Err(_) => Err("no async runtime available".to_string()),
     }
