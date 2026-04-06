@@ -688,129 +688,7 @@ pub fn build_module_command_with_limit(
     }
     let footer = footer_parts.join("\n");
 
-    let mut cmd = clap::Command::new(module_id.clone())
-        .after_help(footer)
-        // Built-in flags present on every generated command.
-        .arg(
-            clap::Arg::new("input")
-                .long("input")
-                .value_name("SOURCE")
-                .help(
-                    "Read JSON input from a file path, \
-                     or use '-' to read from stdin pipe.",
-                )
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("yes")
-                .long("yes")
-                .short('y')
-                .action(clap::ArgAction::SetTrue)
-                .help(
-                    "Skip interactive approval prompts \
-                     (for scripts and CI).",
-                )
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("large-input")
-                .long("large-input")
-                .action(clap::ArgAction::SetTrue)
-                .help(
-                    "Allow stdin input larger than 10MB \
-                     (default limit protects against \
-                     accidental pipes).",
-                )
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("format")
-                .long("format")
-                .value_parser(["json", "table", "csv", "yaml", "jsonl"])
-                .help(
-                    "Output format: json, table, csv, \
-                     yaml, jsonl.",
-                )
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("fields")
-                .long("fields")
-                .value_name("FIELDS")
-                .help(
-                    "Comma-separated dot-paths to select \
-                     from the result \
-                     (e.g., 'status,data.count').",
-                )
-                .hide(hide),
-        )
-        // --sandbox is always hidden (not yet implemented)
-        .arg(
-            clap::Arg::new("sandbox")
-                .long("sandbox")
-                .action(clap::ArgAction::SetTrue)
-                .help(
-                    "Run module in an isolated subprocess \
-                     with restricted filesystem and env \
-                     access.",
-                )
-                .hide(true),
-        )
-        .arg(
-            clap::Arg::new("dry-run")
-                .long("dry-run")
-                .action(clap::ArgAction::SetTrue)
-                .help(
-                    "Run preflight checks without \
-                     executing the module.",
-                )
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("trace")
-                .long("trace")
-                .action(clap::ArgAction::SetTrue)
-                .help(
-                    "Show execution pipeline trace with \
-                     per-step timing after the result.",
-                )
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("stream")
-                .long("stream")
-                .action(clap::ArgAction::SetTrue)
-                .help("Stream module output as JSONL.")
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("strategy")
-                .long("strategy")
-                .value_parser(["standard", "internal", "testing", "performance", "minimal"])
-                .value_name("STRATEGY")
-                .help("Execution pipeline strategy.")
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("approval-timeout")
-                .long("approval-timeout")
-                .value_name("SECONDS")
-                .help(
-                    "Override approval prompt timeout in \
-                     seconds (default: 60).",
-                )
-                .hide(hide),
-        )
-        .arg(
-            clap::Arg::new("approval-token")
-                .long("approval-token")
-                .value_name("TOKEN")
-                .help(
-                    "Resume a pending approval with the \
-                     given token.",
-                )
-                .hide(hide),
-        );
+    let mut cmd = add_dispatch_flags(clap::Command::new(module_id.clone()).after_help(footer));
 
     // Attach schema-derived args.
     for arg in schema_args.args {
@@ -1414,6 +1292,9 @@ pub async fn dispatch_module(
                 }
             }
             Err(_e) => {
+                tracing::debug!(
+                    "system.validate call failed: {_e}; falling back to basic schema validation"
+                );
                 // Fallback: perform basic schema validation only.
                 let schema_ok = if let Some(schema) = module_def.input_schema.as_object() {
                     if schema.contains_key("properties") {

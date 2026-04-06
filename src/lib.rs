@@ -34,6 +34,8 @@ pub const EXIT_CONFIG_NOT_FOUND: i32 = 47;
 pub const EXIT_SCHEMA_CIRCULAR_REF: i32 = 48;
 pub const EXIT_ACL_DENIED: i32 = 77;
 // Config Bus errors (apcore >= 0.15.0)
+// All four namespace/env errors share exit code 78 per protocol spec —
+// the spec groups them into a single "config namespace error" category.
 pub const EXIT_CONFIG_NAMESPACE_RESERVED: i32 = 78;
 pub const EXIT_CONFIG_NAMESPACE_DUPLICATE: i32 = 78;
 pub const EXIT_CONFIG_ENV_PREFIX_CONFLICT: i32 = 78;

@@ -26,22 +26,9 @@ pub enum ShellError {
 /// among the live clap subcommands, so that built-in commands that have not
 /// yet been wired still produce a man page stub rather than an "unknown
 /// command" error.
-pub const KNOWN_BUILTINS: &[&str] = &[
-    "completion",
-    "config",
-    "describe",
-    "describe-pipeline",
-    "disable",
-    "enable",
-    "exec",
-    "health",
-    "init",
-    "list",
-    "man",
-    "reload",
-    "usage",
-    "validate",
-];
+///
+/// This is a re-export of `cli::BUILTIN_COMMANDS` — single source of truth.
+pub const KNOWN_BUILTINS: &[&str] = crate::cli::BUILTIN_COMMANDS;
 
 // ---------------------------------------------------------------------------
 // register_shell_commands
