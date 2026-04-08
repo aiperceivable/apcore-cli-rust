@@ -30,7 +30,8 @@ fn test_validate_module_id_valid_ids() {
 
 #[test]
 fn test_validate_module_id_too_long() {
-    let long_id = "a".repeat(129);
+    // PROTOCOL_SPEC §2.7 — bumped from 128 to 192 in spec 1.6.0-draft.
+    let long_id = "a".repeat(193);
     assert!(validate_module_id(&long_id).is_err());
 }
 
@@ -43,7 +44,8 @@ fn test_validate_module_id_invalid_formats() {
 
 #[test]
 fn test_validate_module_id_max_length_ok() {
-    let max_id = "a".repeat(128);
+    // PROTOCOL_SPEC §2.7 — bumped from 128 to 192 in spec 1.6.0-draft.
+    let max_id = "a".repeat(192);
     assert!(validate_module_id(&max_id).is_ok());
 }
 

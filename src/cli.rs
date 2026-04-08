@@ -786,12 +786,18 @@ pub fn collect_input(
 // validate_module_id
 // ---------------------------------------------------------------------------
 
-const MODULE_ID_MAX_LEN: usize = 128;
+/// Maximum allowed length for a CLI-supplied module ID.
+///
+/// Tracks PROTOCOL_SPEC §2.7 EBNF constraint #1 — bumped from 128 to 192 in
+/// spec 1.6.0-draft to accommodate Java/.NET deep-namespace FQN-derived IDs.
+/// Filesystem-safe: `192 + ".binding.yaml".len() = 205 < 255`-byte filename
+/// limit on ext4/xfs/NTFS/APFS/btrfs.
+const MODULE_ID_MAX_LEN: usize = 192;
 
 /// Validate a module identifier.
 ///
 /// # Rules
-/// * Maximum 128 characters
+/// * Maximum 192 characters (PROTOCOL_SPEC §2.7)
 /// * Matches `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`
 /// * No leading/trailing dots, no consecutive dots
 /// * Must not start with a digit or uppercase letter
@@ -1617,7 +1623,8 @@ mod tests {
 
     #[test]
     fn test_validate_module_id_too_long() {
-        let long_id = "a".repeat(129);
+        // PROTOCOL_SPEC §2.7 — bumped from 128 to 192 in spec 1.6.0-draft.
+        let long_id = "a".repeat(193);
         assert!(validate_module_id(&long_id).is_err());
     }
 
@@ -1630,8 +1637,16 @@ mod tests {
 
     #[test]
     fn test_validate_module_id_max_length() {
-        let max_id = "a".repeat(128);
+        // PROTOCOL_SPEC §2.7 — bumped from 128 to 192 in spec 1.6.0-draft.
+        let max_id = "a".repeat(192);
         assert!(validate_module_id(&max_id).is_ok());
+    }
+
+    #[test]
+    fn test_validate_module_id_over_max_length_message() {
+        let overlong = "a".repeat(193);
+        let err = validate_module_id(&overlong).expect_err("expected length error");
+        assert!(format!("{err:?}").contains("Maximum length"));
     }
 
     // collect_input tests (TDD red → green)
