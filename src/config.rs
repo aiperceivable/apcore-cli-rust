@@ -34,18 +34,29 @@ pub struct ConfigResolver {
 
 impl ConfigResolver {
     /// Default configuration values.
+    ///
+    /// Audit D9 (config cleanup, v0.6.x): the entries `sandbox.enabled`,
+    /// `cli.auto_approve`, `cli.stdin_buffer_limit`, and the four
+    /// `apcore-cli.*` namespace aliases were removed because no production
+    /// code path reads them via `resolve()`. Sandbox is configured via the
+    /// `--sandbox` CLI flag, auto-approve via `--yes`, the stdin buffer is
+    /// hard-coded, and namespace aliases are registered separately by
+    /// `apcore`'s Config Bus when the parent crate calls
+    /// `apcore::Config::register_namespace`. The cross-key file-lookup
+    /// mechanism (`alternate_key`) still works regardless — it does not
+    /// depend on these DEFAULTS entries.
     pub const DEFAULTS: &'static [(&'static str, &'static str)] = &[
         ("extensions.root", "./extensions"),
         ("logging.level", "WARNING"),
-        ("sandbox.enabled", "false"),
-        ("cli.stdin_buffer_limit", "10485760"),
-        ("cli.auto_approve", "false"),
         ("cli.help_text_max_length", "1000"),
-        // Namespace-mode aliases (apcore >= 0.15.0 Config Bus)
-        ("apcore-cli.stdin_buffer_limit", "10485760"),
-        ("apcore-cli.auto_approve", "false"),
-        ("apcore-cli.help_text_max_length", "1000"),
-        ("apcore-cli.logging_level", "WARNING"),
+        // FE-11 (v0.6.0)
+        ("cli.approval_timeout", "60"),
+        ("cli.strategy", "standard"),
+        ("cli.group_depth", "1"),
+        // Exposure filtering (FE-12)
+        ("expose.mode", "all"),
+        ("expose.include", "[]"),
+        ("expose.exclude", "[]"),
     ];
 
     /// Namespace key → legacy key mapping for backward compatibility.
@@ -288,18 +299,43 @@ mod tests {
 
     #[test]
     fn test_defaults_contains_expected_keys() {
+        // Audit D9 (v0.6.x): only keys actually consumed by resolve() at
+        // runtime live in DEFAULTS. The deleted keys (sandbox.enabled,
+        // cli.auto_approve, cli.stdin_buffer_limit, apcore-cli.* aliases)
+        // were dead — they're tested for absence by test_deleted_keys_absent.
         let resolver = ConfigResolver::new(None, None);
         for key in [
             "extensions.root",
             "logging.level",
-            "sandbox.enabled",
-            "cli.stdin_buffer_limit",
-            "cli.auto_approve",
             "cli.help_text_max_length",
+            "cli.approval_timeout",
+            "cli.strategy",
+            "cli.group_depth",
+            "expose.mode",
         ] {
             assert!(
                 resolver.defaults.contains_key(key),
                 "missing default: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_deleted_keys_absent() {
+        // Verify the audit D9 cleanup didn't accidentally re-introduce dead keys.
+        let resolver = ConfigResolver::new(None, None);
+        for key in [
+            "sandbox.enabled",
+            "cli.auto_approve",
+            "cli.stdin_buffer_limit",
+            "apcore-cli.stdin_buffer_limit",
+            "apcore-cli.auto_approve",
+            "apcore-cli.help_text_max_length",
+            "apcore-cli.logging_level",
+        ] {
+            assert!(
+                !resolver.defaults.contains_key(key),
+                "deleted key reintroduced: {key}"
             );
         }
     }
@@ -315,13 +351,11 @@ mod tests {
     }
 
     #[test]
-    fn test_default_auto_approve_is_false() {
+    fn test_fe11_defaults_present() {
         let resolver = ConfigResolver::new(None, None);
-        assert_eq!(
-            resolver.defaults.get("cli.auto_approve"),
-            Some(&"false"),
-            "cli.auto_approve default must be false"
-        );
+        assert_eq!(resolver.defaults.get("cli.approval_timeout"), Some(&"60"));
+        assert_eq!(resolver.defaults.get("cli.strategy"), Some(&"standard"));
+        assert_eq!(resolver.defaults.get("cli.group_depth"), Some(&"1"));
     }
 
     #[test]
@@ -386,17 +420,21 @@ mod tests {
     // ---- Namespace-aware config resolution (apcore >= 0.15.0) ----
 
     #[test]
-    fn test_defaults_contain_namespace_keys() {
-        let resolver = ConfigResolver::new(None, None);
-        for key in [
+    fn test_namespace_alternate_key_map_intact() {
+        // Audit D9 (v0.6.x): the apcore-cli.* DEFAULTS entries were removed,
+        // but the cross-key NAMESPACE_MAP that powers `alternate_key()` is
+        // still authoritative. The map's destinations no longer need to be
+        // present in DEFAULTS — file lookup via alternate_key() works
+        // independently of the defaults dict.
+        for ns_key in [
             "apcore-cli.stdin_buffer_limit",
             "apcore-cli.auto_approve",
             "apcore-cli.help_text_max_length",
             "apcore-cli.logging_level",
         ] {
             assert!(
-                resolver.defaults.contains_key(key),
-                "missing namespace default: {key}"
+                ConfigResolver::alternate_key(ns_key).is_some(),
+                "alternate_key map must still resolve {ns_key}"
             );
         }
     }

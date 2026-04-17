@@ -32,3 +32,25 @@
 - Rust edition: 2021
 - MSRV: 1.75+
 - Async runtime: tokio
+- apcore pinned exactly: `apcore = "=0.17.1"` (v0.6.0 bump, was 0.15.1)
+- Runtime schema validation: jsonschema 0.18 (added in v0.6.0 for Py/TS parity)
+- Optional: apcore-toolkit >= 0.4 behind the `toolkit` feature flag
+
+## v0.6.0 Conventions
+
+- exposure module + ExposureFilter + `with_exposure_filter` builder pattern on the
+  grouped command group (FE-12). Note: Rust CliConfig does NOT yet expose an `expose`
+  field directly — filter must be wired via the builder method on the command group.
+- system_cmd module registers health/usage/enable/disable/reload/config commands (FE-11).
+- strategy module + describe-pipeline + --strategy flag (FE-11).
+- validate module + --dry-run flag (FE-11).
+- 4 Config Bus exit codes added: 65 (EXIT_CONFIG_BIND_ERROR), 66 (EXIT_CONFIG_MOUNT_ERROR),
+  70 (EXIT_ERROR_FORMATTER_DUPLICATE), 78 (EXIT_CONFIG_NAMESPACE_*).
+- `CliApprovalHandler` struct is currently a configuration holder only (stores
+  `auto_approve` and `timeout`). Actual approval gating is performed by standalone
+  `approval::check_approval` / `check_approval_with_tty` functions. Full trait-method
+  implementation is tracked as apcore-skills:sync finding A-001.
+- `Sandbox::execute()` currently needs executor wiring — tracked as A-003.
+- Public surface hygiene: `dispatch_*`/`register_*`/command builder fns should be
+  `pub(crate)` not `pub` — only called from main.rs. Ongoing cleanup per D9-005.
+- schemars moved to [dev-dependencies] (v0.6.0 cleanup) — used only in examples/.

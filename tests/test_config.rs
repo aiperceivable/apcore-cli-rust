@@ -25,12 +25,18 @@ fn test_config_resolver_with_cli_flags() {
 
 #[test]
 fn test_defaults_contains_expected_keys() {
+    // Audit D9 (v0.6.x): sandbox.enabled and cli.stdin_buffer_limit were
+    // removed because they were never read by resolve() at runtime. The
+    // canonical set of resolvable keys is verified by the unit tests in
+    // src/config.rs (test_defaults_contains_expected_keys + test_deleted_keys_absent).
     let resolver = ConfigResolver::new(None, None);
     for key in [
         "extensions.root",
         "logging.level",
-        "sandbox.enabled",
-        "cli.stdin_buffer_limit",
+        "cli.help_text_max_length",
+        "cli.approval_timeout",
+        "cli.strategy",
+        "cli.group_depth",
     ] {
         assert!(
             resolver.defaults.contains_key(key),

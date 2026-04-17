@@ -146,11 +146,7 @@ fn test_collect_input_no_stdin_flag_returns_cli_kwargs() {
 
 /// Helper: build a test module command with a simple two-property schema.
 fn build_test_module_command(name: &str) -> clap::Command {
-    use apcore_cli::cli::{build_module_command, ModuleExecutor};
-    use std::sync::Arc;
-
-    struct NoOpExecutor;
-    impl ModuleExecutor for NoOpExecutor {}
+    use apcore_cli::cli::build_module_command;
 
     let module_def = apcore::registry::registry::ModuleDescriptor {
         name: name.to_string(),
@@ -167,8 +163,7 @@ fn build_test_module_command(name: &str) -> clap::Command {
         tags: vec![],
         dependencies: vec![],
     };
-    let executor: Arc<dyn ModuleExecutor> = Arc::new(NoOpExecutor);
-    build_module_command(&module_def, executor).expect("should build command")
+    build_module_command(&module_def).expect("should build command")
 }
 
 #[test]

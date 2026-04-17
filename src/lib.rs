@@ -1,12 +1,18 @@
-// apcore-cli — Command-line interface for apcore modules
-// Library root: re-exports all public API items.
-// Protocol spec: FE-01 through FE-11, SEC-01 through SEC-04
+//! apcore-cli — Command-line interface for apcore modules.
+//!
+//! Automatic MCP Server & OpenAI Tools Bridge for apcore — zero code changes required.
+//!
+//! Library root: re-exports the user-facing public API items.
+//! Protocol spec: FE-01 through FE-13 plus SEC-01 through SEC-04.
+//!
+//! See the apcore-cli docs repo for the authoritative feature spec and tech design.
 
 pub mod approval;
 pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod display_helpers;
+pub mod exposure;
 pub mod fs_discoverer;
 pub mod init_cmd;
 pub mod output;
@@ -90,12 +96,18 @@ pub struct CliConfig {
     pub prog_name: Option<String>,
     /// Override extensions directory (only used when `registry` is None).
     pub extensions_dir: Option<String>,
+    /// Path to convention-based commands directory (apcore-toolkit ConventionScanner).
+    /// TODO: wire to apcore-toolkit when the `toolkit` feature is enabled.
+    pub commands_dir: Option<String>,
+    /// Path to binding.yaml for display overlay (apcore-toolkit DisplayResolver).
+    /// TODO: wire to apcore-toolkit when the `toolkit` feature is enabled.
+    pub binding_path: Option<String>,
     /// Pre-populated registry provider. When set, skips filesystem discovery.
     /// Mutually exclusive with `app`.
     pub registry: Option<std::sync::Arc<dyn discovery::RegistryProvider>>,
     /// Pre-built module executor. When set, skips executor construction.
     /// Mutually exclusive with `app`.
-    pub executor: Option<std::sync::Arc<dyn cli::ModuleExecutor>>,
+    pub executor: Option<std::sync::Arc<apcore::Executor>>,
     /// Unified APCore client. When set, `registry` and `executor` are derived
     /// from it. Mutually exclusive with `registry` and `executor`.
     pub app: Option<apcore::APCore>,
@@ -105,6 +117,9 @@ pub struct CliConfig {
     /// Group depth for multi-level module grouping (default: 1).
     /// Higher values allow deeper dotted-name grouping.
     pub group_depth: usize,
+    /// Module exposure filter (FE-12). When set, the CLI builder will apply
+    /// this filter at dispatch time when constructing the module command tree.
+    pub expose: Option<exposure::ExposureFilter>,
 }
 
 impl CliConfig {
@@ -166,7 +181,7 @@ pub async fn run_with_config(config: CliConfig, _args: Vec<String>) -> i32 {
         let registry_arc = app.registry_arc();
         let _executor = apcore::Executor::new(
             std::sync::Arc::clone(&registry_arc),
-            std::sync::Arc::new(apcore::Config::default()),
+            apcore::Config::default(),
         );
         let _provider = discovery::ApCoreRegistryProvider::from_arc(registry_arc);
         // Full CLI dispatch using _provider and _executor is extracted in a
@@ -186,54 +201,97 @@ impl Default for CliConfig {
         Self {
             prog_name: None,
             extensions_dir: None,
+            commands_dir: None,
+            binding_path: None,
             registry: None,
             executor: None,
             app: None,
             extra_commands: Vec::new(),
             group_depth: 1,
+            expose: None,
         }
     }
 }
 
-// Re-export primary public types at crate root.
+// ---------------------------------------------------------------------------
+// Crate-root re-exports (USER-FACING API only)
+// ---------------------------------------------------------------------------
+//
+// Per audit D9-005, the crate-root pub-use surface was trimmed from ~110 → ~40
+// items in v0.6.x. Internal command-builder helpers (dispatch_*, register_*,
+// describe_pipeline_command, validate_command, generate_grouped_*_completion,
+// build_synopsis, generate_man_page) are still `pub` at the module level so
+// the binary entry-point in main.rs can call them via the full path
+// (`apcore_cli::system_cmd::register_system_commands`, etc.) — but they are
+// no longer re-exported at the crate root. Downstream users wanting to embed
+// the CLI should use `CliConfig` and the user-facing API below.
+
+// Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{check_approval, ApprovalError};
+
+// Core dispatcher (FE-01)
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
-    collect_input_from_reader, get_docs_url, is_verbose_help, set_audit_logger, set_docs_url,
-    set_executables, set_verbose_help, validate_module_id, GroupedModuleGroup, ModuleExecutor,
+    collect_input_from_reader, dispatch_module, get_docs_url, is_verbose_help, set_audit_logger,
+    set_docs_url, set_executables, set_verbose_help, validate_module_id, BUILTIN_COMMANDS,
 };
+
+// Config resolution (FE-07)
 pub use config::ConfigResolver;
+
+// Discovery + Registry providers (FE-03 / FE-09)
 pub use discovery::{
     cmd_describe, cmd_list, cmd_list_enhanced, register_discovery_commands, ApCoreRegistryProvider,
     DiscoveryError, ListOptions, RegistryProvider,
 };
-pub use display_helpers::{get_cli_display_fields, get_display};
-pub use init_cmd::{handle_init, init_command};
-// Test utilities — available but hidden from docs.
+
+// Test utilities — available behind the `test-support` feature.
 // Gated behind cfg(test) for unit tests and the test-support feature for
 // integration tests. Excluded from production builds.
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use discovery::{mock_module, MockRegistry};
+
+// Display overlay helpers (FE-09)
+pub use display_helpers::{get_cli_display_fields, get_display};
+
+// Module exposure filtering (FE-12)
+pub use exposure::ExposureFilter;
+
+// Filesystem discoverer (FE-03)
 pub use fs_discoverer::FsDiscoverer;
+
+// Init command (FE-10)
+pub use init_cmd::{handle_init, init_command};
+
+// Output formatting (FE-08)
 pub use output::{format_exec_result, format_module_detail, format_module_list, resolve_format};
+
+// Schema $ref resolver (FE-02)
 pub use ref_resolver::resolve_refs;
+
+// JSON Schema → clap argument generator (FE-02)
 pub use schema_parser::{
     extract_help_with_limit, reconvert_enum_values, schema_to_clap_args,
     schema_to_clap_args_with_limit, BoolFlagPair, SchemaArgs, SchemaParserError, HELP_TEXT_MAX_LEN,
 };
+
+// Security primitives (SEC-01..04)
 pub use security::{AuditLogger, AuthProvider, ConfigEncryptor, Sandbox};
+
+// Shell integration (FE-06): completion + man page builders.
+// build_program_man_page is the user-facing full-program man entry point;
+// per-command builders (cmd_completion, cmd_man, has_man_flag, completion_command,
+// register_shell_commands) are kept for downstream embedders that build their
+// own root command tree.
 pub use shell::{
-    build_program_man_page, build_synopsis, cmd_completion, cmd_man, completion_command,
-    generate_man_page, has_man_flag, register_shell_commands, ShellError, KNOWN_BUILTINS,
+    build_program_man_page, cmd_completion, cmd_man, completion_command, has_man_flag,
+    register_shell_commands, ShellError,
 };
-pub use strategy::{
-    describe_pipeline_command, dispatch_describe_pipeline, register_pipeline_command,
-};
-pub use system_cmd::{register_system_commands, SYSTEM_COMMANDS};
-pub use validate::{
-    dispatch_validate, format_preflight_result, register_validate_command, validate_command,
-};
+
+// FE-11 system commands constant (used by downstream consumers to inspect
+// which command names are reserved by the system-management subset).
+pub use system_cmd::SYSTEM_COMMANDS;
 
 #[cfg(test)]
 mod tests {
@@ -244,11 +302,14 @@ mod tests {
         let config = CliConfig::default();
         assert!(config.prog_name.is_none());
         assert!(config.extensions_dir.is_none());
+        assert!(config.commands_dir.is_none());
+        assert!(config.binding_path.is_none());
         assert!(config.registry.is_none());
         assert!(config.executor.is_none());
         assert!(config.app.is_none());
         assert!(config.extra_commands.is_empty());
         assert_eq!(config.group_depth, 1);
+        assert!(config.expose.is_none());
     }
 
     #[test]
@@ -282,11 +343,11 @@ mod tests {
 
     #[test]
     fn cli_config_validate_err_app_with_executor() {
-        use crate::cli::ApCoreExecutorAdapter;
         let config = CliConfig {
             app: Some(apcore::APCore::new()),
-            executor: Some(std::sync::Arc::new(ApCoreExecutorAdapter(
-                apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
+            executor: Some(std::sync::Arc::new(apcore::Executor::new(
+                std::sync::Arc::new(apcore::Registry::new()),
+                apcore::Config::default(),
             ))),
             ..Default::default()
         };
@@ -304,6 +365,5 @@ mod tests {
         };
         assert_eq!(config.prog_name.as_deref(), Some("test-app"));
         assert!(config.registry.is_some());
-        assert!(config.executor.is_none());
     }
 }

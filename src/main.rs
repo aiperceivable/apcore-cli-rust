@@ -456,10 +456,9 @@ async fn main() {
     provider.set_descriptions(descriptions);
     let registry_provider: std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider> =
         std::sync::Arc::new(provider);
-    let executor: std::sync::Arc<dyn apcore_cli::ModuleExecutor> =
-        std::sync::Arc::new(apcore_cli::cli::ApCoreExecutorAdapter(
-            apcore::Executor::new(apcore::Registry::new(), apcore::Config::default()),
-        ));
+    // ModuleExecutor trait + ApCoreExecutorAdapter were deleted per audit
+    // D9-001..004. dispatch_module now takes the concrete apcore::Executor
+    // directly via apcore_executor below.
 
     let prog_name = resolve_prog_name(None);
 
@@ -595,7 +594,6 @@ async fn main() {
                 module_id,
                 sub_m,
                 &registry_provider,
-                &executor,
                 &apcore_executor,
             )
             .await;
@@ -621,14 +619,12 @@ async fn main() {
             // If found, build the full command with --a, --b, etc. from input_schema.
             // If not found, use basic dispatch flags (dispatch_module will exit 44).
             let temp_cmd = match registry_provider.get_module_descriptor(&external) {
-                Some(descriptor) => {
-                    match apcore_cli::build_module_command(&descriptor, executor.clone()) {
-                        Ok(cmd) => cmd.no_binary_name(true),
-                        Err(_) => apcore_cli::cli::add_dispatch_flags(
-                            clap::Command::new(&external).no_binary_name(true),
-                        ),
-                    }
-                }
+                Some(descriptor) => match apcore_cli::build_module_command(&descriptor) {
+                    Ok(cmd) => cmd.no_binary_name(true),
+                    Err(_) => apcore_cli::cli::add_dispatch_flags(
+                        clap::Command::new(&external).no_binary_name(true),
+                    ),
+                },
                 None => apcore_cli::cli::add_dispatch_flags(
                     clap::Command::new(&external).no_binary_name(true),
                 ),
@@ -645,7 +641,6 @@ async fn main() {
                 &external,
                 &ext_matches,
                 &registry_provider,
-                &executor,
                 &apcore_executor,
             )
             .await;

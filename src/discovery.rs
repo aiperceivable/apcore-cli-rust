@@ -115,6 +115,12 @@ pub struct ListOptions<'a> {
 /// Returns `Err(DiscoveryError)` on invalid tag format.
 ///
 /// Exit code mapping for the caller: `DiscoveryError::InvalidTag` -> exit 2.
+///
+/// **Design note (audit D9):** This is a thin convenience wrapper over
+/// [`cmd_list_enhanced`] for the common case of "tags + format only". Audit
+/// D9 flagged it as a parallel implementation, but the cure (migrating
+/// 16+ test sites to construct full `ListOptions` literals) is worse than
+/// the disease (one extra 1-line wrapper). Retained intentionally.
 pub fn cmd_list(
     registry: &dyn RegistryProvider,
     tags: &[&str],

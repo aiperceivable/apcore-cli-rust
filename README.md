@@ -8,7 +8,7 @@ Terminal adapter for apcore. Execute AI-Perceivable modules from the command lin
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-459%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
 
 | | |
 |---|---|
@@ -48,7 +48,7 @@ Terminal adapter for apcore. Execute AI-Perceivable modules from the command lin
 cargo install apcore-cli
 ```
 
-Requires Rust 1.75+ and `apcore >= 0.14.0`.
+Requires Rust 1.75+ and `apcore = 0.17.1` (exact pin).
 
 ## Quick Start
 
@@ -117,6 +117,42 @@ let config = CliConfig {
 // Use config.registry / config.executor at dispatch time
 ```
 
+### Exposure Filtering (FE-12)
+
+`apcore-cli` supports declarative module exposure filtering via `ExposureFilter`.
+Because Rust's `CliConfig` does not currently have an `expose` field, filtering is
+applied via a builder method on `GroupedModuleGroup` -- construct the group first,
+then attach the filter:
+
+```rust
+use apcore_cli::{ExposureFilter, GroupedModuleGroup};
+use std::sync::Arc;
+
+// Option 1: construct ExposureFilter directly (mode, include patterns, exclude patterns)
+let filter = ExposureFilter::new(
+    "include",
+    &["admin.*".to_string()],
+    &[],
+);
+
+// Option 2: load from a JSON config value
+let cfg = serde_json::json!({
+    "mode": "exclude",
+    "exclude": ["debug.*", "test.*"]
+});
+let filter = ExposureFilter::from_config(&cfg).expect("valid exposure config");
+
+// Wire the filter into the grouped module group
+let group = GroupedModuleGroup::new(registry.clone(), executor.clone(), 1000)
+    .with_exposure_filter(filter);
+
+// Then continue building your clap::Command from the group...
+```
+
+> **Note:** Exposure filtering must be wired via `GroupedModuleGroup::with_exposure_filter`
+> -- the `CliConfig` struct does not currently expose this field. See CHANGELOG 0.6.0 /
+> FE-12 for background.
+
 ## Integration with Existing Projects
 
 ### Typical apcore project structure
@@ -177,13 +213,41 @@ apcore-cli [OPTIONS] COMMAND [ARGS]
 
 ### Built-in Commands
 
-| Command | Description |
-|---------|-------------|
-| `exec <module_id>` | Execute a module by ID (with `--input`, `--yes`, `--format`, `--sandbox` flags) |
-| `list` | List available modules with optional tag filtering |
-| `describe <module_id>` | Show full module metadata and schemas |
-| `completion <shell>` | Generate shell completion script (bash/zsh/fish/elvish/powershell) |
-| `man <command>` | Generate man page in roff format |
+apcore-cli ships with 14 built-in subcommands (canonical list from `BUILTIN_COMMANDS` in `src/cli.rs`). They fall into four groups:
+
+**Module invocation**
+
+| Command | Description | Source |
+|---------|-------------|--------|
+| `exec <module_id>` | Execute a module by ID (supports `--input`, `--yes`, `--format`, `--sandbox`, `--dry-run`, `--trace`, `--stream`, `--strategy`, `--fields`, `--approval-timeout`, `--approval-token`) | `cli` |
+| `list` | List available modules with filtering (`--tag`, `--search`, `--status`, `--annotation`, `--sort`, `--reverse`, `--deprecated`, `--deps`) | `discovery` |
+| `describe <module_id>` | Show full module metadata, schemas, and annotations | `discovery` |
+| `validate <module_id>` | Run preflight schema / approval / dependency validation without executing | `validate` |
+
+**System management**
+
+| Command | Description | Source |
+|---------|-------------|--------|
+| `health` | Report framework / registry / executor health | `system_cmd` |
+| `usage` | Show cumulative execution statistics | `system_cmd` |
+| `enable <module_id>` | Enable a previously disabled module | `system_cmd` |
+| `disable <module_id>` | Disable a module (persists until re-enabled) | `system_cmd` |
+| `reload` | Reload registry from the extensions directory | `system_cmd` |
+| `config` | Show resolved configuration (Config Bus namespaces included) | `system_cmd` |
+
+**Workflow**
+
+| Command | Description | Source |
+|---------|-------------|--------|
+| `init` | Scaffold a new extensions directory with example modules | `init_cmd` |
+| `describe-pipeline <pipeline_id>` | Show pipeline execution strategy and stage trace | `strategy` |
+
+**Shell integration**
+
+| Command | Description | Source |
+|---------|-------------|--------|
+| `completion <shell>` | Generate shell completion script (bash/zsh/fish/elvish/powershell) | `shell` |
+| `man <command>` | Generate man page in roff format (or `--help --man` for the full program page) | `shell` |
 
 ### Module Execution Options
 
@@ -194,10 +258,19 @@ When executing a module (e.g. `apcore-cli math.add` or `apcore-cli exec math.add
 | `--input -` | Read JSON input from STDIN |
 | `--yes` / `-y` | Bypass approval prompts |
 | `--large-input` | Allow STDIN input larger than 10MB |
-| `--format` | Output format: `json` or `table` |
-| `--sandbox` | Run module in subprocess sandbox (not yet implemented -- always hidden) |
+| `--format <fmt>` | Output format: `json`, `table`, `csv`, `yaml`, or `jsonl` |
+| `--sandbox` | Run module in subprocess sandbox |
+| `--dry-run` | Run preflight checks without executing (FE-11, routed through the `validate` module) |
+| `--trace` | Emit a pipeline execution trace |
+| `--stream` | Stream results line-by-line instead of buffering |
+| `--strategy <name>` | Override execution strategy (`standard`, `internal`, `testing`, `performance`, `minimal`) |
+| `--fields <csv>` | Select output fields via dot-path notation |
+| `--approval-timeout <seconds>` | Override approval prompt timeout (default: 60) |
+| `--approval-token <token>` | Provide a pre-obtained approval token to skip the interactive prompt |
 
 Schema-generated flags (e.g. `--a`, `--b`) are added automatically from the module's `input_schema`.
+
+**Enhanced `list` flags (v0.6.0):** `--search <query>`, `--status <active|disabled|deprecated>`, `--annotation <key=value>`, `--sort <field>`, `--reverse`, `--deprecated` (include deprecated modules), `--deps` (show dependency graph).
 
 ### Exit Codes
 
@@ -211,7 +284,11 @@ Schema-generated flags (e.g. `--a`, `--b`) are added automatically from the modu
 | `46` | Approval denied or timed out |
 | `47` | Configuration error |
 | `48` | Schema circular reference |
+| `65` | `EXIT_CONFIG_BIND_ERROR` -- Configuration bind to struct failed (Config Bus) |
+| `66` | `EXIT_CONFIG_MOUNT_ERROR` -- Configuration namespace mount failed (Config Bus) |
+| `70` | `EXIT_ERROR_FORMATTER_DUPLICATE` -- Duplicate error formatter registration |
 | `77` | ACL denied |
+| `78` | `EXIT_CONFIG_NAMESPACE_*` -- Namespace reserved / duplicate / env-prefix conflict / env-map conflict (Config Bus) |
 | `130` | Execution cancelled (Ctrl+C) |
 
 ## Configuration
@@ -234,6 +311,9 @@ apcore-cli uses a 4-tier configuration precedence:
 | `APCORE_AUTH_API_KEY` | API key for remote registry authentication | *(unset)* |
 | `APCORE_CLI_SANDBOX` | Set to `1` to enable subprocess sandboxing | *(unset)* |
 | `APCORE_CLI_HELP_TEXT_MAX_LENGTH` | Maximum characters for CLI option help text before truncation | `1000` |
+| `APCORE_CLI_APPROVAL_TIMEOUT` | Default approval prompt timeout in seconds (overridable via `--approval-timeout`) | `60` |
+| `APCORE_CLI_STRATEGY` | Default execution strategy (overridable via `--strategy`) | `standard` |
+| `APCORE_CLI_GROUP_DEPTH` | Maximum module-grouping depth when building the clap command tree | `1000` |
 
 ### Config File (`apcore.yaml`)
 
@@ -246,6 +326,9 @@ sandbox:
   enabled: false
 cli:
   help_text_max_length: 1000
+  approval_timeout: 60          # seconds
+  strategy: standard            # standard | internal | testing | performance | minimal
+  group_depth: 1000             # max module-grouping depth
 ```
 
 ## Features
@@ -299,13 +382,49 @@ apcore Registry + Executor (your modules, unchanged)
 
 ## API Overview
 
-**Structs:** `CliConfig`, `LazyModuleGroup`, `ConfigResolver`, `AuthProvider`, `ConfigEncryptor`, `AuditLogger`, `Sandbox`
+The following items are re-exported at the crate root (`apcore_cli::*`). Everything else lives under its module path (e.g. `apcore_cli::cli::LazyModuleGroup`).
 
-**Functions:** `build_module_command`, `build_module_command_with_limit`, `validate_module_id`, `collect_input`, `schema_to_clap_args`, `schema_to_clap_args_with_limit`, `reconvert_enum_values`, `resolve_refs`, `check_approval`, `resolve_format`, `format_module_list`, `format_module_detail`, `format_exec_result`, `add_dispatch_flags`, `set_audit_logger`, `get_audit_logger`, `set_verbose_help`, `set_docs_url`, `get_docs_url`, `build_program_man_page`, `has_man_flag`, `exit_code_for_error`, `map_type`, `extract_help`, `extract_help_with_limit`, `truncate`
+### Structs
 
-**Traits:** `RegistryProvider`
+`CliConfig`, `GroupedModuleGroup`, `ExposureFilter`, `ConfigResolver`, `AuditLogger`, `AuthProvider`, `ConfigEncryptor`, `Sandbox`, `CliApprovalHandler`, `FsDiscoverer`, `ApCoreRegistryProvider`, `ListOptions`, `SchemaArgs`, `BoolFlagPair`.
 
-**Errors:** `CliError` (with variants: `ApprovalTimeout`, `ApprovalDenied`, `Authentication`, `ConfigDecryption`, `ModuleExecution`, `ModuleNotFound`, `SchemaValidation`)
+> Note: `LazyModuleGroup` is **not** re-exported at the crate root -- access it as `apcore_cli::cli::LazyModuleGroup`.
+
+### Functions
+
+Organized by source module:
+
+- **`approval::`** `check_approval`, `check_approval_with_tty`
+- **`cli::`** `set_verbose_help`, `is_verbose_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `exec_command`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`
+- **`discovery::`** `validate_tag`, `cmd_list`, `cmd_list_enhanced`, `cmd_describe`, `register_discovery_commands`
+- **`display_helpers::`** `get_display`, `get_cli_display_fields`
+- **`exposure::`** `glob_match`
+- **`init_cmd::`** `init_command`, `handle_init`
+- **`output::`** `resolve_format`, `format_module_list`, `format_module_list_with_deps`, `format_module_detail`, `format_exec_result`
+- **`ref_resolver::`** `resolve_refs`
+- **`schema_parser::`** `prop_name_to_flag_name`, `extract_help_with_limit`, `map_type`, `schema_to_clap_args`, `schema_to_clap_args_with_limit`, `reconvert_enum_values`
+- **`shell::`** `register_shell_commands`, `completion_command`, `cmd_completion`, `man_command`, `build_synopsis`, `generate_man_page`, `cmd_man`, `has_man_flag`, `build_program_man_page`, `generate_grouped_bash_completion`, `generate_grouped_zsh_completion`, `generate_grouped_fish_completion`
+- **`strategy::`** `describe_pipeline_command`, `register_pipeline_command`, `dispatch_describe_pipeline`
+- **`system_cmd::`** `register_system_commands`, `dispatch_health`, `dispatch_usage`, `dispatch_enable`, `dispatch_disable`, `dispatch_reload`, `dispatch_config`
+- **`validate::`** `validate_command`, `register_validate_command`, `dispatch_validate`, `format_preflight_result`
+
+### Traits
+
+`RegistryProvider`
+
+### Errors
+
+Each module defines its own `thiserror::Error` enum rather than a single catch-all type:
+
+- `ApprovalError` -- `Denied` / `NonInteractive` / `Timeout`
+- `CliError` -- `InvalidModuleId` / `ReservedModuleId` / `StdinRead` / `JsonParse` / `InputTooLarge` / `NotAnObject`
+- `DiscoveryError` -- `ModuleNotFound` / `InvalidModuleId` / `InvalidTag`
+- `SchemaParserError` -- `FlagCollision`
+- `RefResolverError` -- `Unresolvable` / `Circular` / `MaxDepthExceeded`
+- `ShellError` -- `UnknownCommand`
+- `AuthenticationError` -- `MissingApiKey` / `InvalidApiKey` / `KeyringError` / `RequestError`
+- `ConfigDecryptionError` -- `AuthTagMismatch` / `InvalidUtf8` / `KeyringError` / `KdfError`
+- `ModuleExecutionError` -- `NonZeroExit` / `Timeout` / `OutputParseFailed` / `SpawnFailed`
 
 ## Development
 
@@ -332,7 +451,7 @@ make check
 # Run individual steps
 cargo fmt --all -- --check       # formatting check
 cargo clippy --all-targets --all-features -- -D warnings   # lint
-cargo test --all-features        # 459 tests
+cargo test --all-features        # run full test suite
 ```
 
 ### Adding a New Module Descriptor

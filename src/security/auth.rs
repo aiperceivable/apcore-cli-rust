@@ -43,14 +43,33 @@ pub enum AuthenticationError {
 /// 1. Environment variable `APCORE_AUTH_API_KEY`
 /// 2. Config resolver `auth.api_key` field (may be `keyring:` or `enc:` prefixed)
 /// 3. Return `None` if neither is present.
+///
+/// Audit D1-006 parity (v0.6.x): the optional `encryptor` injection slot
+/// mirrors the TypeScript `AuthProvider(config, encryptor?)` constructor.
+/// When omitted, a fresh `ConfigEncryptor` is constructed lazily on first
+/// keyring/enc lookup.
 pub struct AuthProvider {
     config: ConfigResolver,
+    encryptor: Option<ConfigEncryptor>,
 }
 
 impl AuthProvider {
     /// Create a new `AuthProvider` with the given configuration resolver.
+    /// The encryptor is constructed lazily on first keyring/enc lookup.
     pub fn new(config: ConfigResolver) -> Self {
-        Self { config }
+        Self {
+            config,
+            encryptor: None,
+        }
+    }
+
+    /// Create a new `AuthProvider` with an explicit `ConfigEncryptor`.
+    /// Useful for tests that want to inject a `new_forced_aes()` instance.
+    pub fn with_encryptor(config: ConfigResolver, encryptor: ConfigEncryptor) -> Self {
+        Self {
+            config,
+            encryptor: Some(encryptor),
+        }
     }
 
     /// Retrieve the API key using the resolution order above.
@@ -73,9 +92,18 @@ impl AuthProvider {
 
         // If the stored value is a keyring ref or enc blob, decode it.
         if raw.starts_with("keyring:") || raw.starts_with("enc:") {
-            let encryptor = ConfigEncryptor::new().ok()?;
-            encryptor
-                .retrieve(&raw, "auth.api_key")
+            // Use the injected encryptor if present; otherwise lazily build one.
+            // We can't borrow self.encryptor as Option<&> and then construct a
+            // fresh one in the None branch (mismatched types), so use a small
+            // helper closure that owns the result.
+            let decoded = match self.encryptor.as_ref() {
+                Some(enc) => enc.retrieve(&raw, "auth.api_key"),
+                None => match ConfigEncryptor::new() {
+                    Ok(enc) => enc.retrieve(&raw, "auth.api_key"),
+                    Err(_) => return None,
+                },
+            };
+            decoded
                 .map_err(|e| {
                     tracing::warn!("Failed to decode auth.api_key: {e}");
                 })

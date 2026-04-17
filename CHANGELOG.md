@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.7.0] - 2026-04-15
 
+### Added
+
+- **FE-12: Module Exposure Filtering** — Declarative control over which discovered modules are exposed as CLI commands.
+  - `ExposureFilter` struct in `exposure.rs` with `is_exposed(&self, module_id)` and `filter_modules(&self, ids)` methods.
+  - Three modes: `All` (default), `Include` (whitelist), `Exclude` (blacklist) with glob-pattern matching.
+  - `ExposureFilter::from_config(value)` constructor for loading from `apcore.yaml` `expose` section.
+  - `CliConfig::expose` field for programmatic usage.
+  - `list --exposure {exposed,hidden,all}` filter flag in discovery commands.
+  - `GroupedModuleGroup` integration: applies exposure filter during command registration.
+  - `ConfigResolver` gains `expose.*` config keys.
+  - 4-tier config precedence: `CliConfig.expose` > `--expose-mode` CLI flag > env var > `apcore.yaml`.
+  - Hidden modules remain invocable via `exec <module_id>`.
+- `CliConfig::app: Option<apcore::APCore>` — accept a unified `APCore` client facade.
+  When `app` is set, `registry` and `executor` are derived from it. Setting `app` together
+  with `registry` or `executor` returns an error: `"app is mutually exclusive with
+  registry/executor"`.
+- `CliConfig::validate()` method — returns `Err(CliConfigError)` when `app` is set alongside
+  `registry` or `executor`.
+- `CliConfigError` error type for `CliConfig` validation failures.
+- New file: `exposure.rs`.
+
+### Fixed
+
+- Correctly propagate executor errors by moving `map_err` inside the `block_in_place` scope.
+
 ### Changed
 
 - **Dependency bump**: requires `apcore = 0.18.0` (was `0.17.1`).
@@ -20,16 +45,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `Vec<String>` — updated `main.rs` and `fs_discoverer.rs` tests accordingly.
 - `Registry::get_definition` now returns `Option<ModuleDescriptor>` (owned) instead of
   `Option<&ModuleDescriptor>` — removed unnecessary `.cloned()` call in `discovery.rs`.
-
-### Added
-
-- `CliConfig::app: Option<apcore::APCore>` — accept a unified `APCore` client facade.
-  When `app` is set, `registry` and `executor` are derived from it. Setting `app` together
-  with `registry` or `executor` returns an error: `"app is mutually exclusive with
-  registry/executor"`.
-- `CliConfig::validate()` method — returns `Err(CliConfigError)` when `app` is set alongside
-  `registry` or `executor`.
-- `CliConfigError` error type for `CliConfig` validation failures.
+- Centralized CLI dispatch flags and builtin command definitions to improve maintainability.
 
 ---
 

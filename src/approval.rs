@@ -255,30 +255,11 @@ pub async fn check_approval(
     check_approval_with_tty(module_def, auto_approve, is_tty).await
 }
 
-// ---------------------------------------------------------------------------
-// CliApprovalHandler -- implements apcore ApprovalHandler protocol (FE-11 S3.5)
-// ---------------------------------------------------------------------------
-
-/// CLI-side approval handler that wraps the TTY prompt logic.
-///
-/// Designed to be compatible with the apcore ApprovalHandler trait/protocol.
-/// Pass to Executor via `executor.set_approval_handler(handler)` if available.
-pub struct CliApprovalHandler {
-    /// If true, all approvals are auto-granted (--yes flag).
-    pub auto_approve: bool,
-    /// Timeout in seconds for interactive prompts.
-    pub timeout: u64,
-}
-
-impl CliApprovalHandler {
-    /// Create a new handler with the given settings.
-    pub fn new(auto_approve: bool, timeout: u64) -> Self {
-        Self {
-            auto_approve,
-            timeout: timeout.clamp(1, 3600),
-        }
-    }
-}
+// CliApprovalHandler struct deleted per audit finding D9-003 / A-001:
+// the struct had zero callers and no methods beyond `new()`. The actual
+// approval gating is performed by the standalone functions `check_approval`
+// and `check_approval_with_tty` above. The --yes and --approval-timeout
+// CLI flags flow directly into those functions without a wrapper struct.
 
 // ---------------------------------------------------------------------------
 // Unit tests

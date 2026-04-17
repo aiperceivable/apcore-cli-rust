@@ -32,6 +32,7 @@
 | 6 | [approval-gate](approval-gate/) | TTY-aware Human-in-the-Loop middleware. Inspects `annotations.requires_approval`; supports `--yes` and `APCORE_CLI_AUTO_APPROVE` bypass; prompts with a 60-second timed `[y/N]` confirmation; exits 46 on denial/timeout/non-TTY. | complete | 6 |
 | 7 | [security](security/) | Four security components: API key authentication (`AuthProvider`), AES-256-GCM encrypted config storage (`ConfigEncryptor`), append-only JSONL audit logging (`AuditLogger`), and tokio subprocess sandbox (`Sandbox`). | complete | 5 |
 | 8 | [shell-integration](shell-integration/) | `completion` and `man` subcommands. Generates shell completions for bash/zsh/fish/elvish/powershell via `clap_complete`; generates roff man pages via clap introspection. | complete | 4 |
+| 9 | [exposure-filtering](../docs/features/exposure-filtering.md) (FE-12) | Declarative control over which discovered modules are exposed as CLI commands. Three modes: `all`, `include` (whitelist), `exclude` (blacklist) with glob-pattern matching. Hidden modules remain in the registry for `exec` access. | complete | 8 |
 
 ---
 

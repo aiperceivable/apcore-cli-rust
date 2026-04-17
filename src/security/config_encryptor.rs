@@ -74,6 +74,8 @@ impl ConfigEncryptor {
 
     /// Create a `ConfigEncryptor` that always uses AES encryption, bypassing
     /// the OS keyring. Intended for use in tests running in headless/CI environments.
+    /// Gated behind the `test-support` feature so it is excluded from production builds.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new_forced_aes() -> Self {
         Self { _force_aes: true }
     }
