@@ -67,6 +67,10 @@ name = "apcli_integration"
 path = "tests/apcli_integration.rs"
 
 [[test]]
+name = "conformance_apcli_visibility"
+path = "tests/conformance_apcli_visibility.rs"
+
+[[test]]
 name = "test_audit"
 path = "tests/security/test_audit.rs"
 

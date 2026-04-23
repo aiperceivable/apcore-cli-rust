@@ -4,10 +4,13 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.7.0] - 2026-04-15
+## [0.7.0] - 2026-04-23
 
 ### Added
 
+- **Cross-language conformance test** (`tests/conformance_apcli_visibility.rs`) consuming the shared apcli-visibility fixtures from the `aiperceivable/apcore-cli` spec repo (`conformance/fixtures/apcli-visibility/`). One `#[test]` per canonical scenario (`standalone-default`, `embedded-default`, `cli-override`, `env-override`, `yaml-include`). Asserts apcli group visibility and subcommand registration against each fixture's `create_cli.json` / `env.json` / `input.yaml` inputs. A process-global `Mutex` guards scenarios that touch `APCORE_CLI_APCLI` / `cwd`. Byte-matching against `expected_help.txt` is gated behind `#[ignore]` until the canonical clap v4 / GNU-style help formatter is ported — tracked for parity with `apcore-cli-typescript/src/canonical-help.ts`.
+- **`APCORE_CLI_SPEC_REPO` env var** — overrides the spec-repo lookup path for conformance fixtures. Defaults to a sibling checkout (`../apcore-cli/`). The test is a no-op (prints a skip notice and returns) when the spec repo is absent.
+- New `[[test]]` entry in `Cargo.toml` registering the conformance test binary.
 - **FE-12: Module Exposure Filtering** — Declarative control over which discovered modules are exposed as CLI commands.
   - `ExposureFilter` struct in `exposure.rs` with `is_exposed(&self, module_id)` and `filter_modules(&self, ids)` methods.
   - Three modes: `All` (default), `Include` (whitelist), `Exclude` (blacklist) with glob-pattern matching.
@@ -33,6 +36,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **CI — spec-repo checkout**: `.github/workflows/ci.yml` now checks out `aiperceivable/apcore-cli` into `.apcore-cli-spec/` and exposes it to `cargo test` via `APCORE_CLI_SPEC_REPO`. Mirrors the pattern in `apcore-cli-python` / `apcore-cli-typescript`.
 - **Dependency bump**: requires `apcore = 0.18.0` (was `0.17.1`).
 - `MAX_MODULE_ID_LENGTH` updated to 192 (was 128) — `cli.rs` constant `MODULE_ID_MAX_LEN` and
   `validate_module_id` already tracked the upstream spec change.

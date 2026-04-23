@@ -430,13 +430,30 @@ Each module defines its own `thiserror::Error` enum rather than a single catch-a
 
 ### Getting Started
 
+The conformance suite under `tests/conformance_apcli_visibility.rs` reads
+shared fixtures from the **spec repo** (`aiperceivable/apcore-cli`). Clone
+it as a sibling of this repo, or point `APCORE_CLI_SPEC_REPO` at an
+existing checkout:
+
 ```bash
+# One-time: clone both repos side by side
+git clone https://github.com/aiperceivable/apcore-cli.git
 git clone https://github.com/aiperceivable/apcore-cli-rust.git
+
 cd apcore-cli-rust
 make setup                       # install apdev-rs + git pre-commit hook
 make build                       # compile release binary to .bin/
 export PATH=.bin:$PATH           # use Rust version in this session
 ```
+
+Alternative layout (spec repo checked out elsewhere):
+
+```bash
+export APCORE_CLI_SPEC_REPO=/path/to/apcore-cli
+cargo test --all-features
+```
+
+CI clones the spec repo automatically — see `.github/workflows/ci.yml`.
 
 ### Daily Workflow
 
