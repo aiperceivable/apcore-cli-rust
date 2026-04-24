@@ -310,9 +310,21 @@ pub async fn dispatch_validate(
                 .iter()
                 .all(|c| c.get("passed").and_then(|v| v.as_bool()).unwrap_or(true));
 
+            // Read requires_approval from the module's own annotations
+            // rather than hardcoding `false` (review #10). Hardcoding
+            // misled users when the live `system.validate` module was
+            // unavailable but the target module declared
+            // requires_approval:true: validate said "no approval needed",
+            // then exec surprised them with a prompt.
+            let requires_approval = module_def
+                .as_ref()
+                .and_then(|d| d.annotations.as_ref())
+                .map(|a| a.requires_approval)
+                .unwrap_or(false);
+
             let preflight = serde_json::json!({
                 "valid": valid,
-                "requires_approval": false,
+                "requires_approval": requires_approval,
                 "checks": checks,
             });
             format_preflight_result(&preflight, format);

@@ -263,6 +263,13 @@ fn config_command() -> Command {
                         .help("Reason for config change (required for audit)."),
                 )
                 .arg(
+                    Arg::new("yes")
+                        .long("yes")
+                        .short('y')
+                        .help("Bypass approval prompt for this config change.")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
                     Arg::new("format")
                         .long("format")
                         .value_parser(["table", "json"])
@@ -276,13 +283,64 @@ fn config_command() -> Command {
 // Dispatch helpers
 // ---------------------------------------------------------------------------
 
-/// Call a system module via the executor, returning the result or an error
-/// string.
+/// Error returned by `call_system_module`. Preserves the
+/// `apcore::errors::ModuleError` variant so callers can route it through
+/// `crate::cli::map_module_error_to_exit_code` and emit the protocol-spec
+/// exit code consistently with `cli::dispatch_module` (no more
+/// `exit(1)`-collapse divergence between the two dispatch paths).
+enum SystemDispatchError {
+    ModuleError(Box<apcore::errors::ModuleError>),
+    NoAsyncRuntime,
+}
+
+impl std::fmt::Display for SystemDispatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SystemDispatchError::ModuleError(e) => write!(f, "{e}"),
+            SystemDispatchError::NoAsyncRuntime => write!(f, "no async runtime available"),
+        }
+    }
+}
+
+/// Run the approval gate for a system command. Mirrors the `cli.rs:1086`
+/// pattern used by the main `exec` dispatcher so `--yes`, the
+/// `APCORE_CLI_AUTO_APPROVE` env var, TTY interactivity, and the
+/// 60-second timed prompt all behave consistently across `apcli enable /
+/// disable / reload / config set`. All `system.control.*` and
+/// `system.config.set` calls are operator-confirmation-required by spec
+/// (FR-SYSCMD-013); we synthesize a minimal module_def so the standard
+/// approval helper can do its job.
+///
+/// Exits 46 on denial / timeout / non-interactive — matching the main
+/// exec dispatcher's exit-code contract.
+pub(crate) fn require_approval_for_system_command(module_id: &str, auto_approve: bool) {
+    let module_def = serde_json::json!({
+        "module_id": module_id,
+        "annotations": { "requires_approval": true },
+    });
+    let result = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| {
+            handle.block_on(crate::approval::check_approval(&module_def, auto_approve))
+        }),
+        Err(_) => {
+            eprintln!("Error: no async runtime available for approval check");
+            std::process::exit(crate::EXIT_MODULE_EXECUTE_ERROR);
+        }
+    };
+    if let Err(e) = result {
+        eprintln!("Error: {e}");
+        std::process::exit(crate::EXIT_APPROVAL_DENIED);
+    }
+}
+
+/// Call a system module via the executor, returning the result or a typed
+/// error. Preserves the `apcore::errors::ModuleError` variant instead of
+/// stringifying at the boundary.
 fn call_system_module(
     executor: &apcore::Executor,
     module_id: &str,
     inputs: Value,
-) -> Result<Value, String> {
+) -> Result<Value, SystemDispatchError> {
     let rt = tokio::runtime::Handle::try_current();
     match rt {
         Ok(handle) => {
@@ -290,11 +348,25 @@ fn call_system_module(
             tokio::task::block_in_place(|| {
                 handle
                     .block_on(executor.call(module_id, inputs, None, None))
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| SystemDispatchError::ModuleError(Box::new(e)))
             })
         }
-        Err(_) => Err("no async runtime available".to_string()),
+        Err(_) => Err(SystemDispatchError::NoAsyncRuntime),
     }
+}
+
+/// Exit the process with the protocol-spec code for a
+/// `SystemDispatchError`. Centralises the common error tail used by every
+/// system_cmd dispatcher so all seven exit sites stay consistent.
+fn exit_on_system_error(err: SystemDispatchError) -> ! {
+    eprintln!("Error: {err}");
+    let code = match err {
+        SystemDispatchError::ModuleError(e) => {
+            crate::cli::map_module_error_to_exit_code(e.as_ref())
+        }
+        SystemDispatchError::NoAsyncRuntime => crate::EXIT_MODULE_EXECUTE_ERROR,
+    };
+    std::process::exit(code);
 }
 
 /// Dispatch the `health` subcommand.
@@ -343,10 +415,7 @@ pub fn dispatch_health(matches: &clap::ArgMatches, executor: &apcore::Executor) 
             }
             std::process::exit(0);
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_system_error(e),
     }
 }
 
@@ -388,10 +457,7 @@ pub fn dispatch_usage(matches: &clap::ArgMatches, executor: &apcore::Executor) {
             }
             std::process::exit(0);
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_system_error(e),
     }
 }
 
@@ -404,15 +470,10 @@ pub fn dispatch_enable(matches: &clap::ArgMatches, executor: &apcore::Executor) 
         .get_one::<String>("reason")
         .expect("reason is required");
     let auto_approve = matches.get_flag("yes");
-    if !auto_approve {
-        // System control modules have requires_approval=true.
-        // The executor's built-in approval gate will fire during call.
-        // Pass --yes to bypass (approval handled by executor pipeline).
-        eprintln!("Note: This command requires approval. Use --yes to bypass.");
-    }
     let format = matches.get_one::<String>("format").map(|s| s.as_str());
     let fmt = crate::output::resolve_format(format);
 
+    require_approval_for_system_command("system.control.toggle_feature", auto_approve);
     let result = call_system_module(
         executor,
         "system.control.toggle_feature",
@@ -436,10 +497,7 @@ pub fn dispatch_enable(matches: &clap::ArgMatches, executor: &apcore::Executor) 
             }
             std::process::exit(0);
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_system_error(e),
     }
 }
 
@@ -449,15 +507,13 @@ pub fn dispatch_disable(matches: &clap::ArgMatches, executor: &apcore::Executor)
         .get_one::<String>("module_id")
         .expect("module_id is required");
     let auto_approve = matches.get_flag("yes");
-    if !auto_approve {
-        eprintln!("Note: This command requires approval. Use --yes to bypass.");
-    }
     let reason = matches
         .get_one::<String>("reason")
         .expect("reason is required");
     let format = matches.get_one::<String>("format").map(|s| s.as_str());
     let fmt = crate::output::resolve_format(format);
 
+    require_approval_for_system_command("system.control.toggle_feature", auto_approve);
     let result = call_system_module(
         executor,
         "system.control.toggle_feature",
@@ -481,10 +537,7 @@ pub fn dispatch_disable(matches: &clap::ArgMatches, executor: &apcore::Executor)
             }
             std::process::exit(0);
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_system_error(e),
     }
 }
 
@@ -494,15 +547,13 @@ pub fn dispatch_reload(matches: &clap::ArgMatches, executor: &apcore::Executor) 
         .get_one::<String>("module_id")
         .expect("module_id is required");
     let auto_approve = matches.get_flag("yes");
-    if !auto_approve {
-        eprintln!("Note: This command requires approval. Use --yes to bypass.");
-    }
     let reason = matches
         .get_one::<String>("reason")
         .expect("reason is required");
     let format = matches.get_one::<String>("format").map(|s| s.as_str());
     let fmt = crate::output::resolve_format(format);
 
+    require_approval_for_system_command("system.control.reload_module", auto_approve);
     let result = call_system_module(
         executor,
         "system.control.reload_module",
@@ -536,10 +587,7 @@ pub fn dispatch_reload(matches: &clap::ArgMatches, executor: &apcore::Executor) 
             }
             std::process::exit(0);
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_system_error(e),
     }
 }
 
@@ -562,10 +610,7 @@ pub fn dispatch_config(matches: &clap::ArgMatches, executor: &apcore::Executor) 
                     println!("{key} = {display}");
                     std::process::exit(0);
                 }
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
+                Err(e) => exit_on_system_error(e),
             }
         }
         Some(("set", sub_m)) => {
@@ -574,6 +619,7 @@ pub fn dispatch_config(matches: &clap::ArgMatches, executor: &apcore::Executor) 
             let reason = sub_m
                 .get_one::<String>("reason")
                 .expect("reason is required");
+            let auto_approve = sub_m.get_flag("yes");
             let format = sub_m.get_one::<String>("format").map(|s| s.as_str());
             let fmt = crate::output::resolve_format(format);
 
@@ -581,6 +627,7 @@ pub fn dispatch_config(matches: &clap::ArgMatches, executor: &apcore::Executor) 
             let parsed: Value = serde_json::from_str(raw_value)
                 .unwrap_or_else(|_| Value::String(raw_value.clone()));
 
+            require_approval_for_system_command("system.control.update_config", auto_approve);
             let result = call_system_module(
                 executor,
                 "system.control.update_config",
@@ -613,10 +660,7 @@ pub fn dispatch_config(matches: &clap::ArgMatches, executor: &apcore::Executor) 
                     }
                     std::process::exit(0);
                 }
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
+                Err(e) => exit_on_system_error(e),
             }
         }
         _ => {
