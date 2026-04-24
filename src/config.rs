@@ -24,6 +24,11 @@ pub struct ConfigResolver {
     /// `None` if the file was not found or could not be parsed.
     pub config_file: Option<HashMap<String, String>>,
 
+    /// Cached parsed YAML root, loaded once at construction. Used by
+    /// `resolve_object` so it doesn't re-read+re-parse the file on every
+    /// call. `None` when the file is absent, unreadable, or malformed.
+    config_yaml: Option<serde_yaml::Value>,
+
     /// Path to the config file that was loaded (or attempted).
     #[allow(dead_code)]
     config_path: Option<PathBuf>,
@@ -81,10 +86,12 @@ impl ConfigResolver {
     ) -> Self {
         let defaults = Self::DEFAULTS.iter().copied().collect();
         let config_file = config_path.as_ref().and_then(Self::load_config_file);
+        let config_yaml = config_path.as_ref().and_then(Self::load_config_yaml);
 
         Self {
             cli_flags: cli_flags.unwrap_or_default(),
             config_file,
+            config_yaml,
             config_path,
             defaults,
         }
@@ -149,10 +156,10 @@ impl ConfigResolver {
     /// carry scalar values only. Returns `None` when the file is absent,
     /// unreadable, malformed, or the key is missing.
     pub fn resolve_object(&self, key: &str) -> Option<serde_yaml::Value> {
-        let path = self.config_path.as_ref()?;
-        let content = std::fs::read_to_string(path).ok()?;
-        let root: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
-        let mut cursor = &root;
+        // Walk the cached parsed YAML rather than re-reading + re-parsing on
+        // every call (review #16). The cache is populated once in `new()`.
+        let root = self.config_yaml.as_ref()?;
+        let mut cursor = root;
         for segment in key.split('.') {
             match cursor {
                 serde_yaml::Value::Mapping(map) => {
@@ -162,6 +169,15 @@ impl ConfigResolver {
             }
         }
         Some(cursor.clone())
+    }
+
+    /// Read + parse the YAML file once for `resolve_object`'s use. Errors
+    /// (missing file, malformed YAML, non-mapping root) collapse to `None`
+    /// — the caller treats absence as "key not present", same semantics as
+    /// the previous per-call read.
+    fn load_config_yaml(path: &PathBuf) -> Option<serde_yaml::Value> {
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_yaml::from_str(&content).ok()
     }
 
     /// Look up the alternate key (namespace ↔ legacy) for backward compatibility.
@@ -511,6 +527,7 @@ mod tests {
         let resolver = ConfigResolver {
             cli_flags: HashMap::new(),
             config_file: Some(file_map),
+            config_yaml: None,
             config_path: None,
             defaults: ConfigResolver::DEFAULTS.iter().copied().collect(),
         };
@@ -527,6 +544,7 @@ mod tests {
         let resolver = ConfigResolver {
             cli_flags: HashMap::new(),
             config_file: Some(file_map),
+            config_yaml: None,
             config_path: None,
             defaults: ConfigResolver::DEFAULTS.iter().copied().collect(),
         };
@@ -599,6 +617,7 @@ mod tests {
         let resolver = ConfigResolver {
             cli_flags: HashMap::new(),
             config_file: Some(file_map),
+            config_yaml: None,
             config_path: None,
             defaults: ConfigResolver::DEFAULTS.iter().copied().collect(),
         };

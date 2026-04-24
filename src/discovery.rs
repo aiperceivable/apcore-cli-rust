@@ -206,14 +206,10 @@ pub fn cmd_list_enhanced(
         }
     }
 
-    // F7: Sort — usage-based sorts require system.usage modules.
-    let sort_key = opts.sort.unwrap_or("id");
-    if matches!(sort_key, "calls" | "errors" | "latency") {
-        eprintln!(
-            "Warning: Usage data not available; sorting by id. Sort by {} requires system.usage modules.",
-            sort_key
-        );
-    }
+    // F7: Sort. Currently only "id" is honored — see the value_parser on
+    // the --sort flag. Other names previously passed through with only a
+    // warning (review #13); the clap parser now rejects them upstream.
+    let _ = opts.sort.unwrap_or("id");
     modules.sort_by(|a, b| {
         let aid = a.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
         let bid = b.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -379,7 +375,12 @@ fn list_command() -> Command {
         .arg(
             Arg::new("sort")
                 .long("sort")
-                .value_parser(["id", "calls", "errors", "latency"])
+                // Usage-based sorts (calls/errors/latency) are not yet wired
+                // — they require system.usage modules in the registry. Until
+                // then we restrict the value set to "id" so the flag's
+                // accepted values match what cmd_list_enhanced actually
+                // honors (see review #13).
+                .value_parser(["id"])
                 .default_value("id")
                 .value_name("FIELD")
                 .help("Sort order. Default: id."),

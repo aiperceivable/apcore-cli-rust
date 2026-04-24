@@ -55,9 +55,27 @@ impl Default for ExposureFilter {
     }
 }
 
+/// Modes accepted by `ExposureFilter`. Anything else is a configuration error.
+const VALID_MODES: &[&str] = &["all", "include", "exclude"];
+
 impl ExposureFilter {
     /// Create a new exposure filter.
+    ///
+    /// Unknown `mode` values (anything not in `["all", "include", "exclude"]`)
+    /// are clamped to `"none"` with a `tracing::warn!` — fail-closed so a
+    /// typo'd mode hides every module rather than silently exposing all of
+    /// them. The companion `from_config` constructor returns Err on the same
+    /// input; both entry points now reject unknown modes consistently.
     pub fn new(mode: &str, include: &[String], exclude: &[String]) -> Self {
+        let resolved_mode = if VALID_MODES.contains(&mode) {
+            mode.to_string()
+        } else {
+            tracing::warn!(
+                "Unknown ExposureFilter mode '{mode}' — defaulting to 'none' (no modules exposed). \
+                 Valid modes: {VALID_MODES:?}"
+            );
+            "none".to_string()
+        };
         let dedup = |patterns: &[String]| -> Vec<Regex> {
             let mut seen = std::collections::HashSet::new();
             patterns
@@ -67,13 +85,17 @@ impl ExposureFilter {
                 .collect()
         };
         Self {
-            mode: mode.to_string(),
+            mode: resolved_mode,
             compiled_include: dedup(include),
             compiled_exclude: dedup(exclude),
         }
     }
 
     /// Return true if the module should be exposed as a CLI command.
+    ///
+    /// `"none"` and any unknown mode (which `new()` rewrites to `"none"`)
+    /// hide every module; `"all"` exposes every module; `"include"` and
+    /// `"exclude"` consult the compiled pattern lists.
     pub fn is_exposed(&self, module_id: &str) -> bool {
         match self.mode.as_str() {
             "all" => true,
@@ -85,7 +107,8 @@ impl ExposureFilter {
                 .compiled_exclude
                 .iter()
                 .any(|rx| rx.is_match(module_id)),
-            _ => true,
+            // "none" and any unknown mode (new() rewrites unknown → none).
+            _ => false,
         }
     }
 
@@ -293,5 +316,23 @@ mod tests {
             "expose": { "mode": "whitelist" }
         });
         assert!(ExposureFilter::from_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_new_unknown_mode_fails_closed() {
+        // Regression for review #12: ExposureFilter::new previously stored
+        // any string verbatim; is_exposed's `_ => true` arm exposed every
+        // module on a typo. New behavior: clamp unknown mode to "none" so
+        // every module is hidden — fail-closed for the security-relevant
+        // FE-12 "hide internal modules" use case.
+        let f = ExposureFilter::new("whitelist", &[], &[]);
+        assert!(!f.is_exposed("any.module"));
+        assert!(!f.is_exposed("admin.users"));
+    }
+
+    #[test]
+    fn test_new_explicit_none_hides_all() {
+        let f = ExposureFilter::new("none", &[], &[]);
+        assert!(!f.is_exposed("anything"));
     }
 }
