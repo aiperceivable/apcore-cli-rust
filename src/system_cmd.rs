@@ -5,61 +5,39 @@ use clap::{Arg, ArgAction, Command};
 use serde_json::Value;
 use std::io::IsTerminal;
 
-/// Register system management subcommands on the root command.
-///
-/// **Retained for backward compatibility.** FE-13 integration should use the
-/// per-subcommand registrars ([`register_health_command`],
-/// [`register_usage_command`], [`register_enable_command`],
-/// [`register_disable_command`], [`register_reload_command`],
-/// [`register_config_command`]) so include/exclude filtering can be applied
-/// per subcommand. This wrapper preserves the pre-FE-13 call site shape for
-/// callers that have not yet migrated.
-///
-/// Returns the command with health, usage, enable, disable, reload, and
-/// config subcommands appended. If the caller determines system modules
-/// are unavailable it may skip calling this function entirely.
-pub fn register_system_commands(cli: Command) -> Command {
-    let cli = register_health_command(cli);
-    let cli = register_usage_command(cli);
-    let cli = register_enable_command(cli);
-    let cli = register_disable_command(cli);
-    let cli = register_reload_command(cli);
-    register_config_command(cli)
-}
-
 /// Attach the `health` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub fn register_health_command(cli: Command) -> Command {
+pub(crate) fn register_health_command(cli: Command) -> Command {
     cli.subcommand(health_command())
 }
 
 /// Attach the `usage` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub fn register_usage_command(cli: Command) -> Command {
+pub(crate) fn register_usage_command(cli: Command) -> Command {
     cli.subcommand(usage_command())
 }
 
 /// Attach the `enable` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub fn register_enable_command(cli: Command) -> Command {
+pub(crate) fn register_enable_command(cli: Command) -> Command {
     cli.subcommand(enable_command())
 }
 
 /// Attach the `disable` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub fn register_disable_command(cli: Command) -> Command {
+pub(crate) fn register_disable_command(cli: Command) -> Command {
     cli.subcommand(disable_command())
 }
 
 /// Attach the `reload` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub fn register_reload_command(cli: Command) -> Command {
+pub(crate) fn register_reload_command(cli: Command) -> Command {
     cli.subcommand(reload_command())
 }
 
 /// Attach the `config` subcommand group to the given command. Returns the
 /// command with the subcommand added.
-pub fn register_config_command(cli: Command) -> Command {
+pub(crate) fn register_config_command(cli: Command) -> Command {
     cli.subcommand(config_command())
 }
 
@@ -907,9 +885,18 @@ mod tests {
     }
 
     #[test]
-    fn test_register_system_commands_adds_all() {
+    fn test_per_subcommand_registrars_cover_all_system_commands() {
+        // Replaces the old test_register_system_commands_adds_all assertion
+        // — the deprecated `register_system_commands` wrapper was removed
+        // (review #28: zero production callers, FE-13 dispatch goes through
+        // the per-subcommand registrars table in lib.rs::register_apcli_subcommands).
         let root = Command::new("test");
-        let root = register_system_commands(root);
+        let root = register_health_command(root);
+        let root = register_usage_command(root);
+        let root = register_enable_command(root);
+        let root = register_disable_command(root);
+        let root = register_reload_command(root);
+        let root = register_config_command(root);
         let subs: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
         for name in SYSTEM_COMMANDS {
             assert!(subs.contains(name), "missing system command: {name}");

@@ -293,13 +293,15 @@ impl Default for CliConfig {
 // ---------------------------------------------------------------------------
 //
 // Per audit D9-005, the crate-root pub-use surface was trimmed from ~110 → ~40
-// items in v0.6.x. Internal command-builder helpers (dispatch_*, register_*,
+// items in v0.6.x. Internal command-builder helpers (register_*,
 // describe_pipeline_command, validate_command, generate_grouped_*_completion,
-// build_synopsis, generate_man_page) are still `pub` at the module level so
-// the binary entry-point in main.rs can call them via the full path
-// (`apcore_cli::system_cmd::register_system_commands`, etc.) — but they are
-// no longer re-exported at the crate root. Downstream users wanting to embed
-// the CLI should use `CliConfig` and the user-facing API below.
+// build_synopsis, generate_man_page) are now `pub(crate)` at the module level
+// — they are only consumed by lib.rs's per-subcommand registrar table and the
+// in-crate test suite. The dispatch_* fns in `system_cmd` and `strategy`
+// remain `pub` because the binary entry-point in main.rs calls them via the
+// full path (`apcore_cli::system_cmd::dispatch_health`, etc.) and main.rs is
+// a separate binary crate. Downstream users wanting to embed the CLI should
+// use `CliConfig` and the user-facing API below.
 
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{check_approval, ApprovalError};
@@ -360,7 +362,10 @@ pub use schema_parser::{
 };
 
 // Security primitives (SEC-01..04)
-pub use security::{AuditLogger, AuthProvider, ConfigEncryptor, Sandbox};
+pub use security::{
+    AuditLogger, AuthProvider, AuthenticationError, ConfigDecryptionError, ConfigEncryptor,
+    ModuleExecutionError, Sandbox,
+};
 
 // Shell integration (FE-06): completion + man page builders.
 // build_program_man_page is the user-facing full-program man entry point;
@@ -400,6 +405,28 @@ mod tests {
     fn cli_config_default_apcli_is_none() {
         let config = CliConfig::default();
         assert!(config.apcli.is_none());
+    }
+
+    /// Drift guard: the Registrar table built inside
+    /// `register_apcli_subcommands` must cover every name in
+    /// `APCLI_SUBCOMMAND_NAMES`. Adding a subcommand to one list without the
+    /// other produces a silent mismatch that was previously invisible across
+    /// three declaration sites.
+    #[test]
+    fn registrar_table_covers_all_apcli_subcommand_names() {
+        // Drive visibility to "all" so every table entry is registered.
+        let cfg = builtin_group::ApcliGroup::from_yaml(None, /*registry_injected*/ false);
+        let root = clap::Command::new("root").about("drift-guard root");
+        let built = register_apcli_subcommands(root, &cfg, "apcore-cli");
+        let registered: Vec<&str> = built.get_subcommands().map(|s| s.get_name()).collect();
+        for name in APCLI_SUBCOMMAND_NAMES {
+            assert!(
+                registered.contains(name),
+                "APCLI_SUBCOMMAND_NAMES lists '{name}' but register_apcli_subcommands \
+                 did not attach it — drift between builtin_group.rs constant and the \
+                 Registrar table in lib.rs"
+            );
+        }
     }
 
     #[test]

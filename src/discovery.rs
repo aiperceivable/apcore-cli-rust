@@ -274,26 +274,26 @@ pub fn cmd_describe(
 
 /// Attach the `list` subcommand to the given command (typically the `apcli`
 /// group). Returns the command with the subcommand added.
-pub fn register_list_command(cli: Command) -> Command {
+pub(crate) fn register_list_command(cli: Command) -> Command {
     cli.subcommand(list_command())
 }
 
 /// Attach the `describe` subcommand to the given command. Returns the command
 /// with the subcommand added.
-pub fn register_describe_command(cli: Command) -> Command {
+pub(crate) fn register_describe_command(cli: Command) -> Command {
     cli.subcommand(describe_command())
 }
 
 /// Attach the `exec` subcommand to the given command. Delegates to
 /// [`crate::cli::exec_command`] to avoid duplicating the builder.
-pub fn register_exec_command(cli: Command) -> Command {
+pub(crate) fn register_exec_command(cli: Command) -> Command {
     cli.subcommand(crate::cli::exec_command())
 }
 
 /// Attach the `validate` subcommand to the given command. Delegates to
 /// [`crate::validate::register_validate_command`] so there is a single
 /// definition of the validate builder.
-pub fn register_validate_command(cli: Command) -> Command {
+pub(crate) fn register_validate_command(cli: Command) -> Command {
     crate::validate::register_validate_command(cli)
 }
 

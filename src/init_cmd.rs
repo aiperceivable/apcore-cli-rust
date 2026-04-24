@@ -42,7 +42,7 @@ pub fn init_command() -> clap::Command {
 /// built-in group (see `discovery::register_list_command`,
 /// `system_cmd::register_health_command`, etc.) so the dispatcher can
 /// honor include/exclude filtering on `init` like any other built-in.
-pub fn register_init_command(cli: clap::Command) -> clap::Command {
+pub(crate) fn register_init_command(cli: clap::Command) -> clap::Command {
     cli.subcommand(init_command())
 }
 
