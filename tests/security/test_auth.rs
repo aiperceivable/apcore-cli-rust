@@ -22,17 +22,17 @@ fn test_get_api_key_from_env_var() {
     let key = provider.get_api_key();
     // SAFETY: cleanup regardless of assertion outcome.
     unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
-    assert_eq!(key, Some("env-key-abc".to_string()));
+    assert_eq!(key.unwrap(), Some("env-key-abc".to_string()));
 }
 
 #[test]
 fn test_get_api_key_missing_returns_error() {
-    // When no key is available, get_api_key() must return None.
+    // When no key is available, get_api_key() must return Ok(None).
     let _guard = ENV_LOCK.lock().unwrap();
     // SAFETY: test-only env manipulation, serialized via ENV_LOCK.
     unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
     let provider = AuthProvider::new(make_empty_resolver());
-    assert_eq!(provider.get_api_key(), None);
+    assert_eq!(provider.get_api_key().unwrap(), None);
 }
 
 #[test]

@@ -61,13 +61,20 @@ fn test_audit_logger_record_has_required_fields() {
     let raw = std::fs::read_to_string(&log_path).expect("log file must exist");
     let entry: serde_json::Value =
         serde_json::from_str(raw.trim()).expect("log line must be valid JSON");
-    // All seven required fields must be present.
+    // All required fields must be present.
     assert!(
         entry["timestamp"].as_str().unwrap().ends_with('Z'),
         "timestamp must be ISO 8601 UTC"
     );
     assert!(entry["user"].is_string(), "user field must be a string");
     assert_eq!(entry["module_id"], "math.add");
+    assert!(
+        entry["input_salt"]
+            .as_str()
+            .map(|s| s.len() == 32)
+            .unwrap_or(false),
+        "input_salt must be a 32-char hex (16 bytes)"
+    );
     assert!(
         entry["input_hash"]
             .as_str()

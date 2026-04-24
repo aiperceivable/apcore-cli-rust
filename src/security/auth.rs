@@ -1,10 +1,17 @@
 // apcore-cli — Authentication provider.
 // Protocol spec: SEC-02 (AuthProvider, AuthenticationError)
+//
+// DEFERRED INTEGRATION: The CLI currently exposes no network-bound subcommand
+// that would consume this provider (no remote-registry list/describe/install).
+// The types are kept here so that the FE-05/SEC-02 surface stays compiled and
+// tested — when the first auth-gated endpoint lands, wire
+// AuthProvider::authenticate_request into its request builder. Tracked as the
+// successor to audit finding D5-AUTH-UNWIRED in the project review.
 
 use thiserror::Error;
 
 use crate::config::ConfigResolver;
-use crate::security::config_encryptor::ConfigEncryptor;
+use crate::security::config_encryptor::{ConfigDecryptionError, ConfigEncryptor};
 
 // ---------------------------------------------------------------------------
 // AuthenticationError
@@ -23,6 +30,17 @@ pub enum AuthenticationError {
     /// The stored API key was rejected by the server.
     #[error("Authentication failed. Verify your API key.")]
     InvalidApiKey,
+
+    /// The stored API key could not be decrypted (corrupt, host changed, key
+    /// material rotated). Distinct from `MissingApiKey` so users see the real
+    /// cause rather than "not configured".
+    #[error("Stored API key could not be decrypted: {0}. Re-store with `apcli config set auth.api_key`.")]
+    DecryptionFailed(#[from] ConfigDecryptionError),
+
+    /// The configured API key contains invalid characters (e.g. CR/LF) that
+    /// HTTP rejects in header values.
+    #[error("Configured API key contains invalid characters (CR/LF). Re-store the key without trailing newlines.")]
+    MalformedApiKey,
 
     /// The keyring could not be accessed.
     #[error("keyring error: {0}")]
@@ -74,57 +92,59 @@ impl AuthProvider {
 
     /// Retrieve the API key using the resolution order above.
     ///
-    /// Returns `None` when no key is found.
-    pub fn get_api_key(&self) -> Option<String> {
+    /// Returns `Ok(None)` when no key is configured, `Ok(Some(key))` on success,
+    /// or `Err(DecryptionFailed)` when a stored encrypted key cannot be decoded
+    /// — distinguishes "not configured" from "stored key is corrupt", which
+    /// matters for user diagnostics.
+    pub fn get_api_key(&self) -> Result<Option<String>, AuthenticationError> {
         // Tier 1: environment variable (plain value — pass through as-is).
         if let Ok(val) = std::env::var("APCORE_AUTH_API_KEY") {
             if !val.is_empty() {
-                return Some(val);
+                return Ok(Some(val));
             }
         }
 
         // Tier 2: config resolver (CLI flag --api-key, or config file auth.api_key).
         // Note: env var APCORE_AUTH_API_KEY is already handled above; pass None here
         // to avoid double-checking it through the resolver path.
-        let raw = self
-            .config
-            .resolve("auth.api_key", Some("--api-key"), None)?;
+        let raw = match self.config.resolve("auth.api_key", Some("--api-key"), None) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         // If the stored value is a keyring ref or enc blob, decode it.
         if raw.starts_with("keyring:") || raw.starts_with("enc:") {
-            // Use the injected encryptor if present; otherwise lazily build one.
-            // We can't borrow self.encryptor as Option<&> and then construct a
-            // fresh one in the None branch (mismatched types), so use a small
-            // helper closure that owns the result.
             let decoded = match self.encryptor.as_ref() {
                 Some(enc) => enc.retrieve(&raw, "auth.api_key"),
-                None => match ConfigEncryptor::new() {
-                    Ok(enc) => enc.retrieve(&raw, "auth.api_key"),
-                    Err(_) => return None,
-                },
+                None => ConfigEncryptor::new()?.retrieve(&raw, "auth.api_key"),
             };
-            decoded
-                .map_err(|e| {
-                    tracing::warn!("Failed to decode auth.api_key: {e}");
-                })
-                .ok()
+            decoded.map(Some).map_err(AuthenticationError::from)
         } else {
-            Some(raw)
+            Ok(Some(raw))
         }
     }
 
     /// Inject the Authorization header into the given request builder.
     ///
     /// # Errors
-    /// Returns `AuthenticationError::MissingApiKey` if no key is found.
+    /// * `AuthenticationError::MissingApiKey` — no key is configured.
+    /// * `AuthenticationError::DecryptionFailed` — stored key cannot be decrypted.
+    /// * `AuthenticationError::MalformedApiKey` — key contains CR/LF that HTTP rejects.
     pub fn authenticate_request(
         &self,
         builder: reqwest::RequestBuilder,
     ) -> Result<reqwest::RequestBuilder, AuthenticationError> {
         let key = self
-            .get_api_key()
+            .get_api_key()?
             .ok_or(AuthenticationError::MissingApiKey)?;
-        Ok(builder.header("Authorization", format!("Bearer {key}")))
+        // Strip trailing CR/LF — common when keys are pasted from terminals or
+        // clipboards. reqwest::HeaderValue::from_str rejects these characters
+        // and would otherwise fail at request-send time with an opaque error.
+        let trimmed = key.trim_end_matches(['\r', '\n']);
+        if trimmed.contains('\r') || trimmed.contains('\n') {
+            return Err(AuthenticationError::MalformedApiKey);
+        }
+        Ok(builder.header("Authorization", format!("Bearer {trimmed}")))
     }
 
     /// Check an HTTP status code for authentication errors.
@@ -181,7 +201,7 @@ mod tests {
         let provider = AuthProvider::new(make_resolver_empty());
         let result = provider.get_api_key();
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
-        assert_eq!(result, Some("test-key-env".to_string()));
+        assert_eq!(result.unwrap(), Some("test-key-env".to_string()));
     }
 
     #[test]
@@ -190,7 +210,7 @@ mod tests {
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         let provider = AuthProvider::new(make_resolver_empty());
         let result = provider.get_api_key();
-        assert_eq!(result, None);
+        assert_eq!(result.unwrap(), None);
     }
 
     #[test]
@@ -199,7 +219,7 @@ mod tests {
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         let provider = AuthProvider::new(make_resolver_with_key("my-plain-key"));
         let result = provider.get_api_key();
-        assert_eq!(result, Some("my-plain-key".to_string()));
+        assert_eq!(result.unwrap(), Some("my-plain-key".to_string()));
     }
 
     #[test]
@@ -223,6 +243,52 @@ mod tests {
         let builder = client.get("https://example.com");
         let result = provider.authenticate_request(builder);
         assert!(matches!(result, Err(AuthenticationError::MissingApiKey)));
+    }
+
+    #[test]
+    fn test_authenticate_request_strips_trailing_crlf() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "key-with-trailing-newline\n") };
+        let provider = AuthProvider::new(make_resolver_empty());
+        let client = reqwest::Client::new();
+        let builder = client.get("https://example.com");
+        let result = provider.authenticate_request(builder);
+        unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+        assert!(
+            result.is_ok(),
+            "trailing newline must be stripped before header assembly"
+        );
+    }
+
+    #[test]
+    fn test_authenticate_request_rejects_embedded_crlf() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "bad\nkey") };
+        let provider = AuthProvider::new(make_resolver_empty());
+        let client = reqwest::Client::new();
+        let builder = client.get("https://example.com");
+        let result = provider.authenticate_request(builder);
+        unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+        assert!(
+            matches!(result, Err(AuthenticationError::MalformedApiKey)),
+            "embedded CR/LF must surface as MalformedApiKey, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_get_api_key_propagates_decryption_error() {
+        // A stored "enc:..." prefix with garbage payload routes through
+        // ConfigEncryptor::retrieve and surfaces as DecryptionFailed rather
+        // than silently returning None (which would have masqueraded as
+        // MissingApiKey).
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+        let provider = AuthProvider::new(make_resolver_with_key("enc:!!!not-base64!!!"));
+        let result = provider.get_api_key();
+        assert!(
+            matches!(result, Err(AuthenticationError::DecryptionFailed(_))),
+            "corrupt encrypted key must surface DecryptionFailed, got {result:?}"
+        );
     }
 
     #[test]

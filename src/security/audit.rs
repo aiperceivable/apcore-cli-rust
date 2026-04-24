@@ -44,6 +44,15 @@ impl AuditLogger {
             if let Some(parent) = p.parent() {
                 // Best-effort; failure is silent.
                 let _ = std::fs::create_dir_all(parent);
+                // Restrict the parent dir to owner-only on Unix so audit-log
+                // entries are not enumerable by other local UIDs on shared
+                // systems.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ =
+                        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+                }
             }
         }
         Self { path: resolved }
@@ -59,13 +68,13 @@ impl AuditLogger {
     /// Hash `input_data` with a fresh 16-byte random salt.
     ///
     /// Digest = SHA-256(`random_salt` `:` `HASH_SALT` `:` stable_json(`input_data`)).
-    /// Returns a lowercase hex string (64 chars).
+    /// Returns `(hex_salt, hex_hash)` — both lowercase hex.
     ///
-    /// **Design note:** A random salt is used per call to prevent correlation
-    /// of audit entries by input content. This is a privacy design choice
-    /// matching the Python reference implementation — the hash proves an input
-    /// was logged but cannot be used to find duplicate inputs across entries.
-    fn hash_input(input_data: &Value) -> String {
+    /// The salt is persisted alongside the hash in each JSONL entry so a
+    /// verifier holding the original input can reproduce the digest. This
+    /// preserves the non-correlation property (each entry uses a fresh salt)
+    /// while keeping the hash forensically verifiable.
+    fn hash_input(input_data: &Value) -> (String, String) {
         use aes_gcm::aead::rand_core::RngCore;
         use aes_gcm::aead::OsRng;
 
@@ -78,7 +87,9 @@ impl AuditLogger {
         let mut hasher = Sha256::new();
         hasher.update(salt);
         hasher.update(salted.as_bytes());
-        format!("{:x}", hasher.finalize())
+
+        let hex_salt = salt.iter().map(|b| format!("{:02x}", b)).collect();
+        (hex_salt, format!("{:x}", hasher.finalize()))
     }
 
     /// Produce a stable (sorted-key) JSON string for `v`.
@@ -106,6 +117,8 @@ impl AuditLogger {
     /// * `timestamp`   — ISO 8601 UTC timestamp
     /// * `user`        — username from `USER`/`LOGNAME`
     /// * `module_id`   — the executed module's identifier
+    /// * `input_salt`  — 16-byte hex salt fed into the hash (persists so a
+    ///   verifier can reproduce the digest from a known input)
     /// * `input_hash`  — salted SHA-256 of the JSON-serialised input
     /// * `status`      — `"success"` or `"error"`
     /// * `exit_code`   — process exit code
@@ -123,11 +136,13 @@ impl AuditLogger {
         };
 
         let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+        let (input_salt, input_hash) = Self::hash_input(input_data);
         let entry = json!({
             "timestamp":   timestamp,
             "user":        Self::get_user(),
             "module_id":   module_id,
-            "input_hash":  Self::hash_input(input_data),
+            "input_salt":  input_salt,
+            "input_hash":  input_hash,
             "status":      status,
             "exit_code":   exit_code,
             "duration_ms": duration_ms,
@@ -138,6 +153,14 @@ impl AuditLogger {
                 .create(true)
                 .append(true)
                 .open(path)?;
+            // Restrict to owner read/write on Unix so audit entries are not
+            // readable by other local UIDs on shared systems. set_permissions
+            // is idempotent across appends; a no-op on subsequent writes.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            }
             let mut writer = BufWriter::new(file);
             serde_json::to_writer(&mut writer, &entry).map_err(std::io::Error::other)?;
             writeln!(writer)?;
@@ -215,9 +238,85 @@ mod tests {
         assert!(entry["timestamp"].as_str().unwrap().ends_with('Z'));
         assert!(entry["user"].is_string());
         assert_eq!(entry["module_id"], "x.y");
+        assert!(entry["input_salt"].as_str().unwrap().len() == 32); // hex 16 bytes
         assert!(entry["input_hash"].as_str().unwrap().len() == 64); // hex SHA-256
         assert_eq!(entry["status"], "success");
         assert!(entry["exit_code"].is_number());
         assert!(entry["duration_ms"].is_number());
+    }
+
+    #[test]
+    fn test_audit_logger_salt_enables_hash_reproduction() {
+        // A verifier who knows the original input + the persisted salt must
+        // be able to recompute the recorded digest exactly.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let logger = AuditLogger::new(Some(path.clone()));
+        let input = json!({"alpha": 1, "beta": "two"});
+        logger.log_execution("repro.test", &input, "success", 0, 0);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let entry: serde_json::Value = serde_json::from_str(raw.trim()).unwrap();
+
+        let salt_hex = entry["input_salt"].as_str().unwrap();
+        let recorded_hash = entry["input_hash"].as_str().unwrap();
+
+        let salt_bytes: Vec<u8> = (0..salt_hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&salt_hex[i..i + 2], 16).unwrap())
+            .collect();
+        let payload = AuditLogger::stable_json(&input);
+        let salted = format!("{}:{}", HASH_SALT, payload);
+        let mut hasher = Sha256::new();
+        hasher.update(&salt_bytes);
+        hasher.update(salted.as_bytes());
+        let recomputed = format!("{:x}", hasher.finalize());
+        assert_eq!(recomputed, recorded_hash);
+    }
+
+    #[test]
+    fn test_audit_logger_salt_unique_per_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let logger = AuditLogger::new(Some(path.clone()));
+        logger.log_execution("u.v", &json!({}), "success", 0, 0);
+        logger.log_execution("u.v", &json!({}), "success", 0, 0);
+        let lines: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .collect();
+        let salt0 = serde_json::from_str::<serde_json::Value>(&lines[0]).unwrap()["input_salt"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let salt1 = serde_json::from_str::<serde_json::Value>(&lines[1]).unwrap()["input_salt"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(salt0, salt1, "salts must be unique across audit entries");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_audit_logger_file_mode_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let logger = AuditLogger::new(Some(path.clone()));
+        logger.log_execution("perm.test", &json!({}), "success", 0, 0);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "audit log must be 0600; got {:o}", mode);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_audit_logger_parent_dir_mode_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("nested-audit-dir");
+        let path = nested.join("audit.jsonl");
+        let _logger = AuditLogger::new(Some(path));
+        let mode = std::fs::metadata(&nested).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "parent dir must be 0700; got {:o}", mode);
     }
 }
