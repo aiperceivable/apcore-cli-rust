@@ -974,4 +974,122 @@ mod tests {
         assert!(!subs.contains(&"health"));
         assert!(!subs.contains(&"usage"));
     }
+
+    // -- Behavioral tests for dispatch arg-parsing (review #5) ---------------
+
+    /// Build a parsed ArgMatches the way main.rs would feed dispatch_*.
+    fn parse_subcommand(args: &[&str]) -> clap::ArgMatches {
+        let cmd = Command::new("root")
+            .subcommand(health_command())
+            .subcommand(usage_command())
+            .subcommand(enable_command())
+            .subcommand(disable_command())
+            .subcommand(reload_command())
+            .subcommand(config_command());
+        cmd.try_get_matches_from(std::iter::once("root").chain(args.iter().copied()))
+            .expect("parse must succeed for valid args")
+    }
+
+    #[test]
+    fn test_enable_command_requires_module_id_and_reason() {
+        let cmd = enable_command();
+        // Missing reason → parse error.
+        let result = cmd
+            .clone()
+            .try_get_matches_from(vec!["enable", "my.module"]);
+        assert!(
+            result.is_err(),
+            "enable without --reason must fail to parse"
+        );
+        // Both required → ok.
+        let result = cmd.try_get_matches_from(vec!["enable", "my.module", "--reason", "ops"]);
+        assert!(result.is_ok(), "enable with --reason must parse");
+    }
+
+    #[test]
+    fn test_disable_command_requires_module_id_and_reason() {
+        let cmd = disable_command();
+        let result = cmd
+            .clone()
+            .try_get_matches_from(vec!["disable", "my.module"]);
+        assert!(result.is_err());
+        let result =
+            cmd.try_get_matches_from(vec!["disable", "my.module", "--reason", "rolling-back"]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_reload_command_requires_module_id_and_reason() {
+        let cmd = reload_command();
+        let result = cmd
+            .clone()
+            .try_get_matches_from(vec!["reload", "my.module"]);
+        assert!(result.is_err());
+        let result =
+            cmd.try_get_matches_from(vec!["reload", "my.module", "--reason", "config-change"]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yes_flag_propagation_through_parse() {
+        // Regression for review #9: --yes must be readable from the parsed
+        // matches that dispatch_enable/disable/reload pass to
+        // require_approval_for_system_command. Previously --yes was captured
+        // only to gate an eprintln "Note" that never reached the executor.
+        let m = parse_subcommand(&["enable", "my.module", "--reason", "ops", "--yes"]);
+        let sub = m.subcommand_matches("enable").unwrap();
+        assert!(
+            sub.get_flag("yes"),
+            "--yes flag must surface as true on dispatch_enable matches"
+        );
+
+        let m = parse_subcommand(&["disable", "my.module", "--reason", "rolling-back", "-y"]);
+        let sub = m.subcommand_matches("disable").unwrap();
+        assert!(sub.get_flag("yes"), "-y short form must work for disable");
+
+        let m = parse_subcommand(&["reload", "my.module", "--reason", "config-change", "--yes"]);
+        let sub = m.subcommand_matches("reload").unwrap();
+        assert!(sub.get_flag("yes"));
+    }
+
+    #[test]
+    fn test_config_set_exposes_yes_flag() {
+        // Regression for review #9: config set was missing --yes entirely.
+        let cmd = config_command();
+        let result = cmd.try_get_matches_from(vec![
+            "config",
+            "set",
+            "feature.x",
+            "true",
+            "--reason",
+            "ops",
+            "--yes",
+        ]);
+        assert!(
+            result.is_ok(),
+            "config set must accept --yes (review #9): {:?}",
+            result.err()
+        );
+        let set_m = result.unwrap().subcommand_matches("set").cloned().unwrap();
+        assert!(set_m.get_flag("yes"), "--yes must read true on config set");
+    }
+
+    #[test]
+    fn test_health_module_id_is_optional() {
+        let cmd = health_command();
+        // Without module_id: summary mode.
+        let result = cmd.clone().try_get_matches_from(vec!["health"]);
+        assert!(result.is_ok(), "health must default to summary mode");
+        // With module_id: per-module mode.
+        let result = cmd.try_get_matches_from(vec!["health", "my.module"]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_usage_period_default_is_24h() {
+        let cmd = usage_command();
+        let m = cmd.try_get_matches_from(vec!["usage"]).unwrap();
+        let period = m.get_one::<String>("period").cloned().unwrap_or_default();
+        assert_eq!(period, "24h", "default usage period must be '24h'");
+    }
 }
