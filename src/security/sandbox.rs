@@ -21,9 +21,17 @@ const SANDBOX_ALLOWED_ENV_KEYS: &[&str] = &["PATH", "LANG", "LC_ALL"];
 /// Errors produced during sandboxed module execution.
 #[derive(Debug, Error)]
 pub enum ModuleExecutionError {
-    /// The subprocess exited with a non-zero exit code.
-    #[error("module '{module_id}' exited with code {exit_code}")]
-    NonZeroExit { module_id: String, exit_code: i32 },
+    /// The subprocess exited with a non-zero exit code. The captured
+    /// stderr is preserved on the error so callers can surface it for
+    /// debuggability (the subprocess panics, tracebacks, and user-facing
+    /// error prints all land here).
+    #[error("module '{module_id}' exited with code {exit_code}{}",
+            if stderr.is_empty() { String::new() } else { format!(": {stderr}") })]
+    NonZeroExit {
+        module_id: String,
+        exit_code: i32,
+        stderr: String,
+    },
 
     /// The subprocess timed out.
     #[error("module '{module_id}' timed out after {timeout_ms}ms")]
@@ -36,6 +44,14 @@ pub enum ModuleExecutionError {
     /// Failed to spawn the sandbox subprocess.
     #[error("failed to spawn sandbox process: {0}")]
     SpawnFailed(String),
+
+    /// A module-level error from the in-process apcore executor on the disabled
+    /// passthrough path. Preserved as a variant (rather than stringified) so
+    /// callers can map the underlying `ErrorCode` via
+    /// `crate::cli::map_module_error_to_exit_code`, keeping exit-code taxonomy
+    /// consistent between `--sandbox` and direct execution paths.
+    #[error(transparent)]
+    ModuleError(#[from] apcore::errors::ModuleError),
 }
 
 // ---------------------------------------------------------------------------
@@ -98,11 +114,13 @@ impl Sandbox {
         executor: &apcore::Executor,
     ) -> Result<Value, ModuleExecutionError> {
         if !self.enabled {
-            // Passthrough: delegate to the in-process apcore::Executor.
+            // Passthrough: delegate to the in-process apcore::Executor and
+            // preserve the ModuleError variant so callers can map to the
+            // protocol-spec exit code.
             return executor
                 .call(module_id, input_data, None, None)
                 .await
-                .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()));
+                .map_err(ModuleExecutionError::ModuleError);
         }
         self._sandboxed_execute(module_id, input_data).await
     }
@@ -159,6 +177,10 @@ impl Sandbox {
             .env_clear()
             .envs(env)
             .current_dir(&tmpdir_path)
+            // Ensure the child is killed if this future is dropped (e.g. on
+            // timeout or SIGINT) — tokio's default is kill_on_drop=false,
+            // which would leak the subprocess past Err(Timeout).
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()))?;
 
@@ -187,9 +209,11 @@ impl Sandbox {
 
         if !output.status.success() {
             let exit_code = output.status.code().unwrap_or(-1);
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
             return Err(ModuleExecutionError::NonZeroExit {
                 module_id: module_id.to_string(),
                 exit_code,
+                stderr,
             });
         }
 

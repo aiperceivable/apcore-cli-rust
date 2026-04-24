@@ -19,27 +19,31 @@ fn make_test_executor() -> Executor {
 #[tokio::test]
 async fn test_sandbox_disabled_passes_through_to_executor() {
     // Sandbox::new(false, 0) must NOT spawn a subprocess. The disabled
-    // branch now delegates to the injected executor.call(). Since our test
-    // registry is empty, the executor returns a "module not found" error,
-    // which we catch as SpawnFailed (the audit A-003 design wraps any
-    // executor error in SpawnFailed). The key assertion is that we DON'T
-    // get the old "not wired" stub error.
+    // branch delegates to the injected executor.call() and preserves the
+    // apcore ModuleError variant so callers can map to protocol exit codes.
+    // The empty test registry yields ModuleError(MODULE_NOT_FOUND).
     let sandbox = Sandbox::new(false, 0);
     assert!(!sandbox.is_enabled(), "sandbox must report disabled");
     let executor = make_test_executor();
     let result = sandbox
         .execute("math.add", json!({"a": 1, "b": 2}), &executor)
         .await;
-    // We expect an error because the test registry is empty, but it must
-    // NOT be the legacy "not wired" stub.
     match &result {
         Err(ModuleExecutionError::SpawnFailed(msg)) if msg.contains("not wired") => {
             panic!("disabled sandbox must passthrough to executor, not return 'not wired'");
         }
-        Err(_) => {} // any executor error is fine — we just verified passthrough
+        Err(ModuleExecutionError::ModuleError(_)) => {
+            // Expected: executor returned MODULE_NOT_FOUND (empty registry).
+            // Variant is preserved so cli.rs can map the protocol exit code.
+        }
+        Err(other) => panic!(
+            "disabled sandbox must surface ModuleError variant for executor \
+             failures so exit-code mapping stays consistent with direct exec; \
+             got: {other:?}"
+        ),
         Ok(_) => {
             // If the executor somehow succeeded (unlikely with empty registry),
-            // that's also acceptable — the passthrough worked.
+            // the passthrough still worked.
         }
     }
 }
@@ -80,6 +84,24 @@ async fn test_sandbox_enabled_timeout_returns_error() {
         result.is_err(),
         "sandbox with 1ms timeout must return an error"
     );
+}
+
+#[tokio::test]
+async fn test_nonzero_exit_carries_stderr() {
+    // Construct a NonZeroExit manually to verify the stderr field is
+    // preserved in the Display output. This closes the review finding that
+    // the sandbox discarded captured stderr before returning the error.
+    let err = ModuleExecutionError::NonZeroExit {
+        module_id: "some.module".to_string(),
+        exit_code: 2,
+        stderr: "simulated panic: invalid state".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("simulated panic: invalid state"),
+        "NonZeroExit Display must include captured stderr, got: {msg}"
+    );
+    assert!(msg.contains("exited with code 2"));
 }
 
 #[tokio::test]

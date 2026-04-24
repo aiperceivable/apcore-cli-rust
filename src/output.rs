@@ -99,6 +99,30 @@ fn extract_tags(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Render a JSON `Value` as a plain-text CSV cell *payload* (pre-quoting).
+/// String variants return their raw contents; all others return
+/// `Value::to_string` (numbers unquoted, bools as `true`/`false`, null as
+/// `null`, nested objects/arrays as their JSON serialisation).
+fn csv_scalar_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Quote a CSV field per RFC 4180. Fields containing a comma, a carriage
+/// return, a newline, or a double-quote are wrapped in double-quotes and
+/// have embedded double-quotes doubled. Otherwise the field is returned
+/// unchanged.
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        let escaped = s.replace('"', "\"\"");
+        format!("\"{escaped}\"")
+    } else {
+        s.to_string()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // format_module_list
 // ---------------------------------------------------------------------------
@@ -414,17 +438,14 @@ pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) ->
             let keys: Vec<&String> = obj.keys().collect();
             let header = keys
                 .iter()
-                .map(|k| k.as_str())
+                .map(|k| csv_field(k.as_str()))
                 .collect::<Vec<_>>()
                 .join(",");
             let values = keys
                 .iter()
                 .map(|k| {
                     let v = obj.get(*k).unwrap();
-                    match v {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    }
+                    csv_field(&csv_scalar_string(v))
                 })
                 .collect::<Vec<_>>()
                 .join(",");
@@ -439,7 +460,7 @@ pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) ->
                 let keys: Vec<&String> = first_obj.keys().collect();
                 let header = keys
                     .iter()
-                    .map(|k| k.as_str())
+                    .map(|k| csv_field(k.as_str()))
                     .collect::<Vec<_>>()
                     .join(",");
                 let mut rows = vec![header];
@@ -449,10 +470,7 @@ pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) ->
                             .iter()
                             .map(|k| {
                                 let v = obj.get(*k).unwrap_or(&Value::Null);
-                                match v {
-                                    Value::String(s) => s.clone(),
-                                    other => other.to_string(),
-                                }
+                                csv_field(&csv_scalar_string(v))
                             })
                             .collect::<Vec<_>>()
                             .join(",");

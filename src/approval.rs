@@ -163,18 +163,41 @@ async fn prompt_with_timeout(
 // check_approval_with_tty  (Tasks 3, 4, 5)
 // ---------------------------------------------------------------------------
 
+/// Default approval prompt timeout in seconds.
+pub const DEFAULT_APPROVAL_TIMEOUT_SECS: u64 = 60;
+
 /// Internal implementation accepting `is_tty` for testability.
+///
+/// Delegates to [`check_approval_with_tty_timeout`] with
+/// [`DEFAULT_APPROVAL_TIMEOUT_SECS`] so existing callers keep the 60-second
+/// default.
+pub async fn check_approval_with_tty(
+    module_def: &serde_json::Value,
+    auto_approve: bool,
+    is_tty: bool,
+) -> Result<(), ApprovalError> {
+    check_approval_with_tty_timeout(
+        module_def,
+        auto_approve,
+        is_tty,
+        DEFAULT_APPROVAL_TIMEOUT_SECS,
+    )
+    .await
+}
+
+/// Testable gate that honors a configurable timeout.
 ///
 /// Decision order:
 /// 1. Skip entirely if `requires_approval` is not strict bool `true`.
 /// 2. Bypass if `auto_approve == true` (--yes flag).
 /// 3. Bypass if `APCORE_CLI_AUTO_APPROVE == "1"` (exact match).
 /// 4. Reject if `!is_tty` (NonInteractive).
-/// 5. Prompt interactively with 60-second timeout.
-pub async fn check_approval_with_tty(
+/// 5. Prompt interactively with `timeout_secs` timeout.
+pub async fn check_approval_with_tty_timeout(
     module_def: &serde_json::Value,
     auto_approve: bool,
     is_tty: bool,
+    timeout_secs: u64,
 ) -> Result<(), ApprovalError> {
     if !get_requires_approval(module_def) {
         return Ok(());
@@ -225,9 +248,9 @@ pub async fn check_approval_with_tty(
         return Err(ApprovalError::NonInteractive { module_id });
     }
 
-    // TTY prompt with timeout.
+    // TTY prompt with caller-specified timeout.
     let message = get_approval_message(module_def, &module_id);
-    prompt_with_timeout(&module_id, &message, 60).await
+    prompt_with_timeout(&module_id, &message, timeout_secs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -250,9 +273,20 @@ pub async fn check_approval(
     module_def: &serde_json::Value,
     auto_approve: bool,
 ) -> Result<(), ApprovalError> {
+    check_approval_with_timeout(module_def, auto_approve, DEFAULT_APPROVAL_TIMEOUT_SECS).await
+}
+
+/// Configurable-timeout variant of [`check_approval`]. Resolve the timeout
+/// from the `--approval-timeout` CLI flag or `cli.approval_timeout` config
+/// before calling.
+pub async fn check_approval_with_timeout(
+    module_def: &serde_json::Value,
+    auto_approve: bool,
+    timeout_secs: u64,
+) -> Result<(), ApprovalError> {
     use std::io::IsTerminal;
     let is_tty = std::io::stdin().is_terminal();
-    check_approval_with_tty(module_def, auto_approve, is_tty).await
+    check_approval_with_tty_timeout(module_def, auto_approve, is_tty, timeout_secs).await
 }
 
 // CliApprovalHandler struct deleted per audit finding D9-003 / A-001:
@@ -620,5 +654,68 @@ mod tests {
         // With auto_approve=true, bypass fires before TTY prompt.
         let result = check_approval_with_tty(&module_def, true, true).await;
         assert!(result.is_ok());
+    }
+
+    async fn check_approval_with_tty_timeout_honors_custom_value_before_prompt_inner() {
+        let module_def = json!({
+            "module_id": "mod-non-interactive",
+            "annotations": {"requires_approval": true}
+        });
+        // is_tty=false with non-default timeout should still return
+        // NonInteractive (the timeout only applies to the interactive
+        // prompt path).
+        let result = check_approval_with_tty_timeout(&module_def, false, false, 42).await;
+        match result {
+            Err(ApprovalError::NonInteractive { module_id }) => {
+                assert_eq!(module_id, "mod-non-interactive");
+            }
+            other => panic!("expected NonInteractive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_approval_with_tty_timeout_honors_custom_value_before_prompt() {
+        // Closes the review finding: --approval-timeout was captured and
+        // discarded, prompt_with_timeout got a literal 60. The new
+        // _with_timeout variant must accept a caller-specified timeout and
+        // not break the pre-prompt decision order (requires_approval,
+        // --yes, env var, is_tty). Run on a dedicated runtime so the sync
+        // ENV_MUTEX guard is never held across an await point (clippy
+        // await_holding_lock).
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(check_approval_with_tty_timeout_honors_custom_value_before_prompt_inner());
+    }
+
+    #[tokio::test]
+    async fn check_approval_with_timeout_honors_auto_approve_bypass() {
+        let module_def = json!({
+            "module_id": "mod-bypass",
+            "annotations": {"requires_approval": true}
+        });
+        // --yes bypass must fire regardless of timeout setting.
+        let result = check_approval_with_timeout(&module_def, true, 7).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn prompt_with_reader_timeout_respects_nonzero_value() {
+        // Directly verifies the timeout value is threaded through and
+        // surfaces in the ApprovalError::Timeout.seconds field — guards
+        // against regression where a hard-coded 60 overrides the caller's
+        // input (the exact bug the review flagged at approval.rs:230).
+        let result = prompt_with_reader("mod-threaded", "Needs approval.", 3, || {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            Ok("y\n".to_string())
+        })
+        .await;
+        match result {
+            Err(ApprovalError::Timeout { module_id, seconds }) => {
+                assert_eq!(module_id, "mod-threaded");
+                assert_eq!(seconds, 3, "timeout must propagate caller value, not 60");
+            }
+            other => panic!("expected Timeout with seconds=3, got {other:?}"),
+        }
     }
 }
