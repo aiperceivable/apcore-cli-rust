@@ -12,25 +12,16 @@ use tracing_subscriber::{reload, EnvFilter};
 // FE-13 §11.2 deprecation shims (standalone-only)
 // ---------------------------------------------------------------------------
 
-/// Canonical list of root-level command names that were flat in pre-v0.7 and
-/// moved under the `apcli` group in v0.7. A thin hidden shim at the root
-/// forwards invocations to the corresponding `apcli <name>` subcommand after
-/// printing a deprecation warning. Removed in v0.8 per spec §11.3.
-const DEPRECATED_ROOT_COMMANDS: &[&str] = &[
-    "list",
-    "describe",
-    "exec",
-    "init",
-    "validate",
-    "health",
-    "usage",
-    "enable",
-    "disable",
-    "reload",
-    "config",
-    "completion",
-    "describe-pipeline",
-];
+/// Root-level command names that had a flat pre-v0.7 shape and moved under
+/// the `apcli` group in v0.7. A thin hidden shim at the root forwards
+/// invocations to the corresponding `apcli <name>` subcommand after printing
+/// a deprecation warning. Removed in v0.8 per spec §11.3.
+///
+/// Sourced directly from [`apcore_cli::APCLI_SUBCOMMAND_NAMES`] so the
+/// deprecation-shim set cannot drift from the canonical subcommand list.
+/// Adding a subcommand means updating one constant in `builtin_group.rs`
+/// (+ registering a handler in `lib.rs::register_apcli_subcommands`).
+const DEPRECATED_ROOT_COMMANDS: &[&str] = apcore_cli::APCLI_SUBCOMMAND_NAMES;
 
 /// Print the FE-13 §11.2 deprecation warning for a root-level invocation of
 /// a subcommand that has moved under the `apcli` group.
@@ -441,6 +432,25 @@ fn forward_shim_args(name: &str, raw_args: &[String]) -> Vec<String> {
     out
 }
 
+/// Shared deprecation-shim prologue: print the FE-13 §11.2 warning, forward
+/// the shim argv tail against a synthetic `apcli` group, and return the
+/// inner `ArgMatches` for `name`. Collapses the 10-line prologue that used
+/// to be duplicated across every shim arm.
+fn parse_shim_for(name: &str, raw_args: &[String], prog_name: &str) -> clap::ArgMatches {
+    print_deprecation_warning(name, prog_name);
+    let forwarded = forward_shim_args(name, raw_args);
+    let apcli_group = build_apcli_group_for_dispatch(prog_name);
+    let m = apcli_group
+        .try_get_matches_from(&forwarded)
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(2);
+        });
+    m.subcommand_matches(name)
+        .cloned()
+        .expect("shim dispatch failed")
+}
+
 /// Shared `list` handler used by both `apcli list` and the root-level
 /// deprecation shim.
 fn handle_list(
@@ -615,6 +625,15 @@ async fn main() {
         })
         .unwrap_or_else(|| "./extensions".to_string());
 
+    // Propagate the resolved extensions root to APCORE_EXTENSIONS_ROOT so a
+    // --internal-sandbox-runner child (spawned via Sandbox) can rebuild the
+    // same FsDiscoverer under its SANDBOX_ALLOWED_ENV_PREFIXES allowlist.
+    // Set once at startup, before any child spawn.
+    // SAFETY: invoked before any thread spawns its own reads of this var.
+    unsafe {
+        std::env::set_var("APCORE_EXTENSIONS_ROOT", &extensions_dir_for_discovery);
+    }
+
     // Discover modules once — share the single registry for both provider and executor.
     let registry = apcore::Registry::new();
     let discoverer = apcore_cli::FsDiscoverer::new(&extensions_dir_for_discovery);
@@ -656,7 +675,9 @@ async fn main() {
     // The filesystem scan is fast (local directory) and the discoverer
     // caches executable paths from the first scan.
     let provider_registry = apcore::Registry::new();
-    let _ = provider_registry.discover(&discoverer).await;
+    if let Err(e) = provider_registry.discover(&discoverer).await {
+        tracing::warn!("Provider registry discovery failed: {e}");
+    }
     let mut provider = apcore_cli::discovery::ApCoreRegistryProvider::new(provider_registry);
     provider.set_discovered_names(discovered_names);
     provider.set_descriptions(descriptions);
@@ -665,6 +686,19 @@ async fn main() {
     // ModuleExecutor trait + ApCoreExecutorAdapter were deleted per audit
     // D9-001..004. dispatch_module now takes the concrete apcore::Executor
     // directly via apcore_executor below.
+
+    // Wire the audit logger for the production dispatch path. dispatch_module
+    // emits one JSONL entry per invocation via AUDIT_LOGGER; without this
+    // call every execution would be audit-silent (regression-prevented by
+    // planning/security/plan.md §Data Flow). The default path
+    // (~/.apcore-cli/audit.jsonl) is used; users can opt out by setting
+    // APCORE_CLI_AUDIT_DISABLE=1.
+    let audit_disabled = std::env::var("APCORE_CLI_AUDIT_DISABLE")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    if !audit_disabled {
+        apcore_cli::cli::set_audit_logger(Some(apcore_cli::AuditLogger::new(None)));
+    }
 
     let prog_name = resolve_prog_name(None);
 
@@ -729,194 +763,59 @@ async fn main() {
             }
         },
         // ----- FE-13 §11.2 deprecation shims (standalone only) -----
-        Some(("list", sub_m)) => {
-            print_deprecation_warning("list", &prog_name);
-            let forwarded = forward_shim_args("list", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    let _ = sub_m; // silence unused
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m.subcommand_matches("list").expect("shim dispatch failed");
-            handle_list(sm, &registry_provider);
+        Some(("list", _)) => {
+            let sm = parse_shim_for("list", &raw_args, &prog_name);
+            handle_list(&sm, &registry_provider);
         }
-        Some(("describe", _sub_m)) => {
-            print_deprecation_warning("describe", &prog_name);
-            let forwarded = forward_shim_args("describe", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("describe")
-                .expect("shim dispatch failed");
-            handle_describe(sm, &registry_provider);
+        Some(("describe", _)) => {
+            let sm = parse_shim_for("describe", &raw_args, &prog_name);
+            handle_describe(&sm, &registry_provider);
         }
-        Some(("exec", _sub_m)) => {
-            print_deprecation_warning("exec", &prog_name);
-            let forwarded = forward_shim_args("exec", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m.subcommand_matches("exec").expect("shim dispatch failed");
-            handle_exec(sm, &registry_provider, &apcore_executor).await;
+        Some(("exec", _)) => {
+            let sm = parse_shim_for("exec", &raw_args, &prog_name);
+            handle_exec(&sm, &registry_provider, &apcore_executor).await;
         }
-        Some(("init", _sub_m)) => {
-            print_deprecation_warning("init", &prog_name);
-            let forwarded = forward_shim_args("init", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m.subcommand_matches("init").expect("shim dispatch failed");
-            apcore_cli::init_cmd::handle_init(sm);
+        Some(("init", _)) => {
+            let sm = parse_shim_for("init", &raw_args, &prog_name);
+            apcore_cli::init_cmd::handle_init(&sm);
             std::process::exit(0);
         }
-        Some(("validate", _sub_m)) => {
-            print_deprecation_warning("validate", &prog_name);
-            let forwarded = forward_shim_args("validate", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("validate")
-                .expect("shim dispatch failed");
-            apcore_cli::validate::dispatch_validate(sm, &registry_provider, &apcore_executor).await;
+        Some(("validate", _)) => {
+            let sm = parse_shim_for("validate", &raw_args, &prog_name);
+            apcore_cli::validate::dispatch_validate(&sm, &registry_provider, &apcore_executor)
+                .await;
         }
-        Some(("health", _sub_m)) => {
-            print_deprecation_warning("health", &prog_name);
-            let forwarded = forward_shim_args("health", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("health")
-                .expect("shim dispatch failed");
-            apcore_cli::system_cmd::dispatch_health(sm, &apcore_executor);
+        Some(("health", _)) => {
+            let sm = parse_shim_for("health", &raw_args, &prog_name);
+            apcore_cli::system_cmd::dispatch_health(&sm, &apcore_executor);
         }
-        Some(("usage", _sub_m)) => {
-            print_deprecation_warning("usage", &prog_name);
-            let forwarded = forward_shim_args("usage", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m.subcommand_matches("usage").expect("shim dispatch failed");
-            apcore_cli::system_cmd::dispatch_usage(sm, &apcore_executor);
+        Some(("usage", _)) => {
+            let sm = parse_shim_for("usage", &raw_args, &prog_name);
+            apcore_cli::system_cmd::dispatch_usage(&sm, &apcore_executor);
         }
-        Some(("enable", _sub_m)) => {
-            print_deprecation_warning("enable", &prog_name);
-            let forwarded = forward_shim_args("enable", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("enable")
-                .expect("shim dispatch failed");
-            apcore_cli::system_cmd::dispatch_enable(sm, &apcore_executor);
+        Some(("enable", _)) => {
+            let sm = parse_shim_for("enable", &raw_args, &prog_name);
+            apcore_cli::system_cmd::dispatch_enable(&sm, &apcore_executor);
         }
-        Some(("disable", _sub_m)) => {
-            print_deprecation_warning("disable", &prog_name);
-            let forwarded = forward_shim_args("disable", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("disable")
-                .expect("shim dispatch failed");
-            apcore_cli::system_cmd::dispatch_disable(sm, &apcore_executor);
+        Some(("disable", _)) => {
+            let sm = parse_shim_for("disable", &raw_args, &prog_name);
+            apcore_cli::system_cmd::dispatch_disable(&sm, &apcore_executor);
         }
-        Some(("reload", _sub_m)) => {
-            print_deprecation_warning("reload", &prog_name);
-            let forwarded = forward_shim_args("reload", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("reload")
-                .expect("shim dispatch failed");
-            apcore_cli::system_cmd::dispatch_reload(sm, &apcore_executor);
+        Some(("reload", _)) => {
+            let sm = parse_shim_for("reload", &raw_args, &prog_name);
+            apcore_cli::system_cmd::dispatch_reload(&sm, &apcore_executor);
         }
-        Some(("config", _sub_m)) => {
-            print_deprecation_warning("config", &prog_name);
-            let forwarded = forward_shim_args("config", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("config")
-                .expect("shim dispatch failed");
-            apcore_cli::system_cmd::dispatch_config(sm, &apcore_executor);
+        Some(("config", _)) => {
+            let sm = parse_shim_for("config", &raw_args, &prog_name);
+            apcore_cli::system_cmd::dispatch_config(&sm, &apcore_executor);
         }
-        Some(("completion", _sub_m)) => {
-            print_deprecation_warning("completion", &prog_name);
-            let forwarded = forward_shim_args("completion", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("completion")
-                .expect("shim dispatch failed");
-            handle_completion(sm, &prog_name);
+        Some(("completion", _)) => {
+            let sm = parse_shim_for("completion", &raw_args, &prog_name);
+            handle_completion(&sm, &prog_name);
         }
-        Some(("describe-pipeline", _sub_m)) => {
-            print_deprecation_warning("describe-pipeline", &prog_name);
-            let forwarded = forward_shim_args("describe-pipeline", &raw_args);
-            let apcli_group = build_apcli_group_for_dispatch(&prog_name);
-            let m = apcli_group
-                .try_get_matches_from(&forwarded)
-                .unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    std::process::exit(2);
-                });
-            let sm = m
-                .subcommand_matches("describe-pipeline")
-                .expect("shim dispatch failed");
-            apcore_cli::strategy::dispatch_describe_pipeline(sm);
+        Some(("describe-pipeline", _)) => {
+            let sm = parse_shim_for("describe-pipeline", &raw_args, &prog_name);
+            apcore_cli::strategy::dispatch_describe_pipeline(&sm);
         }
         // ----- Root-level meta commands (stay at root per FE-13 §4.1) -----
         Some(("man", sub_m)) => {
@@ -964,9 +863,13 @@ async fn main() {
             let temp_cmd = match registry_provider.get_module_descriptor(&external) {
                 Some(descriptor) => match apcore_cli::build_module_command(&descriptor) {
                     Ok(cmd) => cmd.no_binary_name(true),
-                    Err(_) => apcore_cli::cli::add_dispatch_flags(
-                        clap::Command::new(&external).no_binary_name(true),
-                    ),
+                    Err(e) => {
+                        // Surface schema-resolution failures with the
+                        // protocol-spec exit code rather than degrading
+                        // silently to an empty command (review #8).
+                        eprintln!("Error: {e}");
+                        std::process::exit(e.exit_code());
+                    }
                 },
                 None => apcore_cli::cli::add_dispatch_flags(
                     clap::Command::new(&external).no_binary_name(true),

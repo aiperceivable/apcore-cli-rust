@@ -43,6 +43,25 @@ pub enum CliError {
 
     #[error("expected JSON object, got a different type")]
     NotAnObject,
+
+    /// Schema $ref resolution failed (circular, missing target, max depth).
+    /// Routed to `EXIT_SCHEMA_CIRCULAR_REF` (48) by `cli_error_exit_code`.
+    #[error("schema $ref resolution failed for module '{module_id}': {source}")]
+    SchemaRefResolution {
+        module_id: String,
+        source: crate::ref_resolver::RefResolverError,
+    },
+}
+
+impl CliError {
+    /// Map a `CliError` to the protocol-spec exit code so callers don't have
+    /// to switch on the variant inline.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            CliError::SchemaRefResolution { .. } => crate::EXIT_SCHEMA_CIRCULAR_REF,
+            _ => crate::EXIT_INVALID_INPUT,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +143,31 @@ pub fn set_audit_logger(audit_logger: Option<AuditLogger>) {
             tracing::warn!("AUDIT_LOGGER mutex poisoned — audit logger not updated");
         }
     }
+}
+
+/// Centralised audit-log entry point. Acquires the global lock once, calls
+/// `log_execution`, and silently no-ops when the logger is disabled or the
+/// mutex is poisoned. Both helpers below delegate here so every dispatch_module
+/// exit path goes through the same shape — closes the gap where the standard
+/// Err path called `log_execution` but the stream/trace Err paths did not
+/// (review #7).
+fn audit_log_entry(module_id: &str, input: &Value, status: &str, exit_code: i32, duration_ms: u64) {
+    if let Ok(guard) = AUDIT_LOGGER.lock() {
+        if let Some(logger) = guard.as_ref() {
+            logger.log_execution(module_id, input, status, exit_code, duration_ms);
+        }
+    }
+}
+
+/// Record a successful module execution. Exit code is 0.
+fn audit_success(module_id: &str, input: &Value, duration_ms: u64) {
+    audit_log_entry(module_id, input, "success", 0, duration_ms);
+}
+
+/// Record a failed module execution. `exit_code` is the protocol-spec code
+/// returned to the caller.
+fn audit_error(module_id: &str, input: &Value, exit_code: i32, duration_ms: u64) {
+    audit_log_entry(module_id, input, "error", exit_code, duration_ms);
 }
 
 // ---------------------------------------------------------------------------
@@ -372,9 +416,17 @@ pub fn build_module_command_with_limit(
     }
 
     // Resolve $ref pointers in the input schema before generating clap args.
+    // Failures (circular ref, missing target, max-depth exceeded) propagate
+    // as SchemaRefResolution so the user sees EXIT_SCHEMA_CIRCULAR_REF (48)
+    // — previously the error was swallowed via .unwrap_or_else and the user
+    // got a downstream clap parse error built from un-resolved $refs (review #8).
     let resolved_schema =
-        crate::ref_resolver::resolve_refs(&module_def.input_schema, 32, module_id)
-            .unwrap_or_else(|_| module_def.input_schema.clone());
+        crate::ref_resolver::resolve_refs(&module_def.input_schema, 32, module_id).map_err(
+            |e| CliError::SchemaRefResolution {
+                module_id: module_id.clone(),
+                source: e,
+            },
+        )?;
 
     // Build clap args from JSON Schema properties.
     let schema_args = crate::schema_parser::schema_to_clap_args_with_limit(
@@ -856,6 +908,10 @@ async fn execute_script(executable: &std::path::Path, input: &Value) -> Result<V
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        // Ensure the child is killed if this future is dropped (e.g. on
+        // SIGINT via the tokio::select! race at the call site) — tokio's
+        // default is kill_on_drop=false, which would leak the subprocess.
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("failed to spawn {}: {}", executable.display(), e))?;
 
@@ -933,7 +989,7 @@ pub async fn dispatch_module(
     let trace_flag = matches.get_flag("trace");
     let stream_flag = matches.get_flag("stream");
     let strategy_name = matches.get_one::<String>("strategy").cloned();
-    let _approval_timeout = matches.get_one::<String>("approval-timeout");
+    let approval_timeout_arg = matches.get_one::<String>("approval-timeout").cloned();
     let approval_token = matches.get_one::<String>("approval-token").cloned();
 
     // 4. Build CLI kwargs from schema-derived flags (stub: empty map).
@@ -1071,8 +1127,21 @@ pub async fn dispatch_module(
     }
 
     // 7. Approval gate (exit 46 on denial/timeout).
+    // Resolve the timeout: --approval-timeout flag > cli.approval_timeout
+    // config default > hardcoded 60s. Non-numeric values fall back to the
+    // default rather than failing the dispatch.
+    let approval_timeout_secs = approval_timeout_arg
+        .as_deref()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(crate::approval::DEFAULT_APPROVAL_TIMEOUT_SECS);
     let module_json = serde_json::to_value(&module_def).unwrap_or_default();
-    if let Err(e) = crate::approval::check_approval(&module_json, auto_approve).await {
+    if let Err(e) = crate::approval::check_approval_with_timeout(
+        &module_json,
+        auto_approve,
+        approval_timeout_secs,
+    )
+    .await
+    {
         eprintln!("Error: {e}");
         std::process::exit(EXIT_APPROVAL_DENIED);
     }
@@ -1106,25 +1175,20 @@ pub async fn dispatch_module(
                     std::process::exit(EXIT_SIGINT);
                 }
             };
+            let duration_ms = start.elapsed().as_millis() as u64;
             match res {
                 Ok(val) => {
-                    // Output as single JSONL line.
                     println!("{}", serde_json::to_string(&val).unwrap_or_default());
-                    let duration_ms = start.elapsed().as_millis() as u64;
-                    if let Ok(guard) = AUDIT_LOGGER.lock() {
-                        if let Some(logger) = guard.as_ref() {
-                            logger.log_execution(
-                                module_id,
-                                &input_value,
-                                "success",
-                                0,
-                                duration_ms,
-                            );
-                        }
-                    }
+                    audit_success(module_id, &input_value, duration_ms);
                     std::process::exit(EXIT_SUCCESS);
                 }
                 Err(e) => {
+                    audit_error(
+                        module_id,
+                        &input_value,
+                        crate::EXIT_MODULE_EXECUTE_ERROR,
+                        duration_ms,
+                    );
                     eprintln!("Error: {e}");
                     std::process::exit(crate::EXIT_MODULE_EXECUTE_ERROR);
                 }
@@ -1145,7 +1209,6 @@ pub async fn dispatch_module(
         let duration_ms = start.elapsed().as_millis() as u64;
         match res {
             Ok(val) => {
-                // If result is array, output each element as a JSONL line.
                 if let Some(arr) = val.as_array() {
                     for item in arr {
                         println!("{}", serde_json::to_string(item).unwrap_or_default());
@@ -1153,15 +1216,12 @@ pub async fn dispatch_module(
                 } else {
                     println!("{}", serde_json::to_string(&val).unwrap_or_default());
                 }
-                if let Ok(guard) = AUDIT_LOGGER.lock() {
-                    if let Some(logger) = guard.as_ref() {
-                        logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
-                    }
-                }
+                audit_success(module_id, &input_value, duration_ms);
                 std::process::exit(EXIT_SUCCESS);
             }
             Err(e) => {
                 let code = map_module_error_to_exit_code(&e);
+                audit_error(module_id, &input_value, code, duration_ms);
                 eprintln!("Error: Module '{module_id}' execution failed: {e}.");
                 std::process::exit(code);
             }
@@ -1189,11 +1249,7 @@ pub async fn dispatch_module(
         let duration_ms = start.elapsed().as_millis() as u64;
         match res {
             Ok(output) => {
-                if let Ok(guard) = AUDIT_LOGGER.lock() {
-                    if let Some(logger) = guard.as_ref() {
-                        logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
-                    }
-                }
+                audit_success(module_id, &input_value, duration_ms);
                 // Print result with trace appended.
                 let fmt = crate::output::resolve_format(format_flag.as_deref());
                 if fmt == "json" {
@@ -1230,6 +1286,7 @@ pub async fn dispatch_module(
             }
             Err(e) => {
                 let code = map_module_error_to_exit_code(&e);
+                audit_error(module_id, &input_value, code, duration_ms);
                 eprintln!("Error: Module '{module_id}' execution failed: {e}.");
                 std::process::exit(code);
             }
@@ -1257,7 +1314,21 @@ pub async fn dispatch_module(
             let sandbox = crate::security::Sandbox::new(true, 0);
             tokio::select! {
                 res = sandbox.execute(module_id, input_value.clone(), apcore_executor) => {
-                    res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e.to_string(), None))
+                    res.map_err(|e| {
+                        // Preserve protocol exit-code semantics when the
+                        // disabled passthrough surfaces an apcore ModuleError;
+                        // other sandbox failures (NonZeroExit, Timeout,
+                        // OutputParseFailed, SpawnFailed) map to the generic
+                        // execute-error code.
+                        match &e {
+                            crate::security::ModuleExecutionError::ModuleError(inner) => {
+                                let code = map_module_error_to_exit_code(inner);
+                                let data = serde_json::to_value(inner).ok();
+                                (code, e.to_string(), data)
+                            }
+                            _ => (crate::EXIT_MODULE_EXECUTE_ERROR, e.to_string(), None),
+                        }
+                    })
                 }
                 _ = tokio::signal::ctrl_c() => {
                     eprintln!("Execution cancelled.");
@@ -1295,11 +1366,7 @@ pub async fn dispatch_module(
     match result {
         Ok(output) => {
             // 10. Audit log success.
-            if let Ok(guard) = AUDIT_LOGGER.lock() {
-                if let Some(logger) = guard.as_ref() {
-                    logger.log_execution(module_id, &input_value, "success", 0, duration_ms);
-                }
-            }
+            audit_success(module_id, &input_value, duration_ms);
             // 11. Format and output (F9: with field selection).
             let fmt = crate::output::resolve_format(format_flag.as_deref());
             println!(
@@ -1310,11 +1377,7 @@ pub async fn dispatch_module(
         }
         Err((exit_code, msg, error_data)) => {
             // Audit log error.
-            if let Ok(guard) = AUDIT_LOGGER.lock() {
-                if let Some(logger) = guard.as_ref() {
-                    logger.log_execution(module_id, &input_value, "error", exit_code, duration_ms);
-                }
-            }
+            audit_error(module_id, &input_value, exit_code, duration_ms);
             // F3: Enhanced error output with structured guidance fields.
             if format_flag.as_deref() == Some("json") || !std::io::stderr().is_terminal() {
                 emit_error_json(module_id, &msg, exit_code, error_data.as_ref());

@@ -297,3 +297,42 @@ async fn test_run_with_config_app_only_returns_zero() {
     let exit_code = apcore_cli::run_with_config(config, vec![]).await;
     assert_eq!(exit_code, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Schema $ref resolution error propagation (review #8)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_build_module_command_propagates_circular_ref_error() {
+    // Regression for review #8: a circular $ref in input_schema must surface
+    // as CliError::SchemaRefResolution mapped to EXIT_SCHEMA_CIRCULAR_REF (48),
+    // not silently fall back to the un-resolved schema.
+    use apcore_cli::cli::{build_module_command, CliError};
+
+    let module_def = apcore::registry::registry::ModuleDescriptor {
+        module_id: "circular.test".to_string(),
+        name: None,
+        description: String::new(),
+        documentation: None,
+        input_schema: json!({
+            "$ref": "#/definitions/x",
+            "definitions": { "x": { "$ref": "#/definitions/x" } }
+        }),
+        output_schema: json!({}),
+        version: "1.0.0".to_string(),
+        tags: vec![],
+        annotations: Some(apcore::module::ModuleAnnotations::default()),
+        examples: vec![],
+        metadata: std::collections::HashMap::new(),
+        display: None,
+        sunset_date: None,
+        dependencies: vec![],
+        enabled: true,
+    };
+    let err = build_module_command(&module_def).expect_err("circular ref must surface as error");
+    assert!(
+        matches!(err, CliError::SchemaRefResolution { .. }),
+        "expected SchemaRefResolution, got {err:?}"
+    );
+    assert_eq!(err.exit_code(), apcore_cli::EXIT_SCHEMA_CIRCULAR_REF);
+}
