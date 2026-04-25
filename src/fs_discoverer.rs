@@ -138,6 +138,9 @@ impl FsDiscoverer {
     }
 
     /// Recursively collect all `module.json` paths under `dir`.
+    ///
+    /// Skips symlinked directories to prevent infinite recursion when the
+    /// extensions tree contains a symlink that points back into an ancestor.
     fn collect_module_jsons(dir: &Path) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let entries = match std::fs::read_dir(dir) {
@@ -146,7 +149,11 @@ impl FsDiscoverer {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            // Do not follow symlinked directories — avoids infinite recursion
+            // when a symlink under the extensions root points back into an
+            // ancestor directory (common in monorepo / workspace layouts).
+            let is_symlink = entry.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+            if path.is_dir() && !is_symlink {
                 result.extend(Self::collect_module_jsons(&path));
             } else if path.file_name().and_then(|n| n.to_str()) == Some("module.json") {
                 result.push(path);
@@ -199,14 +206,19 @@ impl Discoverer for FsDiscoverer {
                     let exec_path = parent.join(exec_rel);
                     if exec_path.exists() {
                         // Canonicalize both paths to prevent traversal via ../../
-                        let safe = match (exec_path.canonicalize(), self.root.canonicalize()) {
-                            (Ok(exec_canon), Ok(root_canon)) => exec_canon.starts_with(&root_canon),
+                        // Store the canonicalized form so consumers hold the
+                        // vetted, symlink-resolved path rather than the raw one.
+                        let (exec_canon_res, root_canon_res) =
+                            (exec_path.canonicalize(), self.root.canonicalize());
+                        let safe = match (&exec_canon_res, &root_canon_res) {
+                            (Ok(ec), Ok(rc)) => ec.starts_with(rc),
                             _ => false,
                         };
                         if safe {
+                            let exec_canon = exec_canon_res.unwrap();
                             match self.executables.lock() {
                                 Ok(mut map) => {
-                                    map.insert(mj.name.clone(), exec_path);
+                                    map.insert(mj.name.clone(), exec_canon);
                                 }
                                 Err(_poisoned) => {
                                     tracing::warn!(
