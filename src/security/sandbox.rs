@@ -1,6 +1,8 @@
 // apcore-cli — Subprocess sandbox for module execution.
 // Protocol spec: SEC-04 (Sandbox, ModuleExecutionError)
 
+use tokio::io::AsyncReadExt;
+
 use serde_json::Value;
 use thiserror::Error;
 
@@ -20,6 +22,11 @@ const SANDBOX_DENIED_ENV_PREFIXES: &[&str] = &["APCORE_AUTH_"];
 
 /// Exact environment variable names denied regardless of prefix match.
 const SANDBOX_DENIED_ENV_KEYS: &[&str] = &["APCORE_AUTH_API_KEY"];
+
+/// Maximum bytes collected from sandbox stdout or stderr before the child is
+/// killed and OutputParseFailed is returned. Guards against OOM from hostile
+/// or buggy modules that write unboundedly.
+const SANDBOX_OUTPUT_SIZE_LIMIT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 
 // ---------------------------------------------------------------------------
 // ModuleExecutionError
@@ -203,24 +210,60 @@ impl Sandbox {
                 .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()))?;
         }
 
-        // Await with timeout.
+        // Await with timeout, collecting stdout/stderr up to the cap.
         let timeout_dur = if self.timeout_ms > 0 {
             Duration::from_millis(self.timeout_ms)
         } else {
             Duration::from_secs(300)
         };
 
-        let output = timeout(timeout_dur, child.wait_with_output())
-            .await
-            .map_err(|_| ModuleExecutionError::Timeout {
-                module_id: module_id.to_string(),
-                timeout_ms: self.timeout_ms,
-            })?
-            .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()))?;
+        // Take pipe handles before the join so the child struct can also be
+        // awaited for the exit status in the same async block.
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
 
-        if !output.status.success() {
-            let exit_code = output.status.code().unwrap_or(-1);
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let cap = SANDBOX_OUTPUT_SIZE_LIMIT_BYTES;
+        let collect_result = timeout(timeout_dur, async {
+            let (stdout_res, stderr_res) = tokio::join!(
+                async {
+                    let mut buf = Vec::new();
+                    if let Some(r) = stdout_pipe {
+                        let _ = r.take(cap as u64 + 1).read_to_end(&mut buf).await;
+                    }
+                    buf
+                },
+                async {
+                    let mut buf = Vec::new();
+                    if let Some(r) = stderr_pipe {
+                        let _ = r.take(cap as u64 + 1).read_to_end(&mut buf).await;
+                    }
+                    buf
+                },
+            );
+            let status = child
+                .wait()
+                .await
+                .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()))?;
+            Ok::<_, ModuleExecutionError>((stdout_res, stderr_res, status))
+        })
+        .await
+        .map_err(|_| ModuleExecutionError::Timeout {
+            module_id: module_id.to_string(),
+            timeout_ms: self.timeout_ms,
+        })??;
+
+        let (stdout_bytes, stderr_bytes, status) = collect_result;
+
+        if stdout_bytes.len() > cap || stderr_bytes.len() > cap {
+            return Err(ModuleExecutionError::OutputParseFailed {
+                module_id: module_id.to_string(),
+                reason: format!("sandbox output exceeded {} bytes", cap),
+            });
+        }
+
+        if !status.success() {
+            let exit_code = status.code().unwrap_or(-1);
+            let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
             return Err(ModuleExecutionError::NonZeroExit {
                 module_id: module_id.to_string(),
                 exit_code,
@@ -228,7 +271,7 @@ impl Sandbox {
             });
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
         crate::sandbox_runner::decode_result(&stdout).map_err(|e| {
             ModuleExecutionError::OutputParseFailed {
                 module_id: module_id.to_string(),
