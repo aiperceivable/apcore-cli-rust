@@ -190,16 +190,33 @@ impl ConfigEncryptor {
         matches!(entry.get_password(), Ok(_) | Err(keyring::Error::NoEntry))
     }
 
-    /// Derive a 32-byte AES key via PBKDF2-HMAC-SHA256 from hostname:username
-    /// material with the given `salt`.
+    /// Derive a 32-byte AES key via PBKDF2-HMAC-SHA256.
+    ///
+    /// Key material precedence (matching Python/TS parity):
+    /// 1. `APCORE_CLI_CONFIG_PASSPHRASE` env var if set and non-empty.
+    /// 2. `hostname:username` fallback.
     fn _derive_key_with_salt(&self, salt: &[u8]) -> Result<[u8; 32], ConfigDecryptionError> {
-        let hostname = gethostname()
-            .into_string()
-            .unwrap_or_else(|_| "unknown".to_string());
-        let username = std::env::var("USER")
-            .or_else(|_| std::env::var("LOGNAME"))
-            .unwrap_or_else(|_| "unknown".to_string());
-        let material = format!("{hostname}:{username}");
+        let material = if let Ok(passphrase) = std::env::var("APCORE_CLI_CONFIG_PASSPHRASE") {
+            if !passphrase.is_empty() {
+                passphrase
+            } else {
+                let hostname = gethostname()
+                    .into_string()
+                    .unwrap_or_else(|_| "unknown".to_string());
+                let username = std::env::var("USER")
+                    .or_else(|_| std::env::var("LOGNAME"))
+                    .unwrap_or_else(|_| "unknown".to_string());
+                format!("{hostname}:{username}")
+            }
+        } else {
+            let hostname = gethostname()
+                .into_string()
+                .unwrap_or_else(|_| "unknown".to_string());
+            let username = std::env::var("USER")
+                .or_else(|_| std::env::var("LOGNAME"))
+                .unwrap_or_else(|_| "unknown".to_string());
+            format!("{hostname}:{username}")
+        };
         let mut key = [0u8; 32];
         pbkdf2_hmac::<Sha256>(material.as_bytes(), salt, PBKDF2_ITERATIONS, &mut key);
         Ok(key)

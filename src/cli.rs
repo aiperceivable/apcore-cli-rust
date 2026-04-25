@@ -332,16 +332,7 @@ pub fn exec_command() -> clap::Command {
 // the only collision surface at the root is the `apcli` name itself. See
 // `crate::builtin_group::RESERVED_GROUP_NAMES` for the canonical list.
 //
-// `BUILTIN_COMMANDS` is retained here as a deprecated alias (single-element
-// slice containing "apcli") so downstream code that still imports the symbol
-// from `apcore_cli::BUILTIN_COMMANDS` keeps compiling — the new name will be
-// the only one in v0.8.
-#[deprecated(
-    since = "0.7.0",
-    note = "Use `crate::builtin_group::RESERVED_GROUP_NAMES` instead. FE-13 retires the \
-            pre-v0.7 flat built-in list; only the `apcli` group name is reserved now."
-)]
-pub const BUILTIN_COMMANDS: &[&str] = crate::builtin_group::RESERVED_GROUP_NAMES;
+// BUILTIN_COMMANDS deprecated alias removed in v0.7.x — use RESERVED_GROUP_NAMES.
 
 // LazyModuleGroup / GroupedModuleGroup / ModuleExecutor / ApCoreExecutorAdapter
 // were deleted per audit findings D9-001..004. See the module-level comment at
@@ -1307,8 +1298,7 @@ pub async fn dispatch_module(
         let duration_ms = start.elapsed().as_millis() as u64;
         match res {
             Ok(output) => {
-                audit_success(module_id, &input_value, duration_ms);
-                // Print result with trace appended.
+                // Print result with trace appended (format BEFORE audit — canonical order).
                 let fmt = crate::output::resolve_format(format_flag.as_deref());
                 if fmt == "json" {
                     // Merge trace stub into JSON output.
@@ -1340,6 +1330,8 @@ pub async fn dispatch_module(
                         strategy_name.as_deref().unwrap_or("standard"),
                     );
                 }
+                // Audit success AFTER format (canonical order: format -> audit).
+                audit_success(module_id, &input_value, duration_ms);
                 std::process::exit(EXIT_SUCCESS);
             }
             Err(e) => {
@@ -1423,14 +1415,14 @@ pub async fn dispatch_module(
 
     match result {
         Ok(output) => {
-            // 10. Audit log success.
-            audit_success(module_id, &input_value, duration_ms);
-            // 11. Format and output (F9: with field selection).
+            // 10. Format and output first (canonical order: format -> audit).
             let fmt = crate::output::resolve_format(format_flag.as_deref());
             println!(
                 "{}",
                 crate::output::format_exec_result(&output, fmt, fields_flag.as_deref(),)
             );
+            // 11. Audit log success AFTER format.
+            audit_success(module_id, &input_value, duration_ms);
             std::process::exit(EXIT_SUCCESS);
         }
         Err((exit_code, msg, error_data)) => {

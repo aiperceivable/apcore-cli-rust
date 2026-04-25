@@ -289,13 +289,19 @@ async fn test_run_with_config_validates_conflict() {
 }
 
 #[tokio::test]
-async fn test_run_with_config_app_only_returns_zero() {
+async fn test_run_with_config_returns_nonzero_until_implemented() {
+    // run_with_config dispatch is not yet implemented; it must NOT silently
+    // return 0 (which callers would interpret as success). Any non-zero exit
+    // code signals the caller that the dispatch loop is pending.
     let config = apcore_cli::CliConfig {
         app: Some(apcore::APCore::new()),
         ..Default::default()
     };
     let exit_code = apcore_cli::run_with_config(config, vec![]).await;
-    assert_eq!(exit_code, 0);
+    assert_ne!(
+        exit_code, 0,
+        "run_with_config must not silently succeed while unimplemented"
+    );
 }
 
 // ---------------------------------------------------------------------------

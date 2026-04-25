@@ -26,7 +26,7 @@ const SANDBOX_DENIED_ENV_KEYS: &[&str] = &["APCORE_AUTH_API_KEY"];
 /// Maximum bytes collected from sandbox stdout or stderr before the child is
 /// killed and OutputParseFailed is returned. Guards against OOM from hostile
 /// or buggy modules that write unboundedly.
-const SANDBOX_OUTPUT_SIZE_LIMIT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+const SANDBOX_OUTPUT_SIZE_LIMIT_BYTES: usize = 64 * 1024 * 1024; // 64 MiB (aligned with Python/TS)
 
 // ---------------------------------------------------------------------------
 // ModuleExecutionError

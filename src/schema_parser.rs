@@ -13,6 +13,23 @@ use tracing::warn;
 // Error type
 // ---------------------------------------------------------------------------
 
+/// Built-in CLI flags that must not be shadowed by module schema properties.
+/// Matches the TypeScript RESERVED_NAMES set (schema-parser.ts) for parity.
+pub const RESERVED_PROPERTY_NAMES: &[&str] = &[
+    "input",
+    "yes",
+    "format",
+    "fields",
+    "sandbox",
+    "verbose",
+    "dry_run",
+    "trace",
+    "stream",
+    "strategy",
+    "approval_timeout",
+    "approval_token",
+];
+
 /// Error type for schema parsing failures.
 #[derive(Debug, Error)]
 pub enum SchemaParserError {
@@ -24,6 +41,10 @@ pub enum SchemaParserError {
         prop_b: String,
         flag_name: String,
     },
+    /// A schema property name collides with a built-in CLI flag.
+    /// Caller must exit 48.
+    #[error("Schema property '{name}' conflicts with built-in CLI flag")]
+    ReservedPropertyName { name: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +224,13 @@ pub fn schema_to_clap_args_with_limit(
     let mut seen_flags: HashMap<String, String> = HashMap::new(); // flag_long → prop_name
 
     for (prop_name, prop_schema) in properties {
+        // Reserved-name guard: reject schema properties that shadow built-in flags.
+        if RESERVED_PROPERTY_NAMES.contains(&prop_name.as_str()) {
+            return Err(SchemaParserError::ReservedPropertyName {
+                name: prop_name.clone(),
+            });
+        }
+
         let flag_long = prop_name_to_flag_name(prop_name);
 
         // Collision detection.
@@ -663,27 +691,27 @@ mod tests {
     #[test]
     fn test_boolean_flag_pair_produced() {
         let schema = json!({
-            "properties": {"verbose": {"type": "boolean"}}
+            "properties": {"log_output": {"type": "boolean"}}
         });
         let result = schema_to_clap_args(&schema).unwrap();
         assert!(
-            find_arg(&result.args, "verbose").is_some(),
-            "--verbose must be present"
+            find_arg(&result.args, "log-output").is_some(),
+            "--log-output must be present"
         );
         assert!(
-            find_arg(&result.args, "no-verbose").is_some(),
-            "--no-verbose must be present"
+            find_arg(&result.args, "no-log-output").is_some(),
+            "--no-log-output must be present"
         );
     }
 
     #[test]
     fn test_boolean_pair_actions() {
         let schema = json!({
-            "properties": {"verbose": {"type": "boolean"}}
+            "properties": {"log_output": {"type": "boolean"}}
         });
         let result = schema_to_clap_args(&schema).unwrap();
-        let pos_arg = find_arg(&result.args, "verbose").unwrap();
-        let neg_arg = find_arg(&result.args, "no-verbose").unwrap();
+        let pos_arg = find_arg(&result.args, "log-output").unwrap();
+        let neg_arg = find_arg(&result.args, "no-log-output").unwrap();
         assert!(matches!(pos_arg.get_action(), clap::ArgAction::SetTrue));
         assert!(matches!(neg_arg.get_action(), clap::ArgAction::SetFalse));
     }
@@ -722,14 +750,20 @@ mod tests {
     #[test]
     fn test_boolean_pair_recorded_in_bool_pairs() {
         let schema = json!({
-            "properties": {"dry_run": {"type": "boolean"}}
+            "properties": {"skip_writes": {"type": "boolean"}}
         });
         let result = schema_to_clap_args(&schema).unwrap();
-        let pair = result.bool_pairs.iter().find(|p| p.prop_name == "dry_run");
-        assert!(pair.is_some(), "BoolFlagPair must be recorded for dry_run");
+        let pair = result
+            .bool_pairs
+            .iter()
+            .find(|p| p.prop_name == "skip_writes");
+        assert!(
+            pair.is_some(),
+            "BoolFlagPair must be recorded for skip_writes"
+        );
         assert_eq!(
             pair.unwrap().flag_long,
-            "dry-run",
+            "skip-writes",
             "flag_long must use hyphen form"
         );
     }
@@ -737,13 +771,16 @@ mod tests {
     #[test]
     fn test_boolean_underscore_to_hyphen() {
         let schema = json!({
-            "properties": {"dry_run": {"type": "boolean"}}
+            "properties": {"skip_writes": {"type": "boolean"}}
         });
         let result = schema_to_clap_args(&schema).unwrap();
-        assert!(find_arg(&result.args, "dry-run").is_some(), "--dry-run");
         assert!(
-            find_arg(&result.args, "no-dry-run").is_some(),
-            "--no-dry-run"
+            find_arg(&result.args, "skip-writes").is_some(),
+            "--skip-writes"
+        );
+        assert!(
+            find_arg(&result.args, "no-skip-writes").is_some(),
+            "--no-skip-writes"
         );
     }
 
@@ -777,11 +814,11 @@ mod tests {
     fn test_enum_string_choices() {
         let schema = json!({
             "properties": {
-                "format": {"type": "string", "enum": ["json", "csv", "xml"]}
+                "output_type": {"type": "string", "enum": ["json", "csv", "xml"]}
             }
         });
         let result = schema_to_clap_args(&schema).unwrap();
-        let arg = find_arg(&result.args, "format").expect("--format must exist");
+        let arg = find_arg(&result.args, "output-type").expect("--output-type must exist");
         let pvs = arg.get_possible_values();
         let possible: Vec<&str> = pvs.iter().map(|pv| pv.get_name()).collect();
         assert_eq!(possible, vec!["json", "csv", "xml"]);
@@ -852,11 +889,11 @@ mod tests {
     fn test_enum_with_default() {
         let schema = json!({
             "properties": {
-                "format": {"type": "string", "enum": ["json", "table"], "default": "json"}
+                "output_type": {"type": "string", "enum": ["json", "table"], "default": "json"}
             }
         });
         let result = schema_to_clap_args(&schema).unwrap();
-        let arg = find_arg(&result.args, "format").unwrap();
+        let arg = find_arg(&result.args, "output-type").unwrap();
         assert_eq!(
             arg.get_default_values().first().and_then(|v| v.to_str()),
             Some("json")
@@ -1028,12 +1065,12 @@ mod tests {
     #[test]
     fn test_reconvert_string_enum_passthrough() {
         let schema = json!({
-            "properties": {"format": {"type": "string", "enum": ["json", "csv"]}}
+            "properties": {"output_type": {"type": "string", "enum": ["json", "csv"]}}
         });
         let schema_args = schema_to_clap_args(&schema).unwrap();
-        let kwargs = make_kwargs(&[("format", "json")]);
+        let kwargs = make_kwargs(&[("output_type", "json")]);
         let result = reconvert_enum_values(kwargs, &schema_args);
-        assert_eq!(result["format"], Value::String("json".to_string()));
+        assert_eq!(result["output_type"], Value::String("json".to_string()));
     }
 
     #[test]
@@ -1097,12 +1134,25 @@ mod tests {
     #[test]
     fn test_reconvert_preserves_non_enum_keys() {
         let schema = json!({
-            "properties": {"format": {"type": "string", "enum": ["json"]}}
+            "properties": {"output_type": {"type": "string", "enum": ["json"]}}
         });
         let schema_args = schema_to_clap_args(&schema).unwrap();
-        let mut kwargs = make_kwargs(&[("format", "json")]);
+        let mut kwargs = make_kwargs(&[("output_type", "json")]);
         kwargs.insert("extra".to_string(), Value::String("untouched".to_string()));
         let result = reconvert_enum_values(kwargs, &schema_args);
         assert_eq!(result["extra"], Value::String("untouched".to_string()));
+    }
+
+    #[test]
+    fn test_reserved_property_name_rejected() {
+        for reserved in RESERVED_PROPERTY_NAMES {
+            let schema_str = format!(r#"{{"properties": {{"{reserved}": {{"type": "string"}}}}}}"#);
+            let schema: Value = serde_json::from_str(&schema_str).unwrap();
+            let result = schema_to_clap_args(&schema);
+            assert!(
+                matches!(result, Err(SchemaParserError::ReservedPropertyName { .. })),
+                "expected ReservedPropertyName error for '{reserved}'"
+            );
+        }
     }
 }

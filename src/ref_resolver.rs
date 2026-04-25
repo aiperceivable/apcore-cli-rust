@@ -228,6 +228,29 @@ fn resolve_node(
 
         // Carry over non-composition keys from the parent node.
         let mut result_map = merged_map;
+
+        // Seed parent node's own `properties`/`required` into the merged result
+        // AFTER branch merging — parent properties that are NOT already present
+        // from any branch are inserted here. This matches Python behaviour where
+        // `{properties:{x:...}, allOf:[{properties:{y:...}}]}` preserves both
+        // x and y (branches win on conflict; parent fills gaps).
+        if let Some(parent_props) = obj.get("properties").and_then(|v| v.as_object()) {
+            if let Some(Value::Object(merged_props)) = result_map.get_mut("properties") {
+                for (k, v) in parent_props {
+                    merged_props.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+        }
+        if let Some(parent_req) = obj.get("required").and_then(|v| v.as_array()) {
+            if let Some(Value::Array(merged_req)) = result_map.get_mut("required") {
+                for item in parent_req {
+                    if !merged_req.contains(item) {
+                        merged_req.push(item.clone());
+                    }
+                }
+            }
+        }
+
         for (k, v) in &obj {
             if k != "allOf" && !result_map.contains_key(k) {
                 result_map.insert(k.clone(), v.clone());

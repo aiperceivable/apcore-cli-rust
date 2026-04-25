@@ -441,20 +441,6 @@ impl ApCoreRegistryProvider {
         }
     }
 
-    /// Create a new adapter from an already-shared `Arc<apcore::Registry>`.
-    ///
-    /// Use this when the registry is owned by an [`apcore::APCore`] client —
-    /// e.g., in [`run_with_config`] when `CliConfig::app` is set — so the
-    /// adapter shares the client's registry without requiring an ownership
-    /// transfer.
-    pub fn from_arc(registry: std::sync::Arc<apcore::Registry>) -> Self {
-        Self {
-            registry,
-            discovered_names: Vec::new(),
-            descriptions: std::collections::HashMap::new(),
-        }
-    }
-
     /// Record names of modules found via discovery so they appear in `list()`.
     pub fn set_discovered_names(&mut self, names: Vec<String>) {
         self.discovered_names = names;

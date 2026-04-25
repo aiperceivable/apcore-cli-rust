@@ -87,12 +87,12 @@ fn test_schema_to_clap_args_enum_field() {
 #[test]
 fn test_reconvert_enum_values_string_passthrough() {
     let schema = json!({
-        "properties": {"format": {"type": "string", "enum": ["json", "csv"]}}
+        "properties": {"output_type": {"type": "string", "enum": ["json", "csv"]}}
     });
     let schema_args = schema_to_clap_args(&schema).unwrap();
-    let kwargs = make_kwargs(&[("format", "json")]);
+    let kwargs = make_kwargs(&[("output_type", "json")]);
     let result = reconvert_enum_values(kwargs, &schema_args);
-    assert_eq!(result["format"], Value::String("json".to_string()));
+    assert_eq!(result["output_type"], Value::String("json".to_string()));
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn test_full_pipeline_integer_enum_roundtrip() {
 #[test]
 fn test_full_pipeline_boolean_flag_pair() {
     let schema = json!({
-        "properties": {"verbose": {"type": "boolean"}}
+        "properties": {"log_output": {"type": "boolean"}}
     });
     let schema_args = schema_to_clap_args(&schema).unwrap();
 
@@ -163,17 +163,19 @@ fn test_full_pipeline_boolean_flag_pair() {
 
     let matches = cmd
         .clone()
-        .try_get_matches_from(["test", "--verbose"])
+        .try_get_matches_from(["test", "--log-output"])
         .unwrap();
     assert!(
-        matches.get_flag("verbose"),
-        "--verbose must set verbose=true"
+        matches.get_flag("log_output"),
+        "--log-output must set log_output=true"
     );
 
-    // --no-verbose can be parsed without error; verbose is not set (stays false default).
-    let matches2 = cmd.try_get_matches_from(["test", "--no-verbose"]).unwrap();
+    // --no-log-output can be parsed without error; log_output stays false.
+    let matches2 = cmd
+        .try_get_matches_from(["test", "--no-log-output"])
+        .unwrap();
     assert!(
-        !matches2.get_flag("verbose"),
-        "--no-verbose must leave verbose unset"
+        !matches2.get_flag("log_output"),
+        "--no-log-output must leave log_output unset"
     );
 }

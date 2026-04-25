@@ -45,8 +45,6 @@ pub const EXIT_ACL_DENIED: i32 = 77;
 // the spec groups them into a single "config namespace error" category.
 pub const EXIT_CONFIG_NAMESPACE_RESERVED: i32 = 78;
 pub const EXIT_CONFIG_NAMESPACE_DUPLICATE: i32 = 78;
-pub const EXIT_CONFIG_ENV_PREFIX_CONFLICT: i32 = 78;
-pub const EXIT_CONFIG_ENV_MAP_CONFLICT: i32 = 78;
 pub const EXIT_CONFIG_MOUNT_ERROR: i32 = 66;
 pub const EXIT_CONFIG_BIND_ERROR: i32 = 65;
 pub const EXIT_ERROR_FORMATTER_DUPLICATE: i32 = 70;
@@ -112,9 +110,6 @@ pub struct CliConfig {
     /// Unified APCore client. When set, `registry` and `executor` are derived
     /// from it. Mutually exclusive with `registry` and `executor`.
     pub app: Option<apcore::APCore>,
-    /// Extra custom commands to add to the CLI root. Each entry is a
-    /// `clap::Command` that will be registered as a subcommand.
-    pub extra_commands: Vec<clap::Command>,
     /// Group depth for multi-level module grouping (default: 1).
     /// Higher values allow deeper dotted-name grouping.
     pub group_depth: usize,
@@ -187,16 +182,24 @@ pub async fn run_with_config(config: CliConfig, _args: Vec<String>) -> i32 {
             std::sync::Arc::clone(&registry_arc),
             apcore::Config::default(),
         );
-        let _provider = discovery::ApCoreRegistryProvider::from_arc(registry_arc);
-        // Full CLI dispatch using _provider and _executor is extracted in a
-        // follow-up. Components are correctly wired — dispatch routing pending.
-        0
+        // Full CLI dispatch using _executor is tracked as a follow-up.
+        // Components correctly wired; dispatch routing pending.
+        eprintln!(
+            "apcore-cli: run_with_config dispatch not yet implemented -- use apcli binary directly"
+        );
+        1
     } else if config.registry.is_some() {
         // Pre-populated registry path — components already provided by caller.
-        0
+        eprintln!(
+            "apcore-cli: run_with_config dispatch not yet implemented -- use apcli binary directly"
+        );
+        1
     } else {
         // Filesystem discovery path (default).
-        0
+        eprintln!(
+            "apcore-cli: run_with_config dispatch not yet implemented -- use apcli binary directly"
+        );
+        1
     }
 }
 
@@ -280,7 +283,6 @@ impl Default for CliConfig {
             registry: None,
             executor: None,
             app: None,
-            extra_commands: Vec::new(),
             group_depth: 1,
             expose: None,
             apcli: None,
@@ -395,7 +397,6 @@ mod tests {
         assert!(config.registry.is_none());
         assert!(config.executor.is_none());
         assert!(config.app.is_none());
-        assert!(config.extra_commands.is_empty());
         assert_eq!(config.group_depth, 1);
         assert!(config.expose.is_none());
         assert!(config.apcli.is_none());
