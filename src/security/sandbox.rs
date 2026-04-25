@@ -72,6 +72,25 @@ pub enum ModuleExecutionError {
 }
 
 // ---------------------------------------------------------------------------
+// Auxiliary error types (API parity with Python/TypeScript)
+// ---------------------------------------------------------------------------
+
+/// Raised when the requested module ID is not registered in the registry.
+/// Exported for cross-SDK API parity with Python and TypeScript.
+#[derive(Debug, Error)]
+#[error("Module not found: {module_id}")]
+pub struct ModuleNotFoundError {
+    pub module_id: String,
+}
+
+/// Raised when a module's JSON Schema is structurally invalid or fails
+/// against the validator. Exported for cross-SDK API parity.
+#[derive(Debug, Error)]
+#[error("Schema validation error: {detail}")]
+pub struct SchemaValidationError {
+    pub detail: String,
+}
+
 // Sandbox
 // ---------------------------------------------------------------------------
 

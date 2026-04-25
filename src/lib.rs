@@ -306,7 +306,9 @@ impl Default for CliConfig {
 // use `CliConfig` and the user-facing API below.
 
 // Approval gate (FE-04 + FE-11 §3.5)
-pub use approval::{check_approval, ApprovalError};
+pub use approval::{
+    check_approval, ApprovalDeniedError, ApprovalError, ApprovalTimeoutError, CliApprovalHandler,
+};
 
 // Built-in command group (FE-13)
 pub use builtin_group::{ApcliConfig, ApcliGroup, ApcliMode};
@@ -361,12 +363,13 @@ pub use ref_resolver::resolve_refs;
 pub use schema_parser::{
     extract_help_with_limit, reconvert_enum_values, schema_to_clap_args,
     schema_to_clap_args_with_limit, BoolFlagPair, SchemaArgs, SchemaParserError, HELP_TEXT_MAX_LEN,
+    RESERVED_PROPERTY_NAMES,
 };
 
 // Security primitives (SEC-01..04)
 pub use security::{
     AuditLogger, AuthProvider, AuthenticationError, ConfigDecryptionError, ConfigEncryptor,
-    ModuleExecutionError, Sandbox,
+    ModuleExecutionError, ModuleNotFoundError, Sandbox, SchemaValidationError,
 };
 
 // Shell integration (FE-06): completion + man page builders.

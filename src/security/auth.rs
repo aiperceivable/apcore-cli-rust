@@ -123,7 +123,11 @@ impl AuthProvider {
         }
     }
 
-    /// Inject the Authorization header into the given request builder.
+    /// Add the Authorization header into the given headers map (mutates in place).
+    ///
+    /// This is the canonical cross-SDK contract (matching Python and TypeScript):
+    /// takes and returns a header map so callers are not coupled to any specific
+    /// HTTP client library.
     ///
     /// # Errors
     /// * `AuthenticationError::MissingApiKey` — no key is configured.
@@ -131,19 +135,32 @@ impl AuthProvider {
     /// * `AuthenticationError::MalformedApiKey` — key contains CR/LF that HTTP rejects.
     pub fn authenticate_request(
         &self,
-        builder: reqwest::RequestBuilder,
-    ) -> Result<reqwest::RequestBuilder, AuthenticationError> {
+        headers: &mut std::collections::HashMap<String, String>,
+    ) -> Result<(), AuthenticationError> {
         let key = self
             .get_api_key()?
             .ok_or(AuthenticationError::MissingApiKey)?;
-        // Strip trailing CR/LF — common when keys are pasted from terminals or
-        // clipboards. reqwest::HeaderValue::from_str rejects these characters
-        // and would otherwise fail at request-send time with an opaque error.
         let trimmed = key.trim_end_matches(['\r', '\n']);
         if trimmed.contains('\r') || trimmed.contains('\n') {
             return Err(AuthenticationError::MalformedApiKey);
         }
-        Ok(builder.header("Authorization", format!("Bearer {trimmed}")))
+        headers.insert("Authorization".to_string(), format!("Bearer {trimmed}"));
+        Ok(())
+    }
+
+    /// Inject the Authorization header into a `reqwest::RequestBuilder`.
+    ///
+    /// Convenience adapter over `authenticate_request` for reqwest-based callers.
+    pub fn apply_to_reqwest(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder, AuthenticationError> {
+        let mut headers = std::collections::HashMap::new();
+        self.authenticate_request(&mut headers)?;
+        let auth_value = headers
+            .remove("Authorization")
+            .expect("authenticate_request must insert Authorization");
+        Ok(builder.header("Authorization", auth_value))
     }
 
     /// Check an HTTP status code for authentication errors.
@@ -226,11 +243,14 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "abc123") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let client = reqwest::Client::new();
-        let builder = client.get("https://example.com");
-        let result = provider.authenticate_request(builder);
+        let mut headers = std::collections::HashMap::new();
+        let result = provider.authenticate_request(&mut headers);
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         assert!(result.is_ok());
+        assert_eq!(
+            headers.get("Authorization").map(|s| s.as_str()),
+            Some("Bearer abc123")
+        );
     }
 
     #[test]
@@ -238,9 +258,8 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let client = reqwest::Client::new();
-        let builder = client.get("https://example.com");
-        let result = provider.authenticate_request(builder);
+        let mut headers = std::collections::HashMap::new();
+        let result = provider.authenticate_request(&mut headers);
         assert!(matches!(result, Err(AuthenticationError::MissingApiKey)));
     }
 
@@ -249,9 +268,8 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "key-with-trailing-newline\n") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let client = reqwest::Client::new();
-        let builder = client.get("https://example.com");
-        let result = provider.authenticate_request(builder);
+        let mut headers = std::collections::HashMap::new();
+        let result = provider.authenticate_request(&mut headers);
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         assert!(
             result.is_ok(),
@@ -264,9 +282,8 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "bad\nkey") };
         let provider = AuthProvider::new(make_resolver_empty());
-        let client = reqwest::Client::new();
-        let builder = client.get("https://example.com");
-        let result = provider.authenticate_request(builder);
+        let mut headers = std::collections::HashMap::new();
+        let result = provider.authenticate_request(&mut headers);
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         assert!(
             matches!(result, Err(AuthenticationError::MalformedApiKey)),

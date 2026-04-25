@@ -39,19 +39,39 @@ fn test_get_api_key_missing_returns_error() {
 
 #[test]
 fn test_authenticate_request_adds_bearer_header() {
-    // authenticate_request must succeed when a key is available.
+    // authenticate_request (HashMap-based) must insert Authorization when key is available.
     let _guard = ENV_LOCK.lock().unwrap();
     // SAFETY: test-only env manipulation, serialized via ENV_LOCK.
     unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "bearer-test-key") };
     let provider = AuthProvider::new(make_empty_resolver());
-    let client = reqwest::Client::new();
-    let builder = client.get("https://example.com");
-    let result = provider.authenticate_request(builder);
+    let mut headers = std::collections::HashMap::new();
+    let result = provider.authenticate_request(&mut headers);
     // SAFETY: cleanup.
     unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
     assert!(
         result.is_ok(),
         "authenticate_request must succeed when key is set"
+    );
+    assert_eq!(
+        headers.get("Authorization").map(|s| s.as_str()),
+        Some("Bearer bearer-test-key"),
+        "Authorization header must be set"
+    );
+}
+
+#[test]
+fn test_apply_to_reqwest_injects_bearer_header() {
+    // apply_to_reqwest must succeed when a key is available.
+    let _guard = ENV_LOCK.lock().unwrap();
+    unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "reqwest-key") };
+    let provider = AuthProvider::new(make_empty_resolver());
+    let client = reqwest::Client::new();
+    let builder = client.get("https://example.com");
+    let result = provider.apply_to_reqwest(builder);
+    unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
+    assert!(
+        result.is_ok(),
+        "apply_to_reqwest must succeed when key is set"
     );
 }
 

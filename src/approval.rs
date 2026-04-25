@@ -289,11 +289,54 @@ pub async fn check_approval_with_timeout(
     check_approval_with_tty_timeout(module_def, auto_approve, is_tty, timeout_secs).await
 }
 
-// CliApprovalHandler struct deleted per audit finding D9-003 / A-001:
-// the struct had zero callers and no methods beyond `new()`. The actual
-// approval gating is performed by the standalone functions `check_approval`
-// and `check_approval_with_tty` above. The --yes and --approval-timeout
-// CLI flags flow directly into those functions without a wrapper struct.
+// ---------------------------------------------------------------------------
+// CliApprovalHandler — ApprovalHandler protocol adapter
+// ---------------------------------------------------------------------------
+
+/// Implements the apcore ApprovalHandler protocol so SDK consumers can pass
+/// a CLI-backed handler to `executor.set_approval_handler(handler)`.
+///
+/// Wraps the standalone `check_approval_with_tty` / `check_approval_with_timeout`
+/// functions; does not add state beyond the two configuration knobs.
+pub struct CliApprovalHandler {
+    /// Auto-approve without prompting the user.
+    pub auto_approve: bool,
+    /// Maximum seconds to wait for interactive approval (0 = wait indefinitely).
+    pub timeout_secs: u64,
+}
+
+impl CliApprovalHandler {
+    /// Create a new handler.
+    pub fn new(auto_approve: bool, timeout_secs: u64) -> Self {
+        Self {
+            auto_approve,
+            timeout_secs,
+        }
+    }
+
+    /// Request approval for a module, using the CLI interactive prompt.
+    /// Delegates to `check_approval_with_timeout`.
+    pub async fn request_approval(
+        &self,
+        module_def: &serde_json::Value,
+    ) -> Result<(), ApprovalError> {
+        check_approval_with_timeout(module_def, self.auto_approve, self.timeout_secs).await
+    }
+
+    /// Alias for `request_approval` (matches Python / TypeScript `check_approval` method name).
+    pub async fn check_approval(
+        &self,
+        module_def: &serde_json::Value,
+    ) -> Result<(), ApprovalError> {
+        self.request_approval(module_def).await
+    }
+}
+
+// Type aliases so callers can match by variant-like name (parity with Python/TS).
+/// Alias for [`ApprovalError`] — the denial variant. Use `ApprovalError::Denied` to match.
+pub type ApprovalDeniedError = ApprovalError;
+/// Alias for [`ApprovalError`] — the timeout variant. Use `ApprovalError::Timeout` to match.
+pub type ApprovalTimeoutError = ApprovalError;
 
 // ---------------------------------------------------------------------------
 // Unit tests
