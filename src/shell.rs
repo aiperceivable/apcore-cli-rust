@@ -563,7 +563,7 @@ pub fn generate_man_page(
     // .SH DESCRIPTION (using about text)
     if let Some(about) = cmd.and_then(|c| c.get_about()) {
         sections.push(".SH DESCRIPTION".to_string());
-        sections.push(roff_escape(&about.to_string()));
+        sections.push(roff_escape_block(&about.to_string()));
     } else {
         // Emit a stub DESCRIPTION section so it's always present
         sections.push(".SH DESCRIPTION".to_string());
@@ -606,7 +606,7 @@ pub fn generate_man_page(
                     sections.push(format!("\\fB{flag_str}\\fR \\fI{type_name}\\fR"));
                 }
                 if let Some(help) = arg.get_help() {
-                    sections.push(roff_escape(&help.to_string()));
+                    sections.push(roff_escape_block(&help.to_string()));
                 }
                 if let Some(default) = arg.get_default_values().first() {
                     if !is_flag {
@@ -720,11 +720,32 @@ pub fn cmd_man(
 // Full program man page generation
 // ---------------------------------------------------------------------------
 
-/// Escape a string for roff output.
+/// Escape a string for roff output (single-line / inline context).
 fn roff_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('-', "\\-")
         .replace('\'', "\\(aq")
+}
+
+/// Escape multi-line text for roff.
+///
+/// Applies `roff_escape` for character-level escaping, then prefixes any
+/// line that starts with `.` with the zero-width glyph `\&` to prevent
+/// groff/mandoc from treating the leading period as a control-request
+/// initiator.  Use this variant for module about/help strings that may
+/// contain prose spanning multiple lines.
+fn roff_escape_block(s: &str) -> String {
+    roff_escape(s)
+        .lines()
+        .map(|line| {
+            if line.starts_with('.') {
+                format!("\\&{line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Pre-parse `--man` from raw argv. Returns true if present.
@@ -766,7 +787,7 @@ pub fn build_program_man_page(
     ));
 
     s.push(".SH DESCRIPTION".to_string());
-    s.push(roff_escape(&desc));
+    s.push(roff_escape_block(&desc));
 
     // Global options
     let global_args: Vec<_> = cmd
@@ -780,7 +801,7 @@ pub fn build_program_man_page(
                 s.push(".TP".to_string());
                 s.push(format!("\\fB\\-\\-{}\\fR", roff_escape(long)));
                 if let Some(help) = arg.get_help() {
-                    s.push(roff_escape(&help.to_string()));
+                    s.push(roff_escape_block(&help.to_string()));
                 }
             }
         }
@@ -799,7 +820,7 @@ pub fn build_program_man_page(
             s.push(".TP".to_string());
             s.push(format!("\\fB{prog_name} {}\\fR", roff_escape(name)));
             if !about.is_empty() {
-                s.push(roff_escape(&about));
+                s.push(roff_escape_block(&about));
             }
 
             // Command args
@@ -812,7 +833,7 @@ pub fn build_program_man_page(
                     s.push(".TP".to_string());
                     s.push(format!("\\fB\\-\\-{}\\fR", roff_escape(long)));
                     if let Some(help) = arg.get_help() {
-                        s.push(roff_escape(&help.to_string()));
+                        s.push(roff_escape_block(&help.to_string()));
                     }
                     s.push(".RE".to_string());
                 }
@@ -834,7 +855,7 @@ pub fn build_program_man_page(
                     roff_escape(nested.get_name())
                 ));
                 if !nested_about.is_empty() {
-                    s.push(roff_escape(&nested_about));
+                    s.push(roff_escape_block(&nested_about));
                 }
                 for arg in nested.get_arguments() {
                     if arg.is_hide_set() || arg.get_id().as_str() == "help" {
@@ -845,7 +866,7 @@ pub fn build_program_man_page(
                         s.push(".TP".to_string());
                         s.push(format!("\\fB\\-\\-{}\\fR", roff_escape(long)));
                         if let Some(help) = arg.get_help() {
-                            s.push(roff_escape(&help.to_string()));
+                            s.push(roff_escape_block(&help.to_string()));
                         }
                         s.push(".RE".to_string());
                     }
@@ -1279,6 +1300,23 @@ mod tests {
     #[test]
     fn test_roff_escape_single_quote() {
         assert_eq!(roff_escape("it's"), "it\\(aqs");
+    }
+
+    #[test]
+    fn test_roff_escape_block_leading_dot_defused() {
+        let text = "first line\n.NET Framework\nend";
+        let escaped = roff_escape_block(text);
+        assert!(
+            escaped.contains("\\&.NET"),
+            "leading dot must be prefixed with \\& to prevent roff control: {escaped:?}"
+        );
+    }
+
+    #[test]
+    fn test_roff_escape_block_no_leading_dot_unchanged() {
+        let text = "normal line\nalso normal";
+        let escaped = roff_escape_block(text);
+        assert_eq!(escaped, "normal line\nalso normal");
     }
 
     // --- has_man_flag ---
