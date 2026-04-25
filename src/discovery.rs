@@ -281,13 +281,6 @@ pub(crate) fn register_exec_command(cli: Command) -> Command {
     cli.subcommand(crate::cli::exec_command())
 }
 
-/// Attach the `validate` subcommand to the given command. Delegates to
-/// [`crate::validate::register_validate_command`] so there is a single
-/// definition of the validate builder.
-pub(crate) fn register_validate_command(cli: Command) -> Command {
-    crate::validate::register_validate_command(cli)
-}
-
 // ---------------------------------------------------------------------------
 // register_discovery_commands (backward-compat wrapper)
 // ---------------------------------------------------------------------------
@@ -297,7 +290,7 @@ pub(crate) fn register_validate_command(cli: Command) -> Command {
 /// **Retained for backward compatibility.** FE-13 integration should use the
 /// per-subcommand registrars ([`register_list_command`],
 /// [`register_describe_command`], [`register_exec_command`],
-/// [`register_validate_command`]) so that include/exclude filtering can be
+/// [`crate::validate::register_validate_command`]) so that include/exclude filtering can be
 /// applied per subcommand. This wrapper preserves the pre-FE-13 call site
 /// shape (root-level `list` + `describe` attachment) for callers that have not
 /// yet migrated.
@@ -1002,7 +995,7 @@ mod tests {
     #[test]
     fn test_register_validate_command_attaches_validate() {
         let root = Command::new("apcli");
-        let cmd = register_validate_command(root);
+        let cmd = crate::validate::register_validate_command(root);
         assert!(
             find_subcommand(&cmd, "validate").is_some(),
             "'validate' subcommand must be attached"

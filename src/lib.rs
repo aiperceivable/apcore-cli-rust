@@ -235,7 +235,7 @@ pub fn register_apcli_subcommands(
         ("list", Box::new(discovery::register_list_command)),
         ("describe", Box::new(discovery::register_describe_command)),
         ("exec", Box::new(discovery::register_exec_command)),
-        ("validate", Box::new(discovery::register_validate_command)),
+        ("validate", Box::new(validate::register_validate_command)),
         ("init", Box::new(init_cmd::register_init_command)),
         ("health", Box::new(system_cmd::register_health_command)),
         ("usage", Box::new(system_cmd::register_usage_command)),
