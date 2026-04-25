@@ -1174,10 +1174,21 @@ pub async fn dispatch_module(
     // 7. Approval gate (exit 46 on denial/timeout).
     // Resolve the timeout: --approval-timeout flag > cli.approval_timeout
     // config default > hardcoded 60s. Non-numeric values fall back to the
-    // default rather than failing the dispatch.
+    // next tier rather than failing the dispatch.
     let approval_timeout_secs = approval_timeout_arg
         .as_deref()
         .and_then(|s| s.parse::<u64>().ok())
+        .or_else(|| {
+            // Tier 2: read cli.approval_timeout from apcore.yaml when the flag
+            // was not supplied, honouring the documented precedence order.
+            let resolver = crate::config::ConfigResolver::new(
+                None,
+                Some(std::path::PathBuf::from("apcore.yaml")),
+            );
+            resolver
+                .resolve("cli.approval_timeout", None, None)
+                .and_then(|s| s.parse::<u64>().ok())
+        })
         .unwrap_or(crate::approval::DEFAULT_APPROVAL_TIMEOUT_SECS);
     let module_json = serde_json::to_value(&module_def).unwrap_or_default();
     if let Err(e) = crate::approval::check_approval_with_timeout(
