@@ -213,7 +213,9 @@ apcore-cli [OPTIONS] COMMAND [ARGS]
 
 ### Built-in Commands
 
-apcore-cli ships with 14 built-in subcommands (canonical list from `BUILTIN_COMMANDS` in `src/cli.rs`). They fall into four groups:
+apcore-cli ships with 13 built-in subcommands, all reachable under the reserved `apcli` group (canonical list: `APCLI_SUBCOMMAND_NAMES` in `src/builtin_group.rs`). The reserved top-level group name is `RESERVED_GROUP_NAMES = ["apcli"]`. They fall into four groups:
+
+> **v0.7 note:** The previous 14-entry `BUILTIN_COMMANDS` constant in `src/cli.rs` was retired and is now `#[deprecated]`. Use `APCLI_SUBCOMMAND_NAMES` for the canonical list and `RESERVED_GROUP_NAMES` for collision detection.
 
 **Module invocation**
 
@@ -396,16 +398,21 @@ Organized by source module:
 
 - **`approval::`** `check_approval`, `check_approval_with_tty`
 - **`cli::`** `set_verbose_help`, `is_verbose_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `exec_command`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`
-- **`discovery::`** `validate_tag`, `cmd_list`, `cmd_list_enhanced`, `cmd_describe`, `register_discovery_commands`
+- **`discovery::`** `validate_tag`, `cmd_list`, `cmd_list_enhanced`, `cmd_describe`
+  - Per-subcommand registrars (v0.7+, preferred): `register_list_command`, `register_describe_command`, `register_exec_command`, `register_validate_command`
+  - Batch shim (deprecated, use per-subcommand registrars): `register_discovery_commands`
 - **`display_helpers::`** `get_display`, `get_cli_display_fields`
 - **`exposure::`** `glob_match`
 - **`init_cmd::`** `init_command`, `handle_init`
 - **`output::`** `resolve_format`, `format_module_list`, `format_module_list_with_deps`, `format_module_detail`, `format_exec_result`
 - **`ref_resolver::`** `resolve_refs`
 - **`schema_parser::`** `prop_name_to_flag_name`, `extract_help_with_limit`, `map_type`, `schema_to_clap_args`, `schema_to_clap_args_with_limit`, `reconvert_enum_values`
-- **`shell::`** `register_shell_commands`, `completion_command`, `cmd_completion`, `man_command`, `build_synopsis`, `generate_man_page`, `cmd_man`, `has_man_flag`, `build_program_man_page`, `generate_grouped_bash_completion`, `generate_grouped_zsh_completion`, `generate_grouped_fish_completion`
+- **`shell::`** `register_completion_command`, `completion_command`, `cmd_completion`, `man_command`, `build_synopsis`, `generate_man_page`, `cmd_man`, `has_man_flag`, `build_program_man_page`, `generate_grouped_bash_completion`, `generate_grouped_zsh_completion`, `generate_grouped_fish_completion`
+  - Batch shim (deprecated): `register_shell_commands`
 - **`strategy::`** `describe_pipeline_command`, `register_pipeline_command`, `dispatch_describe_pipeline`
-- **`system_cmd::`** `register_system_commands`, `dispatch_health`, `dispatch_usage`, `dispatch_enable`, `dispatch_disable`, `dispatch_reload`, `dispatch_config`
+- **`system_cmd::`** `dispatch_health`, `dispatch_usage`, `dispatch_enable`, `dispatch_disable`, `dispatch_reload`, `dispatch_config`
+  - Per-subcommand registrars (v0.7+, preferred): `register_health_command`, `register_usage_command`, `register_enable_command`, `register_disable_command`, `register_reload_command`, `register_config_command`
+  - Batch shim (deprecated): `register_system_commands`
 - **`validate::`** `validate_command`, `register_validate_command`, `dispatch_validate`, `format_preflight_result`
 
 ### Traits
