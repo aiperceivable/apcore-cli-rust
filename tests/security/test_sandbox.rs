@@ -52,10 +52,10 @@ async fn test_sandbox_disabled_passes_through_to_executor() {
 #[ignore = "requires the compiled apcore-cli binary to be present at current_exe(); \
             run manually after `cargo build` with `cargo test -- --ignored`"]
 async fn test_sandbox_enabled_spawns_subprocess() {
-    // Sandbox::new(true, 5000) routes execution through a subprocess.
+    // Sandbox::new(true, 5) routes execution through a subprocess (5 second timeout).
     // The enabled branch ignores the executor argument — the subprocess
     // loads its own apcore environment from inherited APCORE_* env vars.
-    let sandbox = Sandbox::new(true, 5000);
+    let sandbox = Sandbox::new(true, 5);
     assert!(sandbox.is_enabled(), "sandbox must report enabled");
     let executor = make_test_executor();
     let result = sandbox
@@ -77,12 +77,12 @@ async fn test_sandbox_enabled_spawns_subprocess() {
 #[tokio::test]
 async fn test_sandbox_enabled_timeout_returns_error() {
     // A very short timeout with enabled=true must yield Timeout or SpawnFailed.
-    let sandbox = Sandbox::new(true, 1); // 1 ms timeout
+    let sandbox = Sandbox::new(true, 1); // 1 second timeout — short enough to trigger quickly
     let executor = make_test_executor();
     let result = sandbox.execute("slow.module", json!({}), &executor).await;
     assert!(
         result.is_err(),
-        "sandbox with 1ms timeout must return an error"
+        "sandbox with 1s timeout must return an error"
     );
 }
 
@@ -109,7 +109,7 @@ async fn test_nonzero_exit_carries_stderr() {
             run manually after `cargo build --bin apcore-cli` with `cargo test -- --ignored`"]
 async fn test_sandbox_nonzero_exit_returns_error() {
     // A subprocess exiting non-zero must yield NonZeroExit.
-    let sandbox = Sandbox::new(true, 5000);
+    let sandbox = Sandbox::new(true, 5); // 5 second timeout
     let executor = make_test_executor();
     let result = sandbox
         .execute("__nonexistent_module__", json!({}), &executor)

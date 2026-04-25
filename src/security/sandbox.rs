@@ -48,8 +48,11 @@ pub enum ModuleExecutionError {
     },
 
     /// The subprocess timed out.
-    #[error("module '{module_id}' timed out after {timeout_ms}ms")]
-    Timeout { module_id: String, timeout_ms: u64 },
+    #[error("module '{module_id}' timed out after {timeout_secs}s")]
+    Timeout {
+        module_id: String,
+        timeout_secs: u64,
+    },
 
     /// The subprocess output could not be parsed.
     #[error("failed to parse sandbox output for module '{module_id}': {reason}")]
@@ -79,7 +82,7 @@ pub enum ModuleExecutionError {
 /// the execution and communicates results via JSON over stdin/stdout.
 pub struct Sandbox {
     enabled: bool,
-    timeout_ms: u64,
+    timeout_secs: u64,
 }
 
 impl Sandbox {
@@ -87,11 +90,11 @@ impl Sandbox {
     ///
     /// # Arguments
     /// * `enabled`    — enable subprocess isolation
-    /// * `timeout_ms` — subprocess timeout in milliseconds (0 = use default 300 s)
-    pub fn new(enabled: bool, timeout_ms: u64) -> Self {
+    /// * `timeout_secs` — subprocess timeout in seconds (0 = use default 300 s)
+    pub fn new(enabled: bool, timeout_secs: u64) -> Self {
         Self {
             enabled,
-            timeout_ms,
+            timeout_secs,
         }
     }
 
@@ -211,8 +214,8 @@ impl Sandbox {
         }
 
         // Await with timeout, collecting stdout/stderr up to the cap.
-        let timeout_dur = if self.timeout_ms > 0 {
-            Duration::from_millis(self.timeout_ms)
+        let timeout_dur = if self.timeout_secs > 0 {
+            Duration::from_secs(self.timeout_secs)
         } else {
             Duration::from_secs(300)
         };
@@ -249,7 +252,7 @@ impl Sandbox {
         .await
         .map_err(|_| ModuleExecutionError::Timeout {
             module_id: module_id.to_string(),
-            timeout_ms: self.timeout_ms,
+            timeout_secs: self.timeout_secs,
         })??;
 
         let (stdout_bytes, stderr_bytes, status) = collect_result;
@@ -298,10 +301,10 @@ mod tests {
         // Registry + Config + module discovery), so we verify the API surface
         // accepts the executor parameter. End-to-end passthrough is exercised
         // by tests/test_e2e.rs which constructs a real executor.
-        let sandbox = Sandbox::new(false, 5_000);
-        // Compile-time check: signature accepts (&str, Value, &apcore::Executor).
-        // The body is dead code at runtime; it exists only to keep the type
-        // checker honest about the new signature.
+        let sandbox = Sandbox::new(false, 5); // 5 seconds (unit is now seconds per A-D-006 fix)
+                                              // Compile-time check: signature accepts (&str, Value, &apcore::Executor).
+                                              // The body is dead code at runtime; it exists only to keep the type
+                                              // checker honest about the new signature.
         let _check: fn(&Sandbox, &str, Value, &apcore::Executor) = |s, id, v, e| {
             drop(s.execute(id, v, e));
         };
@@ -310,13 +313,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sandbox_enabled_path_still_runs_subprocess() {
-        // Use a 1 ms timeout — spawn a real subprocess that will time out
-        // immediately. We don't actually need a working executor here because
-        // the enabled branch ignores it (the subprocess loads its own apcore
-        // environment from inherited APCORE_* env vars). To avoid constructing
-        // a real Executor in unit tests, we skip the runtime invocation and
-        // only verify the API contract via a compile-time function pointer.
-        let sandbox = Sandbox::new(true, 1);
+        // Use a 1-second timeout — still quick enough for a unit compile-check.
+        // We don't actually invoke execute() here; just verify the API surface.
+        let sandbox = Sandbox::new(true, 1); // 1 second per A-D-006 fix (was 1ms)
         let _check: fn(&Sandbox, &str, Value, &apcore::Executor) = |s, id, v, e| {
             drop(s.execute(id, v, e));
         };
