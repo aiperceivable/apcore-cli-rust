@@ -535,26 +535,42 @@ pub fn collect_input_from_reader<R: Read>(
     Ok(merged)
 }
 
-/// Merge CLI keyword arguments with optional STDIN JSON.
+/// Merge CLI keyword arguments with optional JSON input.
 ///
 /// Resolution order (highest priority first):
 /// 1. CLI flags (non-`Null` values in `cli_kwargs`)
-/// 2. STDIN JSON (when `stdin_flag` is `Some("-")`)
+/// 2. JSON from `stdin_flag`:
+///    - `Some("-")` → read from stdin
+///    - `Some(path)` → read from file at `path`
+///    - `None` → no JSON input, return CLI kwargs only
 ///
 /// # Arguments
-/// * `stdin_flag`  — `Some("-")` to read from STDIN, `None` to skip
+/// * `stdin_flag`  — `Some("-")` for stdin, `Some(path)` for a file, `None` to skip
 /// * `cli_kwargs`  — map of flag name → value (`Null` values are ignored)
-/// * `large_input` — if `false`, reject STDIN payloads exceeding 10 MiB
+/// * `large_input` — if `false`, reject payloads exceeding 10 MiB
 ///
 /// # Errors
-/// Returns `CliError` (exit code 2) on oversized input, invalid JSON, or
-/// non-object JSON.
+/// Returns `CliError` (exit code 2) on oversized input, invalid JSON, non-object
+/// JSON, or file open failures.
 pub fn collect_input(
     stdin_flag: Option<&str>,
     cli_kwargs: HashMap<String, Value>,
     large_input: bool,
 ) -> Result<HashMap<String, Value>, CliError> {
-    collect_input_from_reader(stdin_flag, cli_kwargs, large_input, std::io::stdin())
+    match stdin_flag {
+        None | Some("") => {
+            collect_input_from_reader(None, cli_kwargs, large_input, std::io::stdin())
+        }
+        Some("-") => {
+            collect_input_from_reader(Some("-"), cli_kwargs, large_input, std::io::stdin())
+        }
+        Some(path) => {
+            let file = std::fs::File::open(path).map_err(|e| {
+                CliError::StdinRead(format!("cannot open input file '{}': {}", path, e))
+            })?;
+            collect_input_from_reader(Some("-"), cli_kwargs, large_input, file)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1524,6 +1540,38 @@ mod tests {
         kwargs.insert("foo".to_string(), json!("bar"));
         let result = collect_input(None, kwargs.clone(), false).unwrap();
         assert_eq!(result.get("foo"), Some(&json!("bar")));
+    }
+
+    #[test]
+    fn test_collect_input_file_path_reads_json() {
+        use serde_json::json;
+        use std::io::Write;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, r#"{{"port": 8080}}"#).unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let result = collect_input(Some(&path), HashMap::new(), false).unwrap();
+        assert_eq!(result.get("port"), Some(&json!(8080)));
+    }
+
+    #[test]
+    fn test_collect_input_file_path_cli_overrides_file() {
+        use serde_json::json;
+        use std::io::Write;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, r#"{{"a": 1, "b": 2}}"#).unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let mut kwargs = HashMap::new();
+        kwargs.insert("a".to_string(), json!(99));
+        let result = collect_input(Some(&path), kwargs, false).unwrap();
+        assert_eq!(result.get("a"), Some(&json!(99)), "CLI must override file");
+        assert_eq!(result.get("b"), Some(&json!(2)));
+    }
+
+    #[test]
+    fn test_collect_input_file_path_missing_returns_error() {
+        let err =
+            collect_input(Some("/nonexistent/path/data.json"), HashMap::new(), false).unwrap_err();
+        assert!(matches!(err, CliError::StdinRead(_)));
     }
 
     // ---------------------------------------------------------------------------
