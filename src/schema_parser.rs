@@ -18,6 +18,7 @@ use tracing::warn;
 pub const RESERVED_PROPERTY_NAMES: &[&str] = &[
     "input",
     "yes",
+    "large_input",
     "format",
     "fields",
     "sandbox",
@@ -1154,5 +1155,26 @@ mod tests {
                 "expected ReservedPropertyName error for '{reserved}'"
             );
         }
+    }
+
+    #[test]
+    fn test_reserved_property_name_large_input_rejected() {
+        // D11-003: `large_input` must be reserved to match Python and TS impls.
+        // Without this guard, schemas using "large_input" would silently shadow
+        // the host CLI's --large-input flag.
+        assert!(
+            RESERVED_PROPERTY_NAMES.contains(&"large_input"),
+            "RESERVED_PROPERTY_NAMES must include 'large_input' for cross-language parity"
+        );
+        let schema: Value =
+            serde_json::from_str(r#"{"properties": {"large_input": {"type": "string"}}}"#).unwrap();
+        let result = schema_to_clap_args(&schema);
+        assert!(
+            matches!(
+                result,
+                Err(SchemaParserError::ReservedPropertyName { ref name }) if name == "large_input"
+            ),
+            "expected ReservedPropertyName error for 'large_input', got {result:?}"
+        );
     }
 }
