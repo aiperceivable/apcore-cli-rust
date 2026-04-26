@@ -197,10 +197,18 @@ pub fn cmd_list_enhanced(
         }
     }
 
-    // F7: Sort. Currently only "id" is honored — see the value_parser on
-    // the --sort flag. Other names previously passed through with only a
-    // warning (review #13); the clap parser now rejects them upstream.
-    let _ = opts.sort.unwrap_or("id");
+    // F7: Sort. The clap value_parser accepts ["id", "calls", "errors",
+    // "latency"] for cross-SDK parity (D11-006). Usage-based sorts require
+    // system.usage modules registered in the registry; they are not wired
+    // yet, so we emit a runtime warning and fall back to id, matching
+    // Python's logger.warning at apcore-cli-python/src/apcore_cli/discovery.py:206.
+    let requested_sort = opts.sort.unwrap_or("id");
+    if requested_sort != "id" {
+        tracing::warn!(
+            "Usage data unavailable; --sort {} ignored, sorting by id.",
+            requested_sort
+        );
+    }
     modules.sort_by(|a, b| {
         let aid = a.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
         let bid = b.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -345,6 +353,9 @@ fn list_command() -> Command {
                 .long("annotation")
                 .short('a')
                 .action(ArgAction::Append)
+                // Cross-SDK parity (D11-006): Python and TS accept the full
+                // apcore >= 0.19.0 ModuleAnnotations set including
+                // "paginated". Rust now matches.
                 .value_parser([
                     "destructive",
                     "requires-approval",
@@ -352,6 +363,7 @@ fn list_command() -> Command {
                     "streaming",
                     "cacheable",
                     "idempotent",
+                    "paginated",
                 ])
                 .value_name("ANN")
                 .help("Filter by annotation flag (AND logic). Repeatable."),
@@ -359,15 +371,15 @@ fn list_command() -> Command {
         .arg(
             Arg::new("sort")
                 .long("sort")
-                // Usage-based sorts (calls/errors/latency) are not yet wired
-                // — they require system.usage modules in the registry. Until
-                // then we restrict the value set to "id" so the flag's
-                // accepted values match what cmd_list_enhanced actually
-                // honors (see review #13).
-                .value_parser(["id"])
+                // Cross-SDK parity (D11-006): Python and TS accept
+                // [id, calls, errors, latency] and emit a runtime warning
+                // when usage data is unavailable for the non-id sorts. Rust
+                // now matches; cmd_list_enhanced emits the warning and falls
+                // back to id when usage modules are not registered.
+                .value_parser(["id", "calls", "errors", "latency"])
                 .default_value("id")
                 .value_name("FIELD")
-                .help("Sort order. Default: id."),
+                .help("Sort order. Default: id. Non-id values require usage data; warns and falls back when unavailable."),
         )
         .arg(
             Arg::new("reverse")
