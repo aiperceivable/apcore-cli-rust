@@ -73,24 +73,6 @@ pub const KNOWN_BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
 // register_shell_commands
 // ---------------------------------------------------------------------------
 
-/// Attach the `completion` and `man` subcommands to the given root command and
-/// return it. Uses the clap v4 builder idiom (consume + return).
-///
-/// **Retained for backward compatibility.** FE-13 integration should use the
-/// per-subcommand registrars ([`register_completion_command`] and
-/// [`register_man_command`]) so include/exclude filtering can be applied
-/// per subcommand. Note that under FE-13 only `completion` moves under the
-/// `apcli` group; `man` is a root-level meta command (not in the FE-13
-/// subcommand table per spec §4.1).
-///
-/// * `completion <shell>` — emit shell completion script to stdout
-///   Supported shells: `bash`, `zsh`, `fish`, `powershell`, `elvish`
-/// * `man`                — emit a man page to stdout
-pub fn register_shell_commands(cli: Command, prog_name: &str) -> Command {
-    let cli = register_completion_command(cli, prog_name);
-    register_man_command(cli)
-}
-
 /// Attach the `completion` subcommand to the given command. Returns the
 /// command with the subcommand added. `prog_name` is accepted for API
 /// symmetry and future dynamic use; the builder itself is currently static.
@@ -1352,30 +1334,6 @@ mod tests {
         let cmd = clap::Command::new("t").about("Default");
         let roff = build_program_man_page(&cmd, "t", "0.1.0", Some("Custom"), None);
         assert!(roff.contains("Custom"));
-    }
-
-    // --- Task 4: register_shell_commands ---
-
-    #[test]
-    fn test_register_shell_commands_adds_completion() {
-        let root = Command::new("apcore-cli");
-        let cmd = register_shell_commands(root, "apcore-cli");
-        let names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
-        assert!(
-            names.contains(&"completion"),
-            "must have 'completion' subcommand, got {names:?}"
-        );
-    }
-
-    #[test]
-    fn test_register_shell_commands_adds_man() {
-        let root = Command::new("apcore-cli");
-        let cmd = register_shell_commands(root, "apcore-cli");
-        let names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
-        assert!(
-            names.contains(&"man"),
-            "must have 'man' subcommand, got {names:?}"
-        );
     }
 
     #[test]

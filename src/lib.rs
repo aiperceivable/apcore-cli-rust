@@ -205,12 +205,15 @@ pub use security::{
 
 // Shell integration (FE-06): completion + man page builders.
 // build_program_man_page is the user-facing full-program man entry point;
-// per-command builders (cmd_completion, cmd_man, has_man_flag, completion_command,
-// register_shell_commands) are kept for downstream embedders that build their
-// own root command tree.
+// per-command builders (cmd_completion, cmd_man, has_man_flag, completion_command)
+// are kept for downstream embedders that build their own root command tree.
+// Embedders compose them directly: each registers the corresponding subcommand
+// onto a clap Command. The previous register_shell_commands wrapper was a
+// 2-line passthrough with no production callers and was removed in v0.7.0
+// (D9-003) — embedders should call register_completion_command and
+// register_man_command directly.
 pub use shell::{
-    build_program_man_page, cmd_completion, cmd_man, completion_command, has_man_flag,
-    register_shell_commands, ShellError,
+    build_program_man_page, cmd_completion, cmd_man, completion_command, has_man_flag, ShellError,
 };
 
 // FE-11 system commands constant (used by downstream consumers to inspect

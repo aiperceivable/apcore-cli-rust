@@ -3,7 +3,7 @@
 
 mod common;
 
-use apcore_cli::shell::{register_shell_commands, ShellError};
+use apcore_cli::shell::{register_completion_command, register_man_command, ShellError};
 use clap::Command;
 use clap_complete::Shell;
 
@@ -16,9 +16,13 @@ fn make_root_cmd() -> Command {
         .subcommand(Command::new("describe").about("Show module metadata and schema"))
 }
 
+// Embedders compose the registrars directly (see lib.rs note re: D9-003 removal
+// of the register_shell_commands wrapper). These tests verify the same
+// post-composition shape that the wrapper produced.
+
 #[test]
-fn test_register_shell_commands_adds_completion() {
-    let root = register_shell_commands(make_root_cmd(), "apcore-cli");
+fn test_compose_registrars_adds_completion() {
+    let root = register_man_command(register_completion_command(make_root_cmd(), "apcore-cli"));
     let names: Vec<_> = root.get_subcommands().map(|c| c.get_name()).collect();
     assert!(
         names.contains(&"completion"),
@@ -27,8 +31,8 @@ fn test_register_shell_commands_adds_completion() {
 }
 
 #[test]
-fn test_register_shell_commands_adds_man() {
-    let root = register_shell_commands(make_root_cmd(), "apcore-cli");
+fn test_compose_registrars_adds_man() {
+    let root = register_man_command(register_completion_command(make_root_cmd(), "apcore-cli"));
     let names: Vec<_> = root.get_subcommands().map(|c| c.get_name()).collect();
     assert!(
         names.contains(&"man"),
