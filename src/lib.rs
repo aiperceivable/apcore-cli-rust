@@ -147,7 +147,8 @@ pub fn register_apcli_subcommands(
 
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{
-    check_approval, ApprovalDeniedError, ApprovalError, ApprovalTimeoutError, CliApprovalHandler,
+    check_approval, ApprovalDeniedError, ApprovalError, ApprovalResult, ApprovalStatus,
+    ApprovalTimeoutError, CliApprovalHandler,
 };
 
 // Built-in command group (FE-13)

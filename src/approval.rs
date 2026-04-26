@@ -299,14 +299,88 @@ pub async fn check_approval_with_timeout(
 }
 
 // ---------------------------------------------------------------------------
+// ApprovalResult — apcore ApprovalHandler protocol shape (D10-006)
+// ---------------------------------------------------------------------------
+
+/// Outcome of an [`CliApprovalHandler::request_approval`] / `check_approval`
+/// invocation. Mirrors the apcore ApprovalHandler protocol shape that Python
+/// and TypeScript SDKs return as a `dict { status, approved_by | reason }`
+/// duck-typed against `ApprovalResult`.
+///
+/// Cross-SDK parity (D10-006, 2026-04-26): previously the Rust handler
+/// returned `Result<(), ApprovalError>`, which meant a Rust handler instance
+/// could not satisfy the apcore protocol callback signature. Callers of the
+/// standalone [`check_approval`] / [`check_approval_with_timeout`] still get
+/// the typed-error form for compose-friendly error chaining; the
+/// protocol-callback path goes through `CliApprovalHandler` and returns
+/// `ApprovalResult`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalStatus {
+    /// User (or a bypass mechanism) authorised the call.
+    Approved,
+    /// User denied, or no TTY was available.
+    Rejected,
+    /// The interactive prompt did not receive a response in time.
+    Timeout,
+}
+
+/// Result of an approval request. Equivalent to the Python/TS protocol shape
+/// `{ status, approved_by, reason }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalResult {
+    /// Approval state.
+    pub status: ApprovalStatus,
+    /// Identifier of the approver when `status == Approved`. Standard values
+    /// match Python parity: `"auto_approve"` (--yes flag),
+    /// `"env_auto_approve"` (`APCORE_CLI_AUTO_APPROVE=1`), or `"tty_user"`
+    /// (interactive prompt). `None` for non-Approved results.
+    pub approved_by: Option<String>,
+    /// Human-readable reason when `status == Rejected` or `Timeout`.
+    /// `None` for `Approved` results.
+    pub reason: Option<String>,
+}
+
+impl ApprovalResult {
+    /// Convenience constructor for the approved-via-flag case.
+    pub fn approved_via(approved_by: impl Into<String>) -> Self {
+        Self {
+            status: ApprovalStatus::Approved,
+            approved_by: Some(approved_by.into()),
+            reason: None,
+        }
+    }
+
+    /// Convenience constructor for rejection.
+    pub fn rejected(reason: impl Into<String>) -> Self {
+        Self {
+            status: ApprovalStatus::Rejected,
+            approved_by: None,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Convenience constructor for timeout.
+    pub fn timed_out(reason: impl Into<String>) -> Self {
+        Self {
+            status: ApprovalStatus::Timeout,
+            approved_by: None,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // CliApprovalHandler — ApprovalHandler protocol adapter
 // ---------------------------------------------------------------------------
 
 /// Implements the apcore ApprovalHandler protocol so SDK consumers can pass
 /// a CLI-backed handler to `executor.set_approval_handler(handler)`.
 ///
-/// Wraps the standalone `check_approval_with_tty` / `check_approval_with_timeout`
-/// functions; does not add state beyond the two configuration knobs.
+/// `request_approval` and `check_approval` return [`ApprovalResult`] for
+/// cross-SDK protocol parity (D10-006). The standalone module-level
+/// `check_approval` / `check_approval_with_timeout` continue to return
+/// `Result<(), ApprovalError>` for callers that prefer typed-error
+/// semantics in pure Rust code.
 pub struct CliApprovalHandler {
     /// Auto-approve without prompting the user.
     pub auto_approve: bool,
@@ -324,19 +398,79 @@ impl CliApprovalHandler {
     }
 
     /// Request approval for a module, using the CLI interactive prompt.
-    /// Delegates to `check_approval_with_timeout`.
-    pub async fn request_approval(
-        &self,
-        module_def: &serde_json::Value,
-    ) -> Result<(), ApprovalError> {
-        check_approval_with_timeout(module_def, self.auto_approve, self.timeout_secs).await
+    ///
+    /// Returns an [`ApprovalResult`] matching the Python/TS protocol shape:
+    /// `Approved/auto_approve` for the `--yes` flag bypass,
+    /// `Approved/env_auto_approve` for `APCORE_CLI_AUTO_APPROVE=1`,
+    /// `Approved/tty_user` for an interactive yes,
+    /// `Rejected` for non-TTY or user denial,
+    /// `Timeout` when the prompt window expires.
+    ///
+    /// Mirrors the bypass-priority and message logic of
+    /// [`check_approval_with_tty_timeout`] but folded into the protocol-shape
+    /// return path.
+    pub async fn request_approval(&self, module_def: &serde_json::Value) -> ApprovalResult {
+        let module_id = get_module_id(module_def);
+
+        // Skip if approval is not required.
+        if !get_requires_approval(module_def) {
+            return ApprovalResult::approved_via("not_required");
+        }
+
+        // Bypass: --yes flag (highest priority).
+        if self.auto_approve {
+            tracing::info!(
+                "Approval bypassed via --yes flag for module '{}'.",
+                module_id
+            );
+            return ApprovalResult::approved_via("auto_approve");
+        }
+
+        // Bypass: APCORE_CLI_AUTO_APPROVE env var.
+        match std::env::var("APCORE_CLI_AUTO_APPROVE").as_deref() {
+            Ok("1") => {
+                tracing::info!(
+                    "Approval bypassed via APCORE_CLI_AUTO_APPROVE for module '{}'.",
+                    module_id
+                );
+                return ApprovalResult::approved_via("env_auto_approve");
+            }
+            Ok("") | Err(_) => {}
+            Ok(val) => {
+                tracing::warn!(
+                    "APCORE_CLI_AUTO_APPROVE is set to '{}', expected '1'. Ignoring.",
+                    val
+                );
+            }
+        }
+
+        // Non-TTY rejection.
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() {
+            tracing::error!(
+                "Non-interactive environment, no bypass provided for module '{}'.",
+                module_id
+            );
+            return ApprovalResult::rejected(format!(
+                "Module '{module_id}' requires approval but no interactive terminal is available. \
+                 Use --yes or set APCORE_CLI_AUTO_APPROVE=1 to bypass."
+            ));
+        }
+
+        // TTY prompt with caller-specified timeout.
+        let message = get_approval_message(module_def, &module_id);
+        match prompt_with_timeout(&module_id, &message, self.timeout_secs).await {
+            Ok(()) => ApprovalResult::approved_via("tty_user"),
+            Err(ApprovalError::Timeout { seconds, .. }) => ApprovalResult::timed_out(format!(
+                "Approval prompt timed out after {seconds} seconds."
+            )),
+            Err(_) => ApprovalResult::rejected("User denied approval".to_string()),
+        }
     }
 
-    /// Alias for `request_approval` (matches Python / TypeScript `check_approval` method name).
-    pub async fn check_approval(
-        &self,
-        module_def: &serde_json::Value,
-    ) -> Result<(), ApprovalError> {
+    /// Alias for [`request_approval`] (matches the Python / TypeScript
+    /// `check_approval` method name on the handler).
+    pub async fn check_approval(&self, module_def: &serde_json::Value) -> ApprovalResult {
         self.request_approval(module_def).await
     }
 }
@@ -787,5 +921,78 @@ mod tests {
             }
             other => panic!("expected Timeout with seconds=3, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // CliApprovalHandler — ApprovalResult shape (D10-006)
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handler_returns_approved_via_auto_approve_for_yes_flag() {
+        let handler = CliApprovalHandler::new(true, 60);
+        let result = handler.request_approval(&module(true)).await;
+        assert_eq!(result.status, ApprovalStatus::Approved);
+        assert_eq!(result.approved_by.as_deref(), Some("auto_approve"));
+        assert!(result.reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn handler_returns_approved_not_required_when_no_annotation() {
+        let handler = CliApprovalHandler::new(false, 60);
+        let result = handler.request_approval(&module(false)).await;
+        assert_eq!(result.status, ApprovalStatus::Approved);
+        assert_eq!(result.approved_by.as_deref(), Some("not_required"));
+    }
+
+    #[test]
+    fn handler_returns_approved_via_env_for_one_value() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handler = CliApprovalHandler::new(false, 60);
+        let result = rt.block_on(handler.request_approval(&module(true)));
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        assert_eq!(result.status, ApprovalStatus::Approved);
+        assert_eq!(result.approved_by.as_deref(), Some("env_auto_approve"));
+    }
+
+    #[test]
+    fn handler_yes_flag_priority_over_env() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe { std::env::set_var("APCORE_CLI_AUTO_APPROVE", "1") };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handler = CliApprovalHandler::new(true, 60);
+        let result = rt.block_on(handler.request_approval(&module(true)));
+        unsafe { std::env::remove_var("APCORE_CLI_AUTO_APPROVE") };
+        // Both bypass paths qualify; --yes takes priority — must say
+        // "auto_approve" not "env_auto_approve".
+        assert_eq!(result.status, ApprovalStatus::Approved);
+        assert_eq!(result.approved_by.as_deref(), Some("auto_approve"));
+    }
+
+    #[test]
+    fn approval_result_constructors_set_status_and_fields() {
+        let approved = ApprovalResult::approved_via("tty_user");
+        assert_eq!(approved.status, ApprovalStatus::Approved);
+        assert_eq!(approved.approved_by.as_deref(), Some("tty_user"));
+        assert!(approved.reason.is_none());
+
+        let rejected = ApprovalResult::rejected("user said no");
+        assert_eq!(rejected.status, ApprovalStatus::Rejected);
+        assert!(rejected.approved_by.is_none());
+        assert_eq!(rejected.reason.as_deref(), Some("user said no"));
+
+        let timeout = ApprovalResult::timed_out("60s expired");
+        assert_eq!(timeout.status, ApprovalStatus::Timeout);
+        assert!(timeout.approved_by.is_none());
+        assert_eq!(timeout.reason.as_deref(), Some("60s expired"));
+    }
+
+    #[tokio::test]
+    async fn handler_check_approval_aliases_request_approval() {
+        let handler = CliApprovalHandler::new(true, 60);
+        let request_result = handler.request_approval(&module(true)).await;
+        let check_result = handler.check_approval(&module(true)).await;
+        assert_eq!(request_result, check_result);
     }
 }
