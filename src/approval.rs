@@ -227,9 +227,14 @@ pub async fn check_approval_with_tty_timeout(
             // Not set or empty — fall through silently.
         }
         Ok(val) => {
-            tracing::warn!(
-                "APCORE_CLI_AUTO_APPROVE is set to '{}', expected '1'. Ignoring.",
-                val
+            // D10-009 cross-SDK parity: emit to stderr (matching TS and
+            // Python) so the user-visible channel is consistent regardless
+            // of whether a tracing subscriber is configured. Spec at
+            // apcore-cli/docs/features/approval-gate.md:122 says "Log
+            // WARNING" which was ambiguous; the three SDKs now agree on
+            // stderr.
+            eprintln!(
+                "Warning: APCORE_CLI_AUTO_APPROVE is set to '{val}', expected '1'. Ignoring."
             );
         }
     }
