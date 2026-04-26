@@ -10,7 +10,10 @@ use std::io::IsTerminal;
 // ---------------------------------------------------------------------------
 
 /// Check-name to exit code mapping for the first failed check.
-fn first_failed_exit_code(checks: &[Value]) -> i32 {
+///
+/// `pub(crate)` so cli.rs's dispatch_module dry-run path (D9-004) can share
+/// the same exit-code mapping the standalone `validate` subcommand uses.
+pub(crate) fn first_failed_exit_code(checks: &[Value]) -> i32 {
     let check_to_exit = |check: &str| -> i32 {
         match check {
             "module_id" => crate::EXIT_INVALID_INPUT,
@@ -194,6 +197,76 @@ pub fn register_validate_command(cli: Command) -> Command {
 // Dispatch
 // ---------------------------------------------------------------------------
 
+/// Build a preflight result for `module_def` against `input`.
+///
+/// Calls `system.validate` via the apcore executor when available; on failure
+/// (module not registered, internal error) constructs a synthetic preflight
+/// JSON shape with the same `{ checks: [...], valid, requires_approval }`
+/// schema so callers can format and exit uniformly.
+///
+/// Used by both [`dispatch_validate`] (the standalone `validate` subcommand)
+/// and the `--dry-run` branch of `dispatch_module` in cli.rs (D9-004 — was
+/// previously two parallel implementations). Caller is responsible for
+/// running `validate_module_id` and `get_module_descriptor` lookups before
+/// calling this — the returned preflight assumes the module exists and the
+/// id has the right shape.
+pub async fn build_preflight_result(
+    apcore_executor: &apcore::Executor,
+    module_def: &apcore::registry::registry::ModuleDescriptor,
+    input: &Value,
+) -> Value {
+    let preflight_input = serde_json::json!({
+        "module_id": module_def.module_id,
+        "input": input,
+    });
+
+    match apcore_executor
+        .call("system.validate", preflight_input, None, None)
+        .await
+    {
+        Ok(preflight) => preflight,
+        Err(e) => {
+            tracing::debug!(
+                "system.validate call failed: {e}; falling back to basic schema validation"
+            );
+            // Synthetic preflight with the same shape system.validate emits.
+            // module_id and module_lookup are passed because the caller has
+            // already validated those.
+            let merged: std::collections::HashMap<String, Value> = match input.as_object() {
+                Some(obj) => obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                None => std::collections::HashMap::new(),
+            };
+            let schema_passed = if let Some(schema_obj) = module_def.input_schema.as_object() {
+                if schema_obj.contains_key("properties") {
+                    crate::cli::validate_against_schema(&merged, &module_def.input_schema).is_ok()
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+
+            let checks = vec![
+                serde_json::json!({"check": "module_id", "passed": true}),
+                serde_json::json!({"check": "module_lookup", "passed": true}),
+                serde_json::json!({"check": "schema", "passed": schema_passed}),
+            ];
+
+            let requires_approval = module_def
+                .annotations
+                .as_ref()
+                .map(|a| a.requires_approval)
+                .unwrap_or(false);
+
+            serde_json::json!({
+                "valid": schema_passed,
+                "requires_approval": requires_approval,
+                "checks": checks,
+            })
+        }
+    }
+}
+
 /// Dispatch the `validate` subcommand.
 ///
 /// Calls `executor.validate()` (preflight) and prints the result.
@@ -232,113 +305,32 @@ pub async fn dispatch_validate(
 
     let input_value = serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
 
-    // Call system.validate module via executor (preflight).
-    // The apcore executor does not expose a dedicated validate() method in
-    // Rust, so we delegate to the "system.validate" module which performs
-    // the same preflight pipeline, or fall back to a synthetic result
-    // based on schema validation.
-    let preflight_input = serde_json::json!({
-        "module_id": module_id,
-        "input": input_value,
-    });
-
-    let result = apcore_executor
-        .call("system.validate", preflight_input, None, None)
-        .await;
-
-    match result {
-        Ok(preflight_val) => {
-            format_preflight_result(&preflight_val, format);
-            let valid = preflight_val
-                .get("valid")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if valid {
-                std::process::exit(crate::EXIT_SUCCESS);
-            } else {
-                let checks = preflight_val
-                    .get("checks")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                std::process::exit(first_failed_exit_code(&checks));
-            }
+    let module_def = match registry.get_module_descriptor(module_id) {
+        Some(d) => d,
+        None => {
+            // Already exited above; defensive guard against caller skipping
+            // the existence check.
+            eprintln!("Error: Module '{module_id}' not found.");
+            std::process::exit(crate::EXIT_MODULE_NOT_FOUND);
         }
-        Err(_e) => {
-            // system.validate not available -- fall back to basic schema
-            // validation. Build a synthetic preflight result.
-            let module_def = registry.get_module_descriptor(module_id);
-            let mut checks = Vec::new();
+    };
 
-            // module_id check: always passes (validated above).
-            checks.push(serde_json::json!({
-                "check": "module_id",
-                "passed": true,
-            }));
+    let preflight = build_preflight_result(apcore_executor, &module_def, &input_value).await;
+    format_preflight_result(&preflight, format);
 
-            // module_lookup check.
-            checks.push(serde_json::json!({
-                "check": "module_lookup",
-                "passed": module_def.is_some(),
-                "error": if module_def.is_none() {
-                    Value::String("not found".to_string())
-                } else {
-                    Value::Null
-                },
-            }));
-
-            // schema check.
-            let schema_passed = if let Some(ref def) = module_def {
-                if let Some(schema_obj) = def.input_schema.as_object() {
-                    if schema_obj.contains_key("properties") {
-                        crate::cli::validate_against_schema(&merged, &def.input_schema).is_ok()
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-            checks.push(serde_json::json!({
-                "check": "schema",
-                "passed": schema_passed,
-            }));
-
-            let valid = checks
-                .iter()
-                .all(|c| c.get("passed").and_then(|v| v.as_bool()).unwrap_or(true));
-
-            // Read requires_approval from the module's own annotations
-            // rather than hardcoding `false` (review #10). Hardcoding
-            // misled users when the live `system.validate` module was
-            // unavailable but the target module declared
-            // requires_approval:true: validate said "no approval needed",
-            // then exec surprised them with a prompt.
-            let requires_approval = module_def
-                .as_ref()
-                .and_then(|d| d.annotations.as_ref())
-                .map(|a| a.requires_approval)
-                .unwrap_or(false);
-
-            let preflight = serde_json::json!({
-                "valid": valid,
-                "requires_approval": requires_approval,
-                "checks": checks,
-            });
-            format_preflight_result(&preflight, format);
-            if valid {
-                std::process::exit(crate::EXIT_SUCCESS);
-            } else {
-                let checks_arr = preflight
-                    .get("checks")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                std::process::exit(first_failed_exit_code(&checks_arr));
-            }
-        }
+    let valid = preflight
+        .get("valid")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if valid {
+        std::process::exit(crate::EXIT_SUCCESS);
+    } else {
+        let checks = preflight
+            .get("checks")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        std::process::exit(first_failed_exit_code(&checks));
     }
 }
 

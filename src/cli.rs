@@ -1092,60 +1092,33 @@ pub async fn dispatch_module(
         };
         let input_value =
             serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
-        let preflight_input = serde_json::json!({
-            "module_id": module_id,
-            "input": input_value,
-        });
-        let result = apcore_executor
-            .call("system.validate", preflight_input, None, None)
-            .await;
-        match result {
-            Ok(preflight_val) => {
-                crate::validate::format_preflight_result(&preflight_val, format_flag.as_deref());
-                print_pipeline_preview();
-                let valid = preflight_val
-                    .get("valid")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if valid {
-                    std::process::exit(EXIT_SUCCESS);
-                } else {
-                    std::process::exit(crate::EXIT_MODULE_EXECUTE_ERROR);
-                }
-            }
-            Err(_e) => {
-                tracing::debug!(
-                    "system.validate call failed: {_e}; falling back to basic schema validation"
-                );
-                // Fallback: perform basic schema validation only.
-                let schema_ok = if let Some(schema) = module_def.input_schema.as_object() {
-                    if schema.contains_key("properties") {
-                        validate_against_schema(&merged, &module_def.input_schema).is_ok()
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                };
 
-                let checks = vec![
-                    serde_json::json!({"check": "module_id", "passed": true}),
-                    serde_json::json!({"check": "module_lookup", "passed": true}),
-                    serde_json::json!({"check": "schema", "passed": schema_ok}),
-                ];
-                let preflight = serde_json::json!({
-                    "valid": schema_ok,
-                    "requires_approval": false,
-                    "checks": checks,
-                });
-                crate::validate::format_preflight_result(&preflight, format_flag.as_deref());
-                print_pipeline_preview();
-                if schema_ok {
-                    std::process::exit(EXIT_SUCCESS);
-                } else {
-                    std::process::exit(EXIT_SCHEMA_VALIDATION_ERROR);
-                }
-            }
+        // Delegate to the shared preflight builder (D9-004) so the
+        // dry-run path emits the same shape as the standalone `validate`
+        // subcommand. Both call sites share validate::build_preflight_result
+        // — was previously a parallel implementation here.
+        let preflight =
+            crate::validate::build_preflight_result(apcore_executor, &module_def, &input_value)
+                .await;
+        crate::validate::format_preflight_result(&preflight, format_flag.as_deref());
+        print_pipeline_preview();
+        let valid = preflight
+            .get("valid")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if valid {
+            std::process::exit(EXIT_SUCCESS);
+        } else {
+            // Honor the granular check-level exit code mapping owned by
+            // validate::first_failed_exit_code so the dry-run path agrees
+            // with the standalone `validate` path on schema-vs-other
+            // failures.
+            let checks = preflight
+                .get("checks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            std::process::exit(crate::validate::first_failed_exit_code(&checks));
         }
     }
 
