@@ -135,16 +135,25 @@ pub fn register_apcli_subcommands(
 // a separate binary crate.
 //
 // **No `create_cli` / `run_with_config` factory in Rust** (cross-SDK parity
-// note from audit D1-005, 2026-04-26): Python exposes `apcore_cli.create_cli`
-// and TypeScript exposes `createCli` from `apcore-cli`; Rust intentionally
-// has no equivalent factory. The high-level `CliConfig` / `run_with_config`
-// embedding API was removed in v0.7.0 (D9-001/002) — it never had a working
-// dispatch loop. An embedding API will be reintroduced when actually
-// implemented; until then, downstream Rust users invoke the binary directly
-// or compose the per-subcommand registrars (e.g.,
-// `register_completion_command`) onto a `clap::Command` they own. The
-// Python `allowed_prefixes` parameter on `create_cli` is therefore a
-// Python-only safety knob with no Rust counterpart at this writing.
+// note from audit D1-005, 2026-04-26; updated D1-006 follow-up 2026-05-07):
+// Python exposes `apcore_cli.create_cli` and TypeScript exposes `createCli`
+// from `apcore-cli`; Rust intentionally has no equivalent factory. The
+// high-level `CliConfig` / `run_with_config` embedding API was removed in
+// v0.7.0 (D9-001/002) — it never had a working dispatch loop. An embedding
+// API will be reintroduced when actually implemented; until then,
+// downstream Rust users invoke the binary directly or compose the
+// per-subcommand registrars (e.g., `register_completion_command`) onto a
+// `clap::Command` they own.
+//
+// Cross-SDK parity gap (tracked, not a bug): Python `create_cli` and
+// TypeScript `createCli` both accept an `allowed_prefixes` / `allowedPrefixes`
+// safety knob (toolkit RegistryWriter prefix allowlist). Rust currently has
+// no equivalent because the entry point that would host it does not exist.
+// When the Rust embedding API is reintroduced, `allowed_prefixes` should be
+// added at the same time (mirror the Python `factory.py:78` and TypeScript
+// `CreateCliOptions.allowedPrefixes` semantics). Recorded in
+// `apcore-cli/docs/features/core-dispatcher.md` Cross-SDK API surface
+// appendix as a known parity gap.
 
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{
