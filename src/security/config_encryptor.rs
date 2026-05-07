@@ -36,9 +36,26 @@ const MIN_WIRE_LEN_V2: usize = PBKDF2_SALT_LEN_V2 + 28;
 /// Errors produced by decryption or key-derivation operations.
 #[derive(Debug, Error)]
 pub enum ConfigDecryptionError {
-    /// The ciphertext is malformed or has been tampered with.
+    /// The ciphertext is malformed or has been tampered with. Used by the
+    /// internal `_aes_decrypt_*` helpers, which do not know the originating
+    /// config key. Public callers go through [`ConfigEncryptor::retrieve`],
+    /// which wraps this into [`Self::DecryptFailed`] with the user-facing
+    /// `{key}` context per spec (`docs/features/security.md` §
+    /// `Contract: ConfigEncryptor.retrieve`).
     #[error("decryption failed: authentication tag mismatch or corrupt data")]
     AuthTagMismatch,
+
+    /// Decryption of a stored config value failed. Carries the originating
+    /// config key so the user-facing message can name it and direct the
+    /// caller to remediate via `apcore-cli config set {key}`. Cross-language
+    /// parity with Python `ConfigDecryptionError(f"Failed to decrypt
+    /// configuration value '{key}'. ...")` and TS equivalent — audit
+    /// D10-truncated #1 (2026-05-07).
+    #[error(
+        "Failed to decrypt configuration value '{key}'. \
+         Re-configure with 'apcore-cli config set {key}'."
+    )]
+    DecryptFailed { key: String },
 
     /// The stored data was not valid UTF-8 after decryption.
     #[error("decrypted data is not valid UTF-8")]
@@ -150,25 +167,23 @@ impl ConfigEncryptor {
         } else if let Some(b64_data) = config_value.strip_prefix("enc:v2:") {
             let data = B64
                 .decode(b64_data)
-                .map_err(|_| ConfigDecryptionError::AuthTagMismatch)?;
-            self._aes_decrypt_v2(&data).map_err(|e| match e {
-                ConfigDecryptionError::AuthTagMismatch => ConfigDecryptionError::AuthTagMismatch,
-                other => ConfigDecryptionError::KeyringError(format!(
-                    "Failed to decrypt configuration value '{key}'. \
-                     Re-configure with 'apcore-cli config set {key}'. Cause: {other}"
-                )),
-            })
+                .map_err(|_| ConfigDecryptionError::DecryptFailed {
+                    key: key.to_string(),
+                })?;
+            self._aes_decrypt_v2(&data)
+                .map_err(|_| ConfigDecryptionError::DecryptFailed {
+                    key: key.to_string(),
+                })
         } else if let Some(b64_data) = config_value.strip_prefix("enc:") {
             let data = B64
                 .decode(b64_data)
-                .map_err(|_| ConfigDecryptionError::AuthTagMismatch)?;
-            self._aes_decrypt_v1(&data).map_err(|e| match e {
-                ConfigDecryptionError::AuthTagMismatch => ConfigDecryptionError::AuthTagMismatch,
-                other => ConfigDecryptionError::KeyringError(format!(
-                    "Failed to decrypt configuration value '{key}'. \
-                     Re-configure with 'apcore-cli config set {key}'. Cause: {other}"
-                )),
-            })
+                .map_err(|_| ConfigDecryptionError::DecryptFailed {
+                    key: key.to_string(),
+                })?;
+            self._aes_decrypt_v1(&data)
+                .map_err(|_| ConfigDecryptionError::DecryptFailed {
+                    key: key.to_string(),
+                })
         } else {
             Ok(config_value.to_string())
         }
@@ -456,7 +471,7 @@ mod tests {
         let result = enc.retrieve(&config_value, "some.key");
         assert!(matches!(
             result,
-            Err(ConfigDecryptionError::AuthTagMismatch)
+            Err(ConfigDecryptionError::DecryptFailed { ref key }) if key == "some.key"
         ));
     }
 
@@ -470,7 +485,7 @@ mod tests {
         let result = enc.retrieve(&config_value, "some.key");
         assert!(matches!(
             result,
-            Err(ConfigDecryptionError::AuthTagMismatch)
+            Err(ConfigDecryptionError::DecryptFailed { ref key }) if key == "some.key"
         ));
     }
 
@@ -481,7 +496,7 @@ mod tests {
         let result = enc.retrieve(&config_value, "some.key");
         assert!(matches!(
             result,
-            Err(ConfigDecryptionError::AuthTagMismatch)
+            Err(ConfigDecryptionError::DecryptFailed { ref key }) if key == "some.key"
         ));
     }
 
@@ -492,7 +507,45 @@ mod tests {
         let result = enc.retrieve(&config_value, "some.key");
         assert!(matches!(
             result,
-            Err(ConfigDecryptionError::AuthTagMismatch)
+            Err(ConfigDecryptionError::DecryptFailed { ref key }) if key == "some.key"
+        ));
+    }
+
+    /// Audit D10-truncated #1 regression: the user-facing error message must
+    /// name the originating config key and direct the caller to remediate.
+    /// Cross-language parity with Python `config_encryptor.py:62-64,70-72`
+    /// and TS `config-encryptor.ts:136-149`.
+    #[test]
+    fn test_retrieve_decrypt_error_message_includes_key_and_remediation() {
+        let enc = aes_encryptor();
+        // Corrupted v2 ciphertext.
+        let mut bad = vec![0u8; 56];
+        bad[16 + 12] ^= 0xFF;
+        let config_value = format!("enc:v2:{}", B64.encode(&bad));
+        let err = enc
+            .retrieve(&config_value, "auth.api_key")
+            .expect_err("corrupt ciphertext should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("auth.api_key"),
+            "error message must name the config key, got: {msg}"
+        );
+        assert!(
+            msg.contains("apcore-cli config set auth.api_key"),
+            "error message must include remediation guidance, got: {msg}"
+        );
+    }
+
+    /// Audit D10-truncated #1: an invalid base64 payload behind `enc:v2:`
+    /// should also surface as `DecryptFailed { key }` so the user gets the
+    /// same actionable message as a tag-mismatch failure.
+    #[test]
+    fn test_retrieve_invalid_b64_returns_decrypt_failed_with_key() {
+        let enc = aes_encryptor();
+        let result = enc.retrieve("enc:v2:!!!not-base64!!!", "auth.api_key");
+        assert!(matches!(
+            result,
+            Err(ConfigDecryptionError::DecryptFailed { ref key }) if key == "auth.api_key"
         ));
     }
 

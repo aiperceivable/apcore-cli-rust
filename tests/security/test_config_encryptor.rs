@@ -40,8 +40,11 @@ fn test_retrieve_missing_key_returns_error() {
 }
 
 #[test]
-fn test_tampered_ciphertext_returns_auth_tag_error() {
-    // Corrupting a v1 ciphertext must yield AuthTagMismatch on retrieve.
+fn test_tampered_ciphertext_returns_decrypt_failed_with_key() {
+    // Corrupting a v1 ciphertext must yield DecryptFailed { key } on retrieve
+    // (audit D10-truncated #1, 2026-05-07): the public retrieve() path wraps
+    // the internal AuthTagMismatch into a user-facing variant carrying the
+    // originating config key, for cross-language parity with Python and TS.
     let enc = aes_enc();
     // Build a syntactically valid but cryptographically corrupt enc: v1 token:
     // 40 bytes (12 nonce + 16 tag + 12 ciphertext) with a corrupted tag byte.
@@ -50,14 +53,14 @@ fn test_tampered_ciphertext_returns_auth_tag_error() {
     let config_value = format!("enc:{}", B64.encode(&bad));
     let result = enc.retrieve(&config_value, "some.key");
     assert!(
-        matches!(result, Err(ConfigDecryptionError::AuthTagMismatch)),
-        "expected AuthTagMismatch for tampered v1 ciphertext, got {result:?}"
+        matches!(&result, Err(ConfigDecryptionError::DecryptFailed { key }) if key == "some.key"),
+        "expected DecryptFailed {{ key: \"some.key\" }} for tampered v1 ciphertext, got {result:?}"
     );
 }
 
 #[test]
-fn test_tampered_v2_ciphertext_returns_auth_tag_error() {
-    // Corrupting a v2 ciphertext must yield AuthTagMismatch on retrieve.
+fn test_tampered_v2_ciphertext_returns_decrypt_failed_with_key() {
+    // Corrupting a v2 ciphertext must yield DecryptFailed { key } on retrieve.
     let enc = aes_enc();
     // v2 wire: 16-byte salt + 12 nonce + 16 tag + payload; corrupt the tag.
     let mut bad = vec![0u8; 56]; // 16 salt + 40
@@ -65,8 +68,8 @@ fn test_tampered_v2_ciphertext_returns_auth_tag_error() {
     let config_value = format!("enc:v2:{}", B64.encode(&bad));
     let result = enc.retrieve(&config_value, "some.key");
     assert!(
-        matches!(result, Err(ConfigDecryptionError::AuthTagMismatch)),
-        "expected AuthTagMismatch for tampered v2 ciphertext, got {result:?}"
+        matches!(&result, Err(ConfigDecryptionError::DecryptFailed { key }) if key == "some.key"),
+        "expected DecryptFailed {{ key: \"some.key\" }} for tampered v2 ciphertext, got {result:?}"
     );
 }
 

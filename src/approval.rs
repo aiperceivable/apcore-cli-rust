@@ -474,8 +474,24 @@ impl CliApprovalHandler {
         }
     }
 
-    /// Alias for [`request_approval`] (matches the Python / TypeScript
-    /// `check_approval` method name on the handler).
+    /// Inherent ergonomic alias for [`request_approval`]. Takes a
+    /// `module_def: &Value` and runs the synchronous approval prompt path —
+    /// **not** the apcore Phase B polling protocol.
+    ///
+    /// Naming clarification (audit D10-truncated #3, 2026-05-07): both this
+    /// inherent method and the [`apcore::ApprovalHandler`] trait impl below
+    /// are spelled `check_approval`, but they have **different semantics**:
+    ///
+    /// | Method | Argument | Semantics | Spec |
+    /// |---|---|---|---|
+    /// | inherent `CliApprovalHandler::check_approval(&self, &Value)` | module definition | request a fresh approval (this alias) | Rust ergonomic helper |
+    /// | trait `<Self as apcore::ApprovalHandler>::check_approval(&self, &str)` | `approval_id` | Phase B polling (returns "rejected — CLI does not support async polling") | docs/features/approval-gate.md `## Contract: CliApprovalHandler.check_approval` |
+    ///
+    /// Python and TypeScript handlers expose only the latter (the protocol
+    /// `check_approval(approval_id: str)`); the former is a Rust-only
+    /// shorthand that resolves by argument type. Callers that want the
+    /// protocol behavior must dispatch through the trait, e.g.
+    /// `<CliApprovalHandler as apcore::ApprovalHandler>::check_approval(&handler, id)`.
     pub async fn check_approval(&self, module_def: &serde_json::Value) -> ApprovalResult {
         self.request_approval(module_def).await
     }
