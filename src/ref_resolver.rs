@@ -282,6 +282,40 @@ fn resolve_node(
             };
 
             let mut result_map = merged_map;
+
+            // Seed parent node's own properties so sibling fields under a
+            // parent that mixes top-level `properties` with `anyOf`/`oneOf`
+            // are preserved (parity with `allOf` above and Python
+            // ref_resolver.py:100-101). Audit D11-NEW-001 (2026-05-08).
+            if let Some(parent_props) = obj.get("properties").and_then(|v| v.as_object()) {
+                if let Some(Value::Object(merged_props)) = result_map.get_mut("properties") {
+                    for (k, v) in parent_props {
+                        merged_props.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+
+            // Merge parent's sibling `required` with the branch intersection,
+            // deduplicating and preserving sibling-first order. Per JSON
+            // Schema semantics, a parent's `required` applies in addition
+            // to the anyOf/oneOf branch intersection. Parity with Python
+            // ref_resolver.py:114-118. Audit D11-NEW-001 (2026-05-08).
+            if let Some(parent_req) = obj.get("required").and_then(|v| v.as_array()) {
+                if let Some(Value::Array(merged_req)) = result_map.get_mut("required") {
+                    // Build sibling-first deduplicated list.
+                    let mut combined: Vec<Value> = Vec::new();
+                    let mut seen: HashSet<String> = HashSet::new();
+                    for item in parent_req.iter().chain(merged_req.iter()) {
+                        if let Some(s) = item.as_str() {
+                            if seen.insert(s.to_string()) {
+                                combined.push(item.clone());
+                            }
+                        }
+                    }
+                    *merged_req = combined;
+                }
+            }
+
             for (k, v) in &obj {
                 if k != *keyword && !result_map.contains_key(k) {
                     result_map.insert(k.clone(), v.clone());
@@ -628,5 +662,70 @@ mod tests {
             .filter_map(|v| v.as_str())
             .collect();
         assert!(required.contains(&"id"));
+    }
+
+    /// Audit D11-NEW-001 (2026-05-08): a parent's `required` applies in
+    /// addition to anyOf/oneOf branch intersection — sibling required must
+    /// not be silently dropped. Cross-SDK parity with Python ref_resolver.py.
+    #[test]
+    fn test_anyof_preserves_parent_sibling_required() {
+        let schema = json!({
+            "type": "object",
+            "required": ["x"],
+            "anyOf": [
+                {"properties": {"a": {"type": "string"}}, "required": ["a"]},
+                {"properties": {"a": {"type": "integer"}}, "required": ["a"]},
+            ]
+        });
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
+        let required: Vec<&str> = result["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        // Sibling-first ordering: parent "x" before branch-intersection "a".
+        assert_eq!(required, vec!["x", "a"]);
+    }
+
+    #[test]
+    fn test_oneof_preserves_parent_sibling_required() {
+        let schema = json!({
+            "type": "object",
+            "required": ["host", "port"],
+            "oneOf": [
+                {"properties": {"mode": {"const": "http"}}, "required": ["scheme"]},
+                {"properties": {"mode": {"const": "tcp"}}, "required": ["scheme"]},
+            ]
+        });
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
+        let required: Vec<&str> = result["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(required, vec!["host", "port", "scheme"]);
+    }
+
+    #[test]
+    fn test_anyof_dedupes_overlap_between_sibling_and_branch_intersection() {
+        let schema = json!({
+            "type": "object",
+            "required": ["a"],
+            "anyOf": [
+                {"required": ["a", "b"]},
+                {"required": ["a", "c"]},
+            ]
+        });
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
+        let required: Vec<&str> = result["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        // Sibling "a" present once; branch intersection ["a"] dedup-skipped.
+        assert_eq!(required, vec!["a"]);
     }
 }
