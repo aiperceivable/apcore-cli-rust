@@ -1,6 +1,8 @@
 // apcore-cli — Subprocess sandbox for module execution.
 // Protocol spec: SEC-04 (Sandbox, ModuleExecutionError)
 
+use std::path::PathBuf;
+
 use tokio::io::AsyncReadExt;
 
 use serde_json::Value;
@@ -23,9 +25,10 @@ const SANDBOX_DENIED_ENV_PREFIXES: &[&str] = &["APCORE_AUTH_"];
 /// Exact environment variable names denied regardless of prefix match.
 const SANDBOX_DENIED_ENV_KEYS: &[&str] = &["APCORE_AUTH_API_KEY"];
 
-/// Maximum bytes collected from sandbox stdout or stderr before the child is
-/// killed and OutputParseFailed is returned. Guards against OOM from hostile
-/// or buggy modules that write unboundedly.
+/// Default maximum bytes collected from sandbox stdout or stderr before the
+/// child is killed and OutputParseFailed is returned. Guards against OOM from
+/// hostile or buggy modules that write unboundedly. Overridable per-Sandbox
+/// via `Sandbox::with_max_output_bytes` (parity with Python).
 const SANDBOX_OUTPUT_SIZE_LIMIT_BYTES: usize = 64 * 1024 * 1024; // 64 MiB (aligned with Python/TS)
 
 // ---------------------------------------------------------------------------
@@ -102,6 +105,8 @@ pub struct SchemaValidationError {
 pub struct Sandbox {
     enabled: bool,
     timeout_secs: u64,
+    extensions_root: Option<PathBuf>,
+    max_output_bytes: usize,
 }
 
 impl Sandbox {
@@ -114,12 +119,53 @@ impl Sandbox {
         Self {
             enabled,
             timeout_secs,
+            extensions_root: None,
+            max_output_bytes: SANDBOX_OUTPUT_SIZE_LIMIT_BYTES,
         }
     }
 
     /// Return `true` when subprocess isolation is enabled.
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// Set the path injected as `APCORE_EXTENSIONS_ROOT` into the sandbox
+    /// subprocess. Parity with Python `Sandbox.with_extensions_root` (D1-004).
+    ///
+    /// When `Some(path)`, the absolute (canonicalised when possible) path is
+    /// forwarded to the sandbox child so the runner can locate modules even
+    /// after `cwd` is changed to the sandbox tempdir. When `None`, any
+    /// inherited `APCORE_EXTENSIONS_ROOT` from the host environment is left
+    /// to flow through the standard `APCORE_*` whitelist unmodified.
+    ///
+    /// Builder-style — consumes `self` and returns it for chaining.
+    pub fn with_extensions_root(mut self, extensions_root: Option<PathBuf>) -> Self {
+        self.extensions_root = extensions_root;
+        self
+    }
+
+    /// Cap the post-capture stdout+stderr byte budget for the sandbox
+    /// subprocess. Default: 64 MiB ([`SANDBOX_OUTPUT_SIZE_LIMIT_BYTES`]).
+    /// Parity with Python `Sandbox.with_max_output_bytes` (D1-004).
+    ///
+    /// Builder-style — consumes `self` and returns it for chaining.
+    pub fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = max_output_bytes;
+        self
+    }
+
+    /// Test/inspection accessor: returns the configured `extensions_root`.
+    /// Used by parity tests to verify the builder's effect.
+    #[doc(hidden)]
+    pub fn extensions_root(&self) -> Option<&PathBuf> {
+        self.extensions_root.as_ref()
+    }
+
+    /// Test/inspection accessor: returns the configured `max_output_bytes`.
+    /// Used by parity tests to verify the builder's effect.
+    #[doc(hidden)]
+    pub fn max_output_bytes(&self) -> usize {
+        self.max_output_bytes
     }
 
     /// Execute a module, optionally in an isolated subprocess.
@@ -193,6 +239,23 @@ impl Sandbox {
             }
         }
 
+        // Inject extensions_root override (D1-004 parity with Python). When
+        // `with_extensions_root(Some(p))` is set, forward as an absolute path
+        // (resolved when possible) so the runner locates modules correctly
+        // even after `cwd` is switched to the sandbox tempdir. This entry
+        // overrides any inherited `APCORE_EXTENSIONS_ROOT` from the standard
+        // APCORE_* whitelist forwarding above.
+        if let Some(ref ext_root) = self.extensions_root {
+            let resolved = std::fs::canonicalize(ext_root).unwrap_or_else(|_| ext_root.clone());
+            // Replace any prior APCORE_EXTENSIONS_ROOT entry forwarded by the
+            // whitelist loop — the explicit builder value wins.
+            env.retain(|(k, _)| k != "APCORE_EXTENSIONS_ROOT");
+            env.push((
+                "APCORE_EXTENSIONS_ROOT".to_string(),
+                resolved.to_string_lossy().into_owned(),
+            ));
+        }
+
         // Create temp dir for HOME/TMPDIR isolation.
         let tmpdir = tempfile::TempDir::new()
             .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()))?;
@@ -244,7 +307,9 @@ impl Sandbox {
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
 
-        let cap = SANDBOX_OUTPUT_SIZE_LIMIT_BYTES;
+        // Per-instance cap; defaults to SANDBOX_OUTPUT_SIZE_LIMIT_BYTES (64 MiB)
+        // unless overridden via `with_max_output_bytes` (D1-004 parity).
+        let cap = self.max_output_bytes;
         let collect_result = timeout(timeout_dur, async {
             let (stdout_res, stderr_res) = tokio::join!(
                 async {
@@ -361,6 +426,50 @@ mod tests {
         let encoded = encode_result(&v);
         let decoded = decode_result(&encoded).unwrap();
         assert_eq!(decoded["result"], 42);
+    }
+
+    #[test]
+    fn test_sandbox_default_max_output_bytes_is_64mib() {
+        // Parity with Python Sandbox.DEFAULT_MAX_OUTPUT_BYTES (D1-004).
+        let s = Sandbox::new(false, 5);
+        assert_eq!(s.max_output_bytes(), 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_sandbox_default_extensions_root_is_none() {
+        // Parity with Python: constructor leaves _extensions_root = None.
+        let s = Sandbox::new(false, 5);
+        assert!(s.extensions_root().is_none());
+    }
+
+    #[test]
+    fn test_sandbox_with_max_output_bytes_sets_field() {
+        // D1-004: builder-style setter must mutate the per-instance cap so
+        // _sandboxed_execute uses the override instead of the 64 MiB default.
+        let s = Sandbox::new(false, 5).with_max_output_bytes(1024);
+        assert_eq!(s.max_output_bytes(), 1024);
+    }
+
+    #[test]
+    fn test_sandbox_with_extensions_root_sets_field() {
+        // D1-004: builder-style setter must store the path so
+        // _sandboxed_execute can inject APCORE_EXTENSIONS_ROOT.
+        let path = PathBuf::from("/tmp/extensions");
+        let s = Sandbox::new(false, 5).with_extensions_root(Some(path.clone()));
+        assert_eq!(s.extensions_root(), Some(&path));
+    }
+
+    #[test]
+    fn test_sandbox_builder_chains() {
+        // Both setters must return Self so chained construction works in the
+        // same fluent style as Python's `Sandbox(...).with_*().with_*()`.
+        let path = PathBuf::from("/tmp/ext");
+        let s = Sandbox::new(true, 30)
+            .with_extensions_root(Some(path.clone()))
+            .with_max_output_bytes(2048);
+        assert!(s.is_enabled());
+        assert_eq!(s.extensions_root(), Some(&path));
+        assert_eq!(s.max_output_bytes(), 2048);
     }
 
     #[test]
