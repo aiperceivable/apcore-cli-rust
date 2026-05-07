@@ -21,7 +21,7 @@ name = "apcore_cli"
 path = "src/lib.rs"
 
 [dependencies]
-apcore = "=0.21.0"
+apcore = "0.21"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "string"] }
 serde = { version = "1", features = ["derive"] }
@@ -56,7 +56,6 @@ test-support = []
 toolkit = ["dep:apcore-toolkit"]
 
 [dev-dependencies]
-tokio-test = "0.4"
 schemars = "0.8"
 apcore-cli = { path = ".", features = ["test-support"] }
 
