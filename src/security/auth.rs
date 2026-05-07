@@ -141,11 +141,17 @@ impl AuthProvider {
         let key = self
             .get_api_key()?
             .ok_or(AuthenticationError::MissingApiKey)?;
-        let trimmed = key.trim_end_matches(['\r', '\n']);
-        if trimmed.contains('\r') || trimmed.contains('\n') {
+        // Reject ANY '\r' or '\n' (any position) — spec security.md:94.
+        // Trimming first would silently accept "abc\n" and emit
+        // `Authorization: Bearer abc`, bypassing the header-injection guard
+        // (audit D10-001). Python/TS implementations both reject outright.
+        if key.contains('\r') || key.contains('\n') {
             return Err(AuthenticationError::MalformedApiKey);
         }
-        headers.insert("Authorization".to_string(), format!("Bearer {trimmed}"));
+        headers.insert(
+            "Authorization".to_string(),
+            format!("Bearer {}", key.trim()),
+        );
         Ok(headers)
     }
 
@@ -262,15 +268,18 @@ mod tests {
     }
 
     #[test]
-    fn test_authenticate_request_strips_trailing_crlf() {
+    fn test_authenticate_request_rejects_trailing_crlf() {
+        // Spec security.md:94 — any '\r' or '\n' anywhere in the key (including
+        // trailing) is a header-injection risk and must surface as
+        // MalformedApiKey. Parity with Python/TS AuthProvider implementations.
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("APCORE_AUTH_API_KEY", "key-with-trailing-newline\n") };
         let provider = AuthProvider::new(make_resolver_empty());
         let result = provider.authenticate_request(std::collections::HashMap::new());
         unsafe { std::env::remove_var("APCORE_AUTH_API_KEY") };
         assert!(
-            result.is_ok(),
-            "trailing newline must be stripped before header assembly"
+            matches!(result, Err(AuthenticationError::MalformedApiKey)),
+            "trailing CR/LF must surface MalformedApiKey (header-injection guard), got {result:?}"
         );
     }
 
