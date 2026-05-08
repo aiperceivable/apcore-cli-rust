@@ -414,7 +414,9 @@ pub fn build_module_command_with_limit(
     let module_id = &module_def.module_id;
 
     // Guard: reject reserved command names immediately (FE-13 §4.10).
-    if crate::builtin_group::RESERVED_GROUP_NAMES.contains(&module_id.as_str()) {
+    // Use the live reserved-set so a renamed built-in group (set via
+    // `set_reserved_group_names` from the binary entry-point) is honored.
+    if crate::builtin_group::is_reserved_group_name(module_id) {
         return Err(CliError::ReservedModuleId(module_id.clone()));
     }
 

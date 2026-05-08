@@ -180,7 +180,11 @@ pub use approval::{
 };
 
 // Built-in command group (FE-13)
-pub use builtin_group::{ApcliConfig, ApcliGroup, ApcliGroupError, ApcliMode};
+pub use builtin_group::{
+    effective_reserved_group_names, is_reserved_group_name, set_reserved_group_names,
+    validate_builtin_group_name, ApcliConfig, ApcliGroup, ApcliGroupError, ApcliMode,
+    DEFAULT_BUILTIN_GROUP_NAME,
+};
 
 // Core dispatcher (FE-01)
 pub use cli::{

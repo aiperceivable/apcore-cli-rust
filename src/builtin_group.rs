@@ -10,6 +10,10 @@
 //! Protocol spec: FE-13 — see `../apcore-cli/docs/features/builtin-group.md`
 //! sections §4.2–§4.7 and §4.14 for authoritative semantics.
 
+use std::collections::HashSet;
+use std::sync::{OnceLock, RwLock};
+
+use regex::Regex;
 use thiserror::Error;
 
 use crate::EXIT_INVALID_INPUT;
@@ -40,8 +44,89 @@ pub const APCLI_SUBCOMMAND_NAMES: &[&str] = &[
     "describe-pipeline",
 ];
 
-/// Group names reserved by apcore-cli (checked in `cli.rs`).
-pub const RESERVED_GROUP_NAMES: &[&str] = &["apcli"];
+/// Default name of the built-in command group.
+///
+/// Overridable per [`ApcliGroup`] instance via the `name` parameter on the
+/// factories. Cross-SDK parity with Python `DEFAULT_BUILTIN_GROUP_NAME` and
+/// TypeScript `DEFAULT_BUILTIN_GROUP_NAME` (2026-05-08).
+pub const DEFAULT_BUILTIN_GROUP_NAME: &str = "apcli";
+
+/// Group names reserved by apcore-cli when no rename is configured (default
+/// list).
+///
+/// When [`set_reserved_group_names`] has been called the live reserved set is
+/// the value passed there; downstream collision checks should consult
+/// [`effective_reserved_group_names`] rather than this constant directly so
+/// that a rename ([`DEFAULT_BUILTIN_GROUP_NAME`] → custom) is honored.
+pub const RESERVED_GROUP_NAMES: &[&str] = &[DEFAULT_BUILTIN_GROUP_NAME];
+
+/// Mutable cache of the currently effective reserved-group set, updated by
+/// [`set_reserved_group_names`] from the binary entry-point once the
+/// resolved built-in-group name is known. Defaults to a singleton set
+/// containing [`DEFAULT_BUILTIN_GROUP_NAME`].
+///
+/// Cross-SDK parity (2026-05-08): mirrors the module-level
+/// `_effectiveReservedNames` cell in TypeScript `builtin-group.ts`. The Rust
+/// port keeps the data at module scope because the collision check in
+/// `cli.rs::build_module_command_with_limit` is a free function rather than a
+/// method on a per-instance group object.
+static EFFECTIVE_RESERVED: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+
+fn effective_reserved_cell() -> &'static RwLock<HashSet<String>> {
+    EFFECTIVE_RESERVED.get_or_init(|| {
+        let mut s = HashSet::new();
+        s.insert(DEFAULT_BUILTIN_GROUP_NAME.to_string());
+        RwLock::new(s)
+    })
+}
+
+/// Return a snapshot of the currently effective reserved-group set.
+pub fn effective_reserved_group_names() -> HashSet<String> {
+    effective_reserved_cell()
+        .read()
+        .map(|guard| guard.clone())
+        .unwrap_or_else(|_| {
+            let mut s = HashSet::new();
+            s.insert(DEFAULT_BUILTIN_GROUP_NAME.to_string());
+            s
+        })
+}
+
+/// True iff `name` is in the currently effective reserved-group set.
+pub fn is_reserved_group_name(name: &str) -> bool {
+    effective_reserved_cell()
+        .read()
+        .map(|guard| guard.contains(name))
+        .unwrap_or(false)
+}
+
+/// Replace the effective reserved-group set with `names`. Called once from
+/// the binary entry-point after the [`ApcliGroup`] is built so the
+/// `cli.rs` collision check sees the renamed group's name.
+pub fn set_reserved_group_names(names: HashSet<String>) {
+    if let Ok(mut guard) = effective_reserved_cell().write() {
+        *guard = names;
+    }
+}
+
+/// Compiled regex for [`validate_builtin_group_name`]. Matches the same
+/// shell-safe shape that downstream business-module group names must satisfy.
+fn name_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new("^[a-z][a-z0-9_-]*$").expect("static regex compiles"))
+}
+
+/// Validate a candidate built-in-group name. Returns
+/// [`ApcliGroupError::InvalidName`] on rejection.
+///
+/// Cross-SDK parity: mirrors Python `_NAME_REGEX` and TypeScript
+/// `_validateBuiltinGroupName` (2026-05-08).
+pub fn validate_builtin_group_name(name: &str) -> Result<(), ApcliGroupError> {
+    if name.is_empty() || !name_regex().is_match(name) {
+        return Err(ApcliGroupError::InvalidName(name.to_string()));
+    }
+    Ok(())
+}
 
 // Valid user-supplied mode strings. Note: `"auto"` is an internal sentinel
 // and is rejected from user-supplied config.
@@ -107,6 +192,13 @@ pub enum ApcliGroupError {
          Expected one of all|none|include|exclude."
     )]
     ModeInvalid(String),
+
+    /// Built-in group `name` failed the shell-safe regex check.
+    #[error(
+        "builtin_group_name '{0}' must match /^[a-z][a-z0-9_-]*$/ \
+         (non-empty, lowercase, alphanumeric + '_' / '-', leading letter)."
+    )]
+    InvalidName(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +218,7 @@ pub struct ApcliGroup {
     disable_env: bool,
     registry_injected: bool,
     from_cli_config: bool,
+    name: String,
 }
 
 /// Internal flat mode sentinel. Unlike [`ApcliMode`], this does not carry
@@ -160,8 +253,28 @@ impl ApcliGroup {
     /// (i.e. an `ApcliConfig` value passed to a future embedding API).
     ///
     /// A non-auto mode from this tier wins over env var and yaml. Because
-    /// `ApcliConfig` is strongly typed, no validation is needed here.
+    /// `ApcliConfig` is strongly typed, no validation is needed here. The
+    /// resolved built-in-group name defaults to [`DEFAULT_BUILTIN_GROUP_NAME`];
+    /// pass [`Self::from_cli_config_with_name`] for a custom name.
     pub fn from_cli_config(config: Option<ApcliConfig>, registry_injected: bool) -> Self {
+        Self::from_cli_config_with_name(config, registry_injected, None)
+            .expect("DEFAULT_BUILTIN_GROUP_NAME passes the regex check")
+    }
+
+    /// Tier 1 constructor with an explicit built-in-group name.
+    ///
+    /// `name = None` falls back to [`DEFAULT_BUILTIN_GROUP_NAME`]. Returns
+    /// [`ApcliGroupError::InvalidName`] if the supplied name fails the
+    /// shell-safe regex check (cross-SDK parity with Python `name=` kwarg
+    /// and TypeScript `opts.name`, 2026-05-08).
+    pub fn from_cli_config_with_name(
+        config: Option<ApcliConfig>,
+        registry_injected: bool,
+        name: Option<String>,
+    ) -> Result<Self, ApcliGroupError> {
+        let resolved_name = name.unwrap_or_else(|| DEFAULT_BUILTIN_GROUP_NAME.to_string());
+        validate_builtin_group_name(&resolved_name)?;
+
         let (mode, include, exclude, disable_env) = match config {
             None => (InternalMode::Auto, Vec::new(), Vec::new(), false),
             Some(cfg) => {
@@ -182,14 +295,15 @@ impl ApcliGroup {
             }
         };
 
-        Self {
+        Ok(Self {
             mode,
             include,
             exclude,
             disable_env,
             registry_injected,
             from_cli_config: true,
-        }
+            name: resolved_name,
+        })
     }
 
     /// Tier 3 constructor — config came from `apcore.yaml`.
@@ -199,7 +313,18 @@ impl ApcliGroup {
     /// and calls [`std::process::exit`] with [`EXIT_INVALID_INPUT`]; the
     /// fallible variant [`ApcliGroup::try_from_yaml`] is available for tests.
     pub fn from_yaml(yaml_value: Option<serde_yaml::Value>, registry_injected: bool) -> Self {
-        match Self::try_from_yaml(yaml_value, registry_injected) {
+        Self::from_yaml_with_name(yaml_value, registry_injected, None)
+    }
+
+    /// Tier 3 constructor with an explicit built-in-group name. On
+    /// validation failure (mode shape or invalid name) prints the error
+    /// and calls [`std::process::exit`] with [`EXIT_INVALID_INPUT`].
+    pub fn from_yaml_with_name(
+        yaml_value: Option<serde_yaml::Value>,
+        registry_injected: bool,
+        name: Option<String>,
+    ) -> Self {
+        match Self::try_from_yaml_with_name(yaml_value, registry_injected, name) {
             Ok(group) => group,
             Err(e) => {
                 eprintln!("{e}");
@@ -214,16 +339,28 @@ impl ApcliGroup {
         yaml_value: Option<serde_yaml::Value>,
         registry_injected: bool,
     ) -> Result<Self, ApcliGroupError> {
+        Self::try_from_yaml_with_name(yaml_value, registry_injected, None)
+    }
+
+    /// Fallible Tier 3 constructor with explicit name.
+    pub fn try_from_yaml_with_name(
+        yaml_value: Option<serde_yaml::Value>,
+        registry_injected: bool,
+        name: Option<String>,
+    ) -> Result<Self, ApcliGroupError> {
         use serde_yaml::Value;
+
+        let resolved_name = name.unwrap_or_else(|| DEFAULT_BUILTIN_GROUP_NAME.to_string());
+        validate_builtin_group_name(&resolved_name)?;
 
         // Missing / null → auto.
         let value = match yaml_value {
-            None => return Ok(Self::auto(registry_injected, false)),
+            None => return Ok(Self::auto(registry_injected, false, resolved_name)),
             Some(v) => v,
         };
 
         match value {
-            Value::Null => Ok(Self::auto(registry_injected, false)),
+            Value::Null => Ok(Self::auto(registry_injected, false, resolved_name)),
             Value::Bool(true) => Ok(Self {
                 mode: InternalMode::All,
                 include: Vec::new(),
@@ -231,6 +368,7 @@ impl ApcliGroup {
                 disable_env: false,
                 registry_injected,
                 from_cli_config: false,
+                name: resolved_name,
             }),
             Value::Bool(false) => Ok(Self {
                 mode: InternalMode::None,
@@ -239,8 +377,9 @@ impl ApcliGroup {
                 disable_env: false,
                 registry_injected,
                 from_cli_config: false,
+                name: resolved_name,
             }),
-            Value::Mapping(map) => Self::build_from_mapping(map, registry_injected),
+            Value::Mapping(map) => Self::build_from_mapping(map, registry_injected, resolved_name),
             Value::Sequence(_) => Err(ApcliGroupError::InvalidShape("array".to_string())),
             Value::String(_) => Err(ApcliGroupError::InvalidShape("string".to_string())),
             Value::Number(_) => Err(ApcliGroupError::InvalidShape("number".to_string())),
@@ -248,7 +387,7 @@ impl ApcliGroup {
         }
     }
 
-    fn auto(registry_injected: bool, from_cli_config: bool) -> Self {
+    fn auto(registry_injected: bool, from_cli_config: bool, name: String) -> Self {
         Self {
             mode: InternalMode::Auto,
             include: Vec::new(),
@@ -256,12 +395,14 @@ impl ApcliGroup {
             disable_env: false,
             registry_injected,
             from_cli_config,
+            name,
         }
     }
 
     fn build_from_mapping(
         map: serde_yaml::Mapping,
         registry_injected: bool,
+        name: String,
     ) -> Result<Self, ApcliGroupError> {
         use serde_yaml::Value;
 
@@ -331,6 +472,7 @@ impl ApcliGroup {
             disable_env,
             registry_injected,
             from_cli_config: false,
+            name,
         })
     }
 
@@ -464,6 +606,13 @@ impl ApcliGroup {
     /// True iff Tier 2 env-var lookup is sealed.
     pub fn disable_env(&self) -> bool {
         self.disable_env
+    }
+
+    /// Resolved name for the built-in command group (default
+    /// [`DEFAULT_BUILTIN_GROUP_NAME`]). Cross-SDK parity with Python
+    /// `ApcliGroup.name` and TypeScript `ApcliGroup#name` (2026-05-08).
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     // -------------------------------------------------------------------------

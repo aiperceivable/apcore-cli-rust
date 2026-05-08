@@ -134,3 +134,99 @@ fn try_from_yaml_rejects_non_string_mode() {
         "non-string apcli.mode must be ModeNotString, got {result:?}"
     );
 }
+
+// -----------------------------------------------------------------------------
+// FE-13: built-in group rename (D11-001)
+// -----------------------------------------------------------------------------
+
+use apcore_cli::{
+    effective_reserved_group_names, is_reserved_group_name, set_reserved_group_names,
+    validate_builtin_group_name, DEFAULT_BUILTIN_GROUP_NAME,
+};
+
+#[test]
+fn default_builtin_group_name_constant() {
+    assert_eq!(DEFAULT_BUILTIN_GROUP_NAME, "apcli");
+}
+
+#[test]
+fn from_cli_config_with_name_accepts_custom_name() {
+    let group = ApcliGroup::from_cli_config_with_name(
+        Some(ApcliConfig {
+            mode: ApcliMode::All,
+            disable_env: true,
+        }),
+        /*registry_injected*/ false,
+        Some("tools".to_string()),
+    )
+    .expect("custom name 'tools' should validate");
+    assert_eq!(group.name(), "tools");
+    assert_eq!(group.resolve_visibility(), "all");
+}
+
+#[test]
+fn from_cli_config_with_name_default_falls_back_to_apcli() {
+    let group = ApcliGroup::from_cli_config_with_name(
+        Some(ApcliConfig {
+            mode: ApcliMode::All,
+            disable_env: true,
+        }),
+        false,
+        None,
+    )
+    .expect("default name should validate");
+    assert_eq!(group.name(), "apcli");
+}
+
+#[test]
+fn validate_builtin_group_name_accepts_valid_names() {
+    assert!(validate_builtin_group_name("apcli").is_ok());
+    assert!(validate_builtin_group_name("admin").is_ok());
+    assert!(validate_builtin_group_name("a").is_ok());
+    assert!(validate_builtin_group_name("a1_b-c").is_ok());
+}
+
+#[test]
+fn validate_builtin_group_name_rejects_invalid_names() {
+    for bad in ["", "Apcli", "1abc", "-abc", "_abc", "a b", "ab!", "ABC"] {
+        let result = validate_builtin_group_name(bad);
+        assert!(
+            matches!(result, Err(ApcliGroupError::InvalidName(_))),
+            "name '{bad}' should be rejected, got {result:?}"
+        );
+    }
+}
+
+#[test]
+fn from_cli_config_with_name_rejects_invalid_names() {
+    let result = ApcliGroup::from_cli_config_with_name(None, false, Some("Bad-Name".to_string()));
+    assert!(matches!(result, Err(ApcliGroupError::InvalidName(_))));
+}
+
+#[test]
+fn try_from_yaml_with_name_rejects_invalid_names() {
+    let result = ApcliGroup::try_from_yaml_with_name(None, false, Some("BAD".to_string()));
+    assert!(matches!(result, Err(ApcliGroupError::InvalidName(_))));
+}
+
+#[test]
+fn set_reserved_group_names_updates_live_set() {
+    // Snapshot to restore at end so we don't poison sibling tests in this
+    // process. NOTE: this test is deliberately last in the rename block —
+    // tests in the same binary can run concurrently, but the assertions
+    // below only depend on this thread's view of the OnceLock<RwLock>.
+    let initial = effective_reserved_group_names();
+
+    use std::collections::HashSet;
+    let mut custom: HashSet<String> = HashSet::new();
+    custom.insert("tools".to_string());
+    set_reserved_group_names(custom);
+
+    assert!(is_reserved_group_name("tools"));
+    let live = effective_reserved_group_names();
+    assert!(live.contains("tools"));
+    assert!(!live.contains("apcli"));
+
+    // Restore the prior snapshot so other tests see the default state.
+    set_reserved_group_names(initial);
+}

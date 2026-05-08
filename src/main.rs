@@ -354,7 +354,18 @@ fn build_cli_command(
     // reintroduced.
     let apcli_cfg = apcore_cli::ApcliGroup::from_yaml(yaml_val, /*registry_injected*/ false);
 
-    let apcli_group = clap::Command::new("apcli")
+    // Update the live reserved-group set so collision checks in
+    // `cli.rs::build_module_command_with_limit` see the resolved built-in
+    // group name (mirrors TypeScript `setReservedGroupNames` and Python
+    // `_reserved_group_names`).
+    {
+        use std::collections::HashSet;
+        let mut reserved: HashSet<String> = HashSet::new();
+        reserved.insert(apcli_cfg.name().to_string());
+        apcore_cli::set_reserved_group_names(reserved);
+    }
+
+    let apcli_group = clap::Command::new(apcli_cfg.name().to_string())
         .about("Built-in commands.")
         .hide(!apcli_cfg.is_group_visible());
     let apcli_group = apcore_cli::register_apcli_subcommands(apcli_group, &apcli_cfg, &name);
