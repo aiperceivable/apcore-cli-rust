@@ -277,8 +277,28 @@ pub fn schema_to_clap_args_with_limit(
             }
 
             // Also register the no- flag in seen_flags to detect collisions.
+            //
+            // Audit D10-W1 (2026-05-08): the prior implementation called
+            // `seen_flags.insert(...)` unconditionally, which silently
+            // overwrote any pre-existing entry for the same `--no-X` long
+            // flag (e.g. boolean `force` synthesizes `--no-force`, then a
+            // sibling non-boolean `no_force` mapping to `--no-force` would
+            // overwrite the entry instead of being rejected). Probe first.
+            //
+            // Audit D11-W5 (2026-05-08): the collision-message `prop_b`
+            // value previously stored the synthetic `format!("no-{}",
+            // prop_name)` string, so the diagnostic pointed at a property
+            // that does not exist in the schema. Use the actual originating
+            // boolean property name instead so users can locate the source.
             let no_flag_long = format!("no-{}", flag_long);
-            seen_flags.insert(no_flag_long, format!("no-{}", prop_name));
+            if let Some(existing) = seen_flags.get(&no_flag_long) {
+                return Err(SchemaParserError::FlagCollision {
+                    prop_a: prop_name.clone(),
+                    prop_b: existing.clone(),
+                    flag_name: no_flag_long,
+                });
+            }
+            seen_flags.insert(no_flag_long, prop_name.clone());
 
             args.push(pos_arg);
             args.push(neg_arg);
@@ -1048,6 +1068,53 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("my_flag") || msg.contains("my-flag"));
         assert!(msg.contains("my-flag") || msg.contains("--my-flag"));
+    }
+
+    /// D10-W1 + D11-W5 (2026-05-08): a boolean property like `force`
+    /// synthesises a `--no-force` long flag; if a sibling non-boolean
+    /// property `no_force` ALSO normalises to `--no-force`, the parser must
+    /// raise `FlagCollision` (D10-W1) and the diagnostic must name the
+    /// originating boolean property, not the synthetic `no-force` string
+    /// (D11-W5).
+    #[test]
+    fn test_boolean_no_flag_collides_with_sibling_property() {
+        let schema = json!({
+            "properties": {
+                "force":    { "type": "boolean", "default": false },
+                "no_force": { "type": "string" }
+            }
+        });
+        let err = schema_to_clap_args(&schema, None).unwrap_err();
+        match err {
+            SchemaParserError::FlagCollision {
+                prop_a,
+                prop_b,
+                flag_name,
+            } => {
+                assert_eq!(
+                    flag_name, "no-force",
+                    "the colliding long flag must be 'no-force'"
+                );
+                // The two collision parties are the boolean `force` (which
+                // synthesises `--no-force`) and the sibling `no_force`
+                // (which normalises directly to `--no-force`).
+                let parties = [prop_a.as_str(), prop_b.as_str()];
+                assert!(
+                    parties.contains(&"force"),
+                    "diagnostic must name the originating boolean property 'force', \
+                     not the synthetic 'no-force' string; got prop_a={prop_a:?}, prop_b={prop_b:?}"
+                );
+                assert!(
+                    parties.contains(&"no_force"),
+                    "diagnostic must name the sibling 'no_force'; got prop_a={prop_a:?}, prop_b={prop_b:?}"
+                );
+                assert!(
+                    !parties.contains(&"no-force"),
+                    "diagnostic must NOT use the synthetic 'no-force' as a property name (audit D11-W5)"
+                );
+            }
+            other => panic!("expected FlagCollision, got {other:?}"),
+        }
     }
 
     #[test]
