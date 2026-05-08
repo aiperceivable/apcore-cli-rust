@@ -17,15 +17,28 @@ use thiserror::Error;
 ///
 /// Spec: each language serializes to sorted-key JSON before hashing so that
 /// equivalent input dicts produce the same hash regardless of insertion order.
+///
+/// Recursion is required at every level — both inside object values and inside
+/// array elements — so that nested objects with reordered keys hash to the
+/// same digest as their canonical form (audit D11-002, 2026-05-08).
 fn sorted_json(v: &Value) -> String {
     match v {
         Value::Object(map) => {
-            let sorted: std::collections::BTreeMap<_, _> = map.iter().collect();
-            let pairs: Vec<String> = sorted
+            // Recurse into each value, then re-emit with keys sorted lexicographically.
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            let pairs: Vec<String> = entries
                 .iter()
                 .map(|(k, val)| format!("{}:{}", serde_json::json!(k), sorted_json(val)))
                 .collect();
             format!("{{{}}}", pairs.join(","))
+        }
+        Value::Array(arr) => {
+            // Recurse into each element so nested objects inside arrays are
+            // canonicalised. Element order itself is preserved (arrays are
+            // ordered by spec).
+            let parts: Vec<String> = arr.iter().map(sorted_json).collect();
+            format!("[{}]", parts.join(","))
         }
         other => other.to_string(),
     }
@@ -364,6 +377,45 @@ mod tests {
         let _logger = AuditLogger::new(Some(path));
         let mode = std::fs::metadata(&nested).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "parent dir must be 0700; got {:o}", mode);
+    }
+
+    /// D11-002 (2026-05-08): `sorted_json` must canonicalise objects nested
+    /// inside object values and inside arrays. Previously the function only
+    /// sorted top-level keys, so two semantically equal payloads with
+    /// different nested key orderings serialised to different strings and
+    /// therefore hashed differently.
+    #[test]
+    fn test_sorted_json_recurses_into_nested_objects() {
+        let a = json!({ "outer": { "y": 1, "x": 2 } });
+        let b = json!({ "outer": { "x": 2, "y": 1 } });
+        assert_eq!(
+            super::sorted_json(&a),
+            super::sorted_json(&b),
+            "nested objects with reordered keys must canonicalise identically"
+        );
+    }
+
+    #[test]
+    fn test_sorted_json_recurses_into_arrays_of_objects() {
+        let a = json!({ "items": [ { "y": 1, "x": 2 }, { "b": 4, "a": 3 } ] });
+        let b = json!({ "items": [ { "x": 2, "y": 1 }, { "a": 3, "b": 4 } ] });
+        assert_eq!(
+            super::sorted_json(&a),
+            super::sorted_json(&b),
+            "objects nested inside arrays must canonicalise identically"
+        );
+    }
+
+    #[test]
+    fn test_sorted_json_preserves_array_element_order() {
+        // Element order is data, not formatting — must NOT be sorted.
+        let a = json!([3, 1, 2]);
+        let b = json!([1, 2, 3]);
+        assert_ne!(
+            super::sorted_json(&a),
+            super::sorted_json(&b),
+            "array element order must be preserved (it is part of the value)"
+        );
     }
 
     /// D10-007: env-fallback helper must walk USER -> LOGNAME -> USERNAME -> "unknown".
