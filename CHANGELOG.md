@@ -6,33 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.8.0] - 2026-05-08
 
+### Security
+
+- **D10-001 (critical) — `AuthProvider::authenticate_request` rejects trailing CR/LF in the API key** (`src/security/auth.rs`). Previous behaviour stripped trailing `\r`/`\n` before the malformed-key check, allowing a key ending in `"\n"` to silently produce `Authorization: Bearer <stripped>` and exposing the SDK to header-injection vectors. Python and TypeScript both reject any `\r` or `\n` at any position; Rust now matches. The regression test `test_authenticate_request_strips_trailing_crlf` was asserting the wrong behaviour and has been renamed to `test_authenticate_request_rejects_trailing_crlf` with the assertion inverted.
+- **D10-truncated #1 — `ConfigEncryptor::retrieve` surfaces a user-actionable decryption error** (`src/security/config_encryptor.rs`). All `retrieve()`-time decryption failures (b64 decode, v1 AES, v2 AES) now route through a new `ConfigEncryptorError::DecryptFailed { key }` variant with the spec'd message `"Failed to decrypt configuration value '{key}'. Re-configure with 'apcore-cli config set {key}'."` Previously, the most common decryption failure modes leaked the internal `AuthTagMismatch` message and dropped both the originating config key and the remediation guidance. `AuthTagMismatch` is preserved as the internal-helper variant returned from `_aes_decrypt_v1`/`_aes_decrypt_v2`. Cross-SDK parity with Python (`config_encryptor.py:62-64,70-72`) and TypeScript (`config-encryptor.ts:136-149`).
+- **D11-001 — Built-in-group rename surface** (`src/builtin_group.rs`, `src/cli.rs`, `src/main.rs`, `src/lib.rs`). Restores FE-13 P0 parity with Python `ApcliGroup.name` and TypeScript `ApcliGroup#name`. New `pub fn ApcliGroup::name(&self) -> &str` accessor backed by a `name: String` field that defaults to `"apcli"` and is validated against `NAME_REGEX = ^[a-z][a-z0-9_-]*$`. New factory variants `from_cli_config_with_name` / `from_yaml_with_name` / `try_from_yaml_with_name` accept `name: Option<String>`; the original 2-arg factories delegate with `None` for backward compatibility. New `validate_builtin_group_name` helper and `ApcliGroupError::InvalidName` variant. New module-level `effective_reserved_group_names`, `is_reserved_group_name`, and `pub fn set_reserved_group_names(...)` (mirrors TypeScript `setReservedGroupNames`); `cli.rs::build_module_command_with_limit` consults the live set so a renamed built-in group is honoured at collision-check time. Binary entry-point seeds the live set from `apcli_cfg.name()` and threads the resolved name through the `clap::Command::new(...)` builder.
+- **D11-W3 — Sandbox canonicalises inherited `APCORE_EXTENSIONS_ROOT`** (`src/security/sandbox.rs:248`). The child env now carries an absolute, symlink-resolved path so sandboxed processes cannot escape via a relative or symlink-bait extensions root.
+- **D11-002 — `sorted_json` recurses into nested objects and arrays** for hash canonicalisation (`src/security/audit.rs:20`). Previously only top-level keys were sorted, so audit-log input hashes diverged for inputs with nested structures. Aligns Rust with the Python and TypeScript canonicalisation contract.
+
 ### Added
 
+- **D11-001 — `pub fn set_reserved_group_names(names: &[String])`** module-level setter on `builtin_group` (mirrors TypeScript `setReservedGroupNames`) plus the `ApcliGroup::name()` accessor and `from_cli_config_with_name` / `from_yaml_with_name` / `try_from_yaml_with_name` factory variants. See Security entry above for the full surface.
+- **D1-004 — `Sandbox::with_extensions_root(...)` and `Sandbox::with_max_output_bytes(...)` builder methods** (`src/security/sandbox.rs`). Cross-SDK parity with Python `Sandbox.with_extensions_root` / `with_max_output_bytes` (`apcore-cli-python/src/apcore_cli/security/sandbox.py:85,95`). `extensions_root` overrides any inherited `APCORE_EXTENSIONS_ROOT` env var with a canonicalised absolute path; `max_output_bytes` replaces the `SANDBOX_OUTPUT_SIZE_LIMIT_BYTES` constant as the per-instance output cap. Both fields are wired through to `_sandboxed_execute`. 5 new unit tests + 4 new integration tests cover field defaults, single-setter behaviour, fluent chaining, and the disabled-path passthrough invariant.
 - **`CliError::SchemaParserFailure { module_id, source }` variant** in `src/cli.rs` — wraps `SchemaParserError::ReservedPropertyName` and `::FlagCollision` so both route to `EXIT_SCHEMA_CIRCULAR_REF` (48) via `CliError::exit_code()`. Previously these errors were re-wrapped as `CliError::InvalidModuleId` and exited with code 2, breaking cross-SDK exit-code parity with Python `sys.exit(48)` and TypeScript `process.exit(EXIT_CODES.SCHEMA_CIRCULAR_REF)`. Audit D11-NEW-005 (see Fixed).
-- **Documented parity gap for the built-in-group rename feature** in `src/lib.rs`. Python `create_cli(builtin_group_name=...)` and TypeScript `createCli({ builtinGroupName })` ship the rename kwarg today; Rust does not because the embedding API (`CliConfig` / `run_with_config`) was removed in v0.7.0 (D9-001/002). The lib-level comment block now lists the implementation requirements (regex validation, `with_builtin_group_name` builder method, accessor on `CliConfig`, conversion of static `BUILTIN_GROUP_NAME` const to per-instance state) so the rename lands at the same time the embedding API is reintroduced.
-
-### Fixed
-
-- **D11-NEW-005 — `schema_to_clap_args` `Err(SchemaParserError::*)` was mapped to exit code 2**, not 48. The call site in `src/cli.rs:425` previously wrapped both `ReservedPropertyName` and `FlagCollision` as `CliError::InvalidModuleId`, which exits 2. Both are spec-defined exit-48 schema-validity errors per `apcore-cli/docs/features/schema-parser.md` Contract: `schema_to_click_options` Errors (cross-SDK parity with Python `sys.exit(48)` and TS `process.exit(EXIT_CODES.SCHEMA_CIRCULAR_REF)`). Fix routes through the new `CliError::SchemaParserFailure` variant.
-- **D9-NEW-002 — `merge_allof` did not deduplicate `required` across branches**. The function concatenated each branch's `required` array via `.extend()`, producing duplicates when two branches independently required the same field name. Spec mandates first-seen-wins dedup (matching TypeScript `[...new Set(...)]` and Python's new explicit seen-set). Fix: replace `.extend()` with a `for item in req { if !merged_required.contains(item) { merged_required.push(...) } }` loop. Outer `obj.required` parent-vs-branches dedup at line 244-251 was already correct.
-
-### Changed
-
-- **`Makefile` `coverage` target** now passes `--fail-under-lines 85` to `cargo llvm-cov`, matching the Python `pyproject.toml` `[tool.coverage.report] fail_under = 85` and the new TypeScript `vitest.config.ts` `thresholds.lines: 85`. Cross-SDK CI parity (audit D5-004).
-
-- **`apcli list` and `apcli describe` `--format` value-parsers** expanded to
-  `[table, json, csv, yaml, jsonl, markdown, skill]`. `describe` previously
-  accepted only `[table, json]`. Unknown values exit with code 2 (clap
-  rejection) as before. Issue
-  [aiperceivable/apcore-cli#20](https://github.com/aiperceivable/apcore-cli/issues/20).
-- **Dependency bump**: `apcore = "=0.21.0"` (was `=0.19.0`) and the optional
-  `apcore-toolkit = "=0.6.0"` (was `=0.5.0`). Aligns with upstream
-  `apcore 0.21.0` (`Module::preview` / `PreflightResult::predicted_changes`)
-  and `apcore-toolkit 0.6.0` (surface-aware formatters). No CLI-visible
-  behavioural breaks.
-
-### Added
-
 - **`--format markdown` and `--format skill`** for `apcli list` and `apcli describe`
   (issue [aiperceivable/apcore-cli#20](https://github.com/aiperceivable/apcore-cli/issues/20)),
   gated behind the `toolkit` Cargo feature. Both delegate to
@@ -63,7 +49,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   built-ins is tracked as a follow-up — today the readers are invoked
   directly by the discovery layer.
 - New file: `src/system_usage.rs`.
-
 - **Issue #18 + #19 — Rust parity**: new `pub fn create_cli_with(extensions_dir,
   prog_name, host_version, host_description) -> clap::Command` lives in the
   binary entry point (`src/main.rs`) — embedding API is BIN-only in v0.8
@@ -89,6 +74,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `apcore`. Standalone bin still uses the SDK package name for `prog_name`
   by default, so the public `apcore-cli --help` output is unchanged in
   spirit; downstream hosts now get a neutral surface out of the box.
+- **D5-002 — Dedicated unit tests for `builtin_group` and `display_helpers`** (`tests/test_builtin_group.rs`, `tests/test_display_helpers.rs`). 10 tests cover `APCLI_SUBCOMMAND_NAMES` / `RESERVED_GROUP_NAMES` constants, all four `from_cli_config` modes, both auto-detect branches, and both `try_from_yaml` validation errors. 6 tests cover display-block extraction, alias precedence chain, and tag fallback chain.
+- **D11-NEW-001 / D11-NEW-003 — `ref_resolver` preserves parent sibling `required` in `anyOf`/`oneOf`** (`src/ref_resolver.rs`). `resolve_node` now extracts `sibling_required` from the parent before the branch loop and merges it sibling-first deduplicated with the branch intersection at the end; `merged.properties` is also seeded from the parent (parity with the existing `allOf` branch handling). 3 new regression tests cover `anyOf`, `oneOf`, and dedup overlap. Matches Python `ref_resolver.py:100-118`.
+- **`Documented parity gap for the built-in-group rename feature`** in `src/lib.rs` (now superseded by D11-001 above — kept here for the comment block listing the implementation requirements that have since landed).
+- **D1-006 — Documented `allowed_prefixes` parity gap** in `src/lib.rs`. TypeScript `createCli` gained `allowedPrefixes` (commit `0f2e08a`); Rust cannot mirror it until the high-level embedding factory (removed in v0.7.0 D9-001/002) returns. The lib-level cross-SDK parity note now records that TypeScript is no longer missing it and Rust is the sole gap.
+
+### Changed
+
+- **D6-W1 — `serde_yaml` replaced with `serde_yaml_ng = "0.10"`** (`Cargo.toml:29`). Upstream `serde_yaml` was deprecated; `serde_yaml_ng` is the maintained drop-in replacement. No API surface change.
+- **D6-003 — `apcore` pin policy relaxed** from `=0.21.0` to `0.21` (minor floor), aligning with `apcore-cli-python` (`>=0.21.0`) and `apcore-cli-typescript` (`>=0.21.0`).
+- **Dependency bumps** — `nix 0.29 → 0.30.1`, `thiserror 1 → 2.0.18`, `comfy-table 6 → 7.2.2` (transitive: `crossterm 0.26 → 0.29`, `unicode-width 0.1 → 0.2`).
+- **`Makefile` `coverage` target** now passes `--fail-under-lines 85` to `cargo llvm-cov`, matching the Python `pyproject.toml` `[tool.coverage.report] fail_under = 85` and the new TypeScript `vitest.config.ts` `thresholds.lines: 85`. Cross-SDK CI parity (audit D5-004).
+- **`apcli list` and `apcli describe` `--format` value-parsers** expanded to
+  `[table, json, csv, yaml, jsonl, markdown, skill]`. `describe` previously
+  accepted only `[table, json]`. Unknown values exit with code 2 (clap
+  rejection) as before. Issue
+  [aiperceivable/apcore-cli#20](https://github.com/aiperceivable/apcore-cli/issues/20).
+- **Dependency bump**: `apcore = "0.21"` (was `=0.19.0`) and the optional
+  `apcore-toolkit = "=0.6.0"` (was `=0.5.0`). Aligns with upstream
+  `apcore 0.21.0` (`Module::preview` / `PreflightResult::predicted_changes`)
+  and `apcore-toolkit 0.6.0` (surface-aware formatters). No CLI-visible
+  behavioural breaks.
+- **D8-W1 — `Cargo.lock` is now tracked** in git. Per Cargo guidance, the lockfile must be committed for crates that ship a `[[bin]]` target to guarantee reproducible binary builds. The lockfile was previously gitignored.
+- **D9-W5 — `register_completion_command` no longer takes `prog_name`** (`src/shell.rs:79`). The parameter was unused; signature now matches the TypeScript `registerCompletionCommand` contract.
+
+### Fixed
+
+- **D11-NEW-005 — `schema_to_clap_args` `Err(SchemaParserError::*)` was mapped to exit code 2**, not 48. The call site in `src/cli.rs:425` previously wrapped both `ReservedPropertyName` and `FlagCollision` as `CliError::InvalidModuleId`, which exits 2. Both are spec-defined exit-48 schema-validity errors per `apcore-cli/docs/features/schema-parser.md` Contract: `schema_to_click_options` Errors (cross-SDK parity with Python `sys.exit(48)` and TS `process.exit(EXIT_CODES.SCHEMA_CIRCULAR_REF)`). Fix routes through the new `CliError::SchemaParserFailure` variant.
+- **D9-NEW-002 — `merge_allof` did not deduplicate `required` across branches**. The function concatenated each branch's `required` array via `.extend()`, producing duplicates when two branches independently required the same field name. Spec mandates first-seen-wins dedup (matching TypeScript `[...new Set(...)]` and Python's new explicit seen-set). Fix: replace `.extend()` with a `for item in req { if !merged_required.contains(item) { merged_required.push(...) } }` loop. Outer `obj.required` parent-vs-branches dedup at line 244-251 was already correct.
+- **D10-002 — `resolve_refs` exit-code split** (`src/cli.rs:69`). `RefResolverError::Unresolvable` now exits `45` (`EXIT_SCHEMA_REF_UNRESOLVABLE`) while `RefResolverError::Circular` and `RefResolverError::MaxDepthExceeded` exit `48` (`EXIT_SCHEMA_CIRCULAR_REF`). Previously all three collapsed onto a single exit code, breaking cross-SDK parity with Python `sys.exit(45)` / `sys.exit(48)` and the TypeScript `EXIT_CODES.SCHEMA_REF_UNRESOLVABLE` / `SCHEMA_CIRCULAR_REF` split.
+- **D10-W1 + D11-W5 — `schema_parser` flag-collision check probes `seen_flags` before inserting the synthetic `--no-X`** (`src/schema_parser.rs:280`), and the collision message now references the original boolean property name instead of the negated form. Cross-SDK message parity.
+- **D10-truncated #3 — Clarified `CliApprovalHandler::check_approval` shadow** (`src/approval.rs`). Added a doc-comment disambiguation table covering both `check_approval` overloads (the inherent method that takes `&Value` and is an alias for `request_approval`, and the `apcore::ApprovalHandler` trait impl that takes `&str` and implements the spec's Phase B polling protocol returning `"rejected — CLI does not support async polling"`). The previous comment claimed the inherent method "matches the Python/TypeScript `check_approval` method name", which was misleading. Doc-only change.
+- **D11-W1 — `ConfigEncryptor` username fallback chain extended to `USER → LOGNAME → USERNAME`** (`src/security/config_encryptor.rs:233`) for Windows parity with the Python and TypeScript SDKs.
+- **D9-W3 — `register_discovery_commands` deleted; `cmd_list` demoted to `pub(crate)`** (`src/discovery.rs:313`). The wrapper had no remaining callers and exposed an internal helper that was never part of the spec'd surface.
+- **D10-info-1 — `APCORE_CLI_APCLI` env value is now trimmed before lowercase normalisation** (`src/builtin_group.rs:633`). Spec invariant 2 (`apcore-cli/docs/features/builtin-group.md`) requires the env-var parser to be both case-insensitive and trim-on-read; values like `"  show  "` or `"\thide\n"` now resolve to `"all"`/`"none"` instead of hitting the warn-and-fallthrough branch. Pure-whitespace strings collapse to `"unset"` (parity with the empty-string short-circuit) rather than warning.
+- **D11-010 — `AuditLogger` write-failure warnings are deduplicated**. Repeated IO failures against the same `AuditLogger` instance now emit `"Could not write audit log"` at most once; subsequent failures fall through to `trace` level. The dedup flag lives in `Arc<AtomicBool>` so clones share state, matching TypeScript `_writeFailureWarned` and Python `_write_failure_warned` (`src/security/audit.rs:227`).
+- **D11-011 — `ExposureFilter` accepts `mode = "none"` silently** (`src/exposure.rs:59`). Python and TypeScript treat `"none"` as a legitimate user-supplied value (hides every module); Rust was warning `"Unknown ExposureFilter mode 'none'"` and clamping back to `"none"`. The end-state was identical, but the spurious warning broke log-noise parity. `"none"` is now in the `VALID_MODES` whitelist; truly unknown modes still warn-and-clamp (fail-closed).
 
 ### Removed
 
@@ -101,6 +122,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `print_deprecation_warning`, `build_apcli_group_for_dispatch`,
   `forward_shim_args`, and `parse_shim_for` helpers in `src/main.rs` were
   deleted along with the registration loop and 13 dispatch arms.
+- **D6-002 — `tokio-test = "0.4"` dev-dependency removed**. The crate had zero references across `src/`, `tests/`, and `examples/`; `#[tokio::test]` macros come from tokio's own `macros` feature.
+- **D9-W3 — `register_discovery_commands` wrapper removed** from `src/discovery.rs`. See Fixed entry above.
 
 ---
 
