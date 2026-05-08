@@ -5,6 +5,64 @@
 use serde_json::Value;
 use std::io::IsTerminal;
 
+#[cfg(not(feature = "toolkit"))]
+const TOOLKIT_MISSING_HINT: &str =
+    "The 'markdown' and 'skill' output formats require the 'toolkit' Cargo feature.";
+
+/// Adapt a registry-style JSON Value (module descriptor) to the toolkit's
+/// `ScannedModule` so the surface formatters can render it.
+///
+/// Both shapes share most fields (`module_id`, `description`,
+/// `input_schema`, `output_schema`, `tags`, `annotations`, `examples`,
+/// `metadata`); the toolkit additionally needs `target` (set to ""),
+/// `version` (defaulted), and `display` (sourced from `metadata.display`
+/// when present).
+#[cfg(feature = "toolkit")]
+pub(crate) fn descriptor_to_scanned(m: &Value) -> apcore_toolkit::ScannedModule {
+    use apcore_toolkit::ScannedModule;
+
+    let module_id = extract_str(m, &["module_id", "id", "canonical_id", "name"]).to_string();
+    let description = extract_str(m, &["description"]).to_string();
+    let input_schema = m
+        .get("input_schema")
+        .cloned()
+        .unwrap_or(Value::Object(Default::default()));
+    let output_schema = m
+        .get("output_schema")
+        .cloned()
+        .unwrap_or(Value::Object(Default::default()));
+    let tags = extract_tags(m);
+
+    let mut sm = ScannedModule::new(
+        module_id,
+        description,
+        input_schema,
+        output_schema,
+        tags,
+        String::new(),
+    );
+
+    if let Some(metadata_obj) = m.get("metadata").and_then(|v| v.as_object()) {
+        for (k, v) in metadata_obj {
+            sm.metadata.insert(k.clone(), v.clone());
+        }
+        if let Some(display) = metadata_obj.get("display") {
+            if !display.is_null() {
+                sm.display = Some(display.clone());
+            }
+        }
+    }
+
+    if let Some(ann) = m.get("annotations") {
+        if let Ok(parsed) = serde_json::from_value::<apcore::module::ModuleAnnotations>(ann.clone())
+        {
+            sm.annotations = Some(parsed);
+        }
+    }
+
+    sm
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -24,6 +82,8 @@ pub(crate) fn resolve_format_inner(explicit_format: Option<&str>, is_tty: bool) 
             "csv" => "csv",
             "yaml" => "yaml",
             "jsonl" => "jsonl",
+            "markdown" => "markdown",
+            "skill" => "skill",
             other => {
                 // Unknown format: log a warning and fall back to json.
                 // (Invalid values are caught by clap upstream; this is a safety net.)
@@ -183,6 +243,27 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
                 .collect();
 
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "[]".to_string())
+        }
+        "markdown" | "skill" => {
+            #[cfg(feature = "toolkit")]
+            {
+                use apcore_toolkit::{format_modules, FormatOutput, ModuleStyle};
+                let style = if format == "skill" {
+                    ModuleStyle::Skill
+                } else {
+                    ModuleStyle::Markdown
+                };
+                let scanned: Vec<_> = modules.iter().map(descriptor_to_scanned).collect();
+                match format_modules(&scanned, style, None, true) {
+                    FormatOutput::Text(s) => s,
+                    other => format!("{:?}", other),
+                }
+            }
+            #[cfg(not(feature = "toolkit"))]
+            {
+                tracing::warn!("{}", TOOLKIT_MISSING_HINT);
+                format_module_list(modules, "json", filter_tags)
+            }
         }
         unknown => {
             tracing::warn!(
@@ -347,6 +428,29 @@ pub fn format_module_detail(module: &Value, format: &str) -> String {
 
             serde_json::to_string_pretty(&serde_json::Value::Object(result))
                 .unwrap_or_else(|_| "{}".to_string())
+        }
+        "markdown" | "skill" => {
+            #[cfg(feature = "toolkit")]
+            {
+                use apcore_toolkit::{
+                    format_module as toolkit_format_module, FormatOutput, ModuleStyle,
+                };
+                let style = if format == "skill" {
+                    ModuleStyle::Skill
+                } else {
+                    ModuleStyle::Markdown
+                };
+                let scanned = descriptor_to_scanned(module);
+                match toolkit_format_module(&scanned, style, true) {
+                    FormatOutput::Text(s) => s,
+                    other => format!("{:?}", other),
+                }
+            }
+            #[cfg(not(feature = "toolkit"))]
+            {
+                tracing::warn!("{}", TOOLKIT_MISSING_HINT);
+                format_module_detail(module, "json")
+            }
         }
         unknown => {
             tracing::warn!(
@@ -895,5 +999,103 @@ mod tests {
         );
         assert!(output.contains("x-category"), "must contain x- key");
         assert!(output.contains("utility"), "must contain x- value");
+    }
+
+    // ---------------------------------------------------------------------
+    // markdown / skill — toolkit delegation (issue #20)
+    // ---------------------------------------------------------------------
+
+    #[cfg(feature = "toolkit")]
+    fn fixture_module() -> Value {
+        json!({
+            "module_id": "math.add",
+            "description": "Add two numbers and return the sum",
+            "tags": ["math"],
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "integer", "description": "First operand"},
+                    "b": {"type": "integer", "description": "Second operand"}
+                },
+                "required": ["a", "b"]
+            },
+            "output_schema": {
+                "type": "object",
+                "properties": {"sum": {"type": "integer"}},
+                "required": ["sum"]
+            }
+        })
+    }
+
+    #[cfg(feature = "toolkit")]
+    #[test]
+    fn test_format_module_list_markdown_matches_toolkit() {
+        use apcore_toolkit::{format_modules, FormatOutput, ModuleStyle};
+        let modules = vec![fixture_module()];
+        let scanned: Vec<_> = modules.iter().map(descriptor_to_scanned).collect();
+        let expected = match format_modules(&scanned, ModuleStyle::Markdown, None, true) {
+            FormatOutput::Text(s) => s,
+            _ => panic!("expected text"),
+        };
+        let got = format_module_list(&modules, "markdown", &[]);
+        assert_eq!(got, expected);
+    }
+
+    #[cfg(feature = "toolkit")]
+    #[test]
+    fn test_format_module_list_skill_matches_toolkit() {
+        use apcore_toolkit::{format_modules, FormatOutput, ModuleStyle};
+        let modules = vec![fixture_module()];
+        let scanned: Vec<_> = modules.iter().map(descriptor_to_scanned).collect();
+        let expected = match format_modules(&scanned, ModuleStyle::Skill, None, true) {
+            FormatOutput::Text(s) => s,
+            _ => panic!("expected text"),
+        };
+        let got = format_module_list(&modules, "skill", &[]);
+        assert_eq!(got, expected);
+    }
+
+    #[cfg(feature = "toolkit")]
+    #[test]
+    fn test_format_module_detail_markdown_matches_toolkit() {
+        use apcore_toolkit::{format_module as toolkit_fmt, FormatOutput, ModuleStyle};
+        let m = fixture_module();
+        let scanned = descriptor_to_scanned(&m);
+        let expected = match toolkit_fmt(&scanned, ModuleStyle::Markdown, true) {
+            FormatOutput::Text(s) => s,
+            _ => panic!("expected text"),
+        };
+        let got = format_module_detail(&m, "markdown");
+        assert_eq!(got, expected);
+    }
+
+    #[cfg(feature = "toolkit")]
+    #[test]
+    fn test_format_module_detail_skill_emits_yaml_frontmatter() {
+        let m = fixture_module();
+        let got = format_module_detail(&m, "skill");
+        assert!(
+            got.starts_with("---\n"),
+            "skill output must start with YAML --- delimiter"
+        );
+        let lines: Vec<&str> = got.split('\n').collect();
+        assert!(lines.len() > 3);
+        assert!(lines[1].starts_with("name: math.add"));
+        assert!(lines[2].starts_with("description:"));
+        assert_eq!(lines[3], "---");
+    }
+
+    #[cfg(feature = "toolkit")]
+    #[test]
+    fn test_format_module_detail_skill_matches_toolkit() {
+        use apcore_toolkit::{format_module as toolkit_fmt, FormatOutput, ModuleStyle};
+        let m = fixture_module();
+        let scanned = descriptor_to_scanned(&m);
+        let expected = match toolkit_fmt(&scanned, ModuleStyle::Skill, true) {
+            FormatOutput::Text(s) => s,
+            _ => panic!("expected text"),
+        };
+        let got = format_module_detail(&m, "skill");
+        assert_eq!(got, expected);
     }
 }

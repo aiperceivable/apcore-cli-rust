@@ -333,7 +333,7 @@ fn list_command() -> Command {
             Arg::new("format")
                 .long("format")
                 .value_parser(clap::builder::PossibleValuesParser::new([
-                    "table", "json", "csv", "yaml", "jsonl",
+                    "table", "json", "csv", "yaml", "jsonl", "markdown", "skill",
                 ]))
                 .value_name("FORMAT")
                 .help("Output format. Default: table (TTY) or json (non-TTY)."),
@@ -424,7 +424,9 @@ fn describe_command() -> Command {
         .arg(
             Arg::new("format")
                 .long("format")
-                .value_parser(clap::builder::PossibleValuesParser::new(["table", "json"]))
+                .value_parser(clap::builder::PossibleValuesParser::new([
+                    "table", "json", "csv", "yaml", "jsonl", "markdown", "skill",
+                ]))
                 .value_name("FORMAT")
                 .help("Output format. Default: table (TTY) or json (non-TTY)."),
         )

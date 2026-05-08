@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **`apcli list` and `apcli describe` `--format` value-parsers** expanded to
+  `[table, json, csv, yaml, jsonl, markdown, skill]`. `describe` previously
+  accepted only `[table, json]`. Unknown values exit with code 2 (clap
+  rejection) as before. Issue
+  [aiperceivable/apcore-cli#20](https://github.com/aiperceivable/apcore-cli/issues/20).
 - **Dependency bump**: `apcore = "=0.21.0"` (was `=0.19.0`) and the optional
   `apcore-toolkit = "=0.6.0"` (was `=0.5.0`). Aligns with upstream
   `apcore 0.21.0` (`Module::preview` / `PreflightResult::predicted_changes`)
@@ -16,6 +21,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **`--format markdown` and `--format skill`** for `apcli list` and `apcli describe`
+  (issue [aiperceivable/apcore-cli#20](https://github.com/aiperceivable/apcore-cli/issues/20)),
+  gated behind the `toolkit` Cargo feature. Both delegate to
+  `apcore_toolkit::format_module(s)` (≥0.6) so the output is byte-identical
+  to the same toolkit call in the Python and TypeScript SDKs. `--format skill`
+  emits vendor-neutral SKILL.md content directly loadable by Claude Code
+  (`.claude/skills/<id>/SKILL.md`) and Gemini CLI
+  (`.gemini/skills/<id>/SKILL.md`):
+
+  ```bash
+  apcore-cli apcli describe users.create --format skill > .claude/skills/users.create/SKILL.md
+  ```
+
+  A new internal `descriptor_to_scanned()` helper adapts the registry's JSON
+  module-descriptor shape to the toolkit's `ScannedModule` type. When the
+  `toolkit` feature is disabled, requesting `markdown` or `skill` logs a
+  warning and falls back to `json`.
 - **Issue #17 — `system_usage` aggregator + `list --sort calls|errors|latency`**:
   new module `src/system_usage.rs` reads `~/.apcore-cli/audit.jsonl`, filters
   by period (default 24h), and returns per-module aggregates (`calls`,
