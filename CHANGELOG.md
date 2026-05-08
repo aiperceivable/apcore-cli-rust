@@ -90,6 +90,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   by default, so the public `apcore-cli --help` output is unchanged in
   spirit; downstream hosts now get a neutral surface out of the box.
 
+### Removed
+
+- **D9-003 — FE-13 §11.2 root-level deprecation shims**. The 13 hidden
+  root-level shim subcommands (`list`, `describe`, `exec`, `validate`,
+  `init`, `health`, `usage`, `enable`, `disable`, `reload`, `config`,
+  `completion`, `describe-pipeline`) that forwarded to `apcli <name>` with a
+  deprecation warning were removed per spec §11.3 ("Removed in v0.8").
+  Callers must now use `apcli <name>`. The `DEPRECATED_ROOT_COMMANDS` const,
+  `print_deprecation_warning`, `build_apcli_group_for_dispatch`,
+  `forward_shim_args`, and `parse_shim_for` helpers in `src/main.rs` were
+  deleted along with the registration loop and 13 dispatch arms.
+
 ---
 
 ## [0.7.0] - 2026-04-25

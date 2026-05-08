@@ -1,7 +1,8 @@
 // apcore-cli — FE-13 Built-in Command Group integration tests.
 //
 // Spec parity: ../apcore-cli/docs/features/builtin-group.md §4.9 (registration
-// rules), §4.11 (hidden-but-reachable), §11.2 (deprecation shims).
+// rules), §4.11 (hidden-but-reachable). The pre-v0.7 root-level deprecation
+// shims (spec §11.2) were removed in v0.8 per §11.3 (audit D9-003).
 //
 // Covers a practical subset of the T-APCLI-01..41 matrix; deep unit-level
 // coverage of tier precedence, env parsing, and yaml validation lives in

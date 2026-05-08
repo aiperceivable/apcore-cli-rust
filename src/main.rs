@@ -9,32 +9,6 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{reload, EnvFilter};
 
 // ---------------------------------------------------------------------------
-// FE-13 §11.2 deprecation shims (standalone-only)
-// ---------------------------------------------------------------------------
-
-/// Root-level command names that had a flat pre-v0.7 shape and moved under
-/// the `apcli` group in v0.7. A thin hidden shim at the root forwards
-/// invocations to the corresponding `apcli <name>` subcommand after printing
-/// a deprecation warning. Removed in v0.8 per spec §11.3.
-///
-/// Sourced directly from [`apcore_cli::APCLI_SUBCOMMAND_NAMES`] so the
-/// deprecation-shim set cannot drift from the canonical subcommand list.
-/// Adding a subcommand means updating one constant in `builtin_group.rs`
-/// (+ registering a handler in `lib.rs::register_apcli_subcommands`).
-const DEPRECATED_ROOT_COMMANDS: &[&str] = apcore_cli::APCLI_SUBCOMMAND_NAMES;
-
-/// Print the FE-13 §11.2 deprecation warning for a root-level invocation of
-/// a subcommand that has moved under the `apcli` group.
-fn print_deprecation_warning(name: &str, prog: &str) {
-    eprintln!(
-        "WARNING: '{name}' as a root-level command is deprecated. \
-         Use '{prog} apcli {name}' instead.\n         \
-         Will be removed in v0.8. See: \
-         https://aiperceivable.github.io/apcore-cli/features/builtin-group/#11-migration"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -374,28 +348,6 @@ fn build_cli_command(
     // `man` stays at root as a meta command (FE-13 spec §4.1).
     cmd = apcore_cli::shell::register_man_command(cmd);
 
-    // ----------------------------------------------------------------------
-    // FE-13 §11.2: Deprecation shims for the 13 former root-level commands.
-    // Each shim is hidden from help and tolerates passthrough arguments. At
-    // dispatch time the shim prints a WARNING and delegates to the same
-    // handler used under `apcli <name>`.
-    // Binary is always standalone, so shims are always registered.
-    // ----------------------------------------------------------------------
-    for shim_name in DEPRECATED_ROOT_COMMANDS {
-        cmd = cmd.subcommand(
-            clap::Command::new(*shim_name)
-                .hide(true)
-                .disable_help_flag(true)
-                .allow_external_subcommands(true)
-                .arg(
-                    clap::Arg::new("")
-                        .num_args(0..)
-                        .trailing_var_arg(true)
-                        .allow_hyphen_values(true),
-                ),
-        );
-    }
-
     cmd
 }
 
@@ -481,57 +433,7 @@ pub fn create_cli_with(
 // FE-13 dispatch helpers
 // ---------------------------------------------------------------------------
 
-/// Build a standalone `apcli` clap group populated with all 13 canonical
-/// subcommands. Used by the deprecation shim dispatchers to re-parse
-/// shim-forwarded argv against the canonical `apcli <name>` command tree.
-fn build_apcli_group_for_dispatch(prog_name: &str) -> clap::Command {
-    let cfg = apcore_cli::ApcliGroup::from_cli_config(
-        Some(apcore_cli::ApcliConfig {
-            mode: apcore_cli::ApcliMode::All,
-            disable_env: true,
-        }),
-        /*registry_injected*/ false,
-    );
-    let group = clap::Command::new("apcli")
-        .no_binary_name(true)
-        .subcommand_required(false);
-    apcore_cli::register_apcli_subcommands(group, &cfg, prog_name)
-}
-
-/// Reconstruct the argv tail to forward from a root-level deprecation shim
-/// to its canonical `apcli <name>` subcommand. Slices from the shim name
-/// onward in `raw_args` so positional args + nested subcommands are
-/// preserved verbatim, and prepends the subcommand name so the
-/// `apcli` parser sees a valid invocation.
-fn forward_shim_args(name: &str, raw_args: &[String]) -> Vec<String> {
-    let mut out = vec![name.to_string()];
-    if let Some(idx) = raw_args.iter().position(|a| a == name) {
-        out.extend(raw_args.iter().skip(idx + 1).cloned());
-    }
-    out
-}
-
-/// Shared deprecation-shim prologue: print the FE-13 §11.2 warning, forward
-/// the shim argv tail against a synthetic `apcli` group, and return the
-/// inner `ArgMatches` for `name`. Collapses the 10-line prologue that used
-/// to be duplicated across every shim arm.
-fn parse_shim_for(name: &str, raw_args: &[String], prog_name: &str) -> clap::ArgMatches {
-    print_deprecation_warning(name, prog_name);
-    let forwarded = forward_shim_args(name, raw_args);
-    let apcli_group = build_apcli_group_for_dispatch(prog_name);
-    let m = apcli_group
-        .try_get_matches_from(&forwarded)
-        .unwrap_or_else(|e| {
-            eprintln!("{e}");
-            std::process::exit(2);
-        });
-    m.subcommand_matches(name)
-        .cloned()
-        .expect("shim dispatch failed")
-}
-
-/// Shared `list` handler used by both `apcli list` and the root-level
-/// deprecation shim.
+/// Shared `list` handler used by `apcli list`.
 fn handle_list(
     sub_m: &clap::ArgMatches,
     registry_provider: &std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider>,
@@ -572,8 +474,7 @@ fn handle_list(
     }
 }
 
-/// Shared `describe` handler used by both `apcli describe` and the root-level
-/// deprecation shim.
+/// Shared `describe` handler used by `apcli describe`.
 fn handle_describe(
     sub_m: &clap::ArgMatches,
     registry_provider: &std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider>,
@@ -601,8 +502,7 @@ fn handle_describe(
     }
 }
 
-/// Shared `exec` handler used by both `apcli exec` and the root-level
-/// deprecation shim.
+/// Shared `exec` handler used by `apcli exec`.
 async fn handle_exec(
     sub_m: &clap::ArgMatches,
     registry_provider: &std::sync::Arc<dyn apcore_cli::discovery::RegistryProvider>,
@@ -614,8 +514,7 @@ async fn handle_exec(
     apcore_cli::cli::dispatch_module(module_id, sub_m, registry_provider, apcore_executor).await;
 }
 
-/// Shared `completion` handler used by both `apcli completion` and the
-/// root-level deprecation shim.
+/// Shared `completion` handler used by `apcli completion`.
 fn handle_completion(sub_m: &clap::ArgMatches, prog_name: &str) {
     let shell = *sub_m
         .get_one::<clap_complete::Shell>("shell")
@@ -810,10 +709,9 @@ async fn main() {
 
     // Dispatch subcommands.
     //
-    // Routing: FE-13 introduces the `apcli` subcommand group. Built-in
-    // commands now live under `apcli <name>`; thin root-level shims for the
-    // 13 former names print a deprecation warning and delegate to the same
-    // handlers used by `apcli <name>`.
+    // Routing: FE-13 places all built-in commands under the `apcli` group.
+    // The pre-v0.7 root-level deprecation shims were removed in v0.8 per
+    // spec §11.3 (audit D9-003).
     match matches.subcommand() {
         // ----- FE-13 apcli group routing -----
         Some(("apcli", apcli_m)) => match apcli_m.subcommand() {
@@ -869,61 +767,6 @@ async fn main() {
                 std::process::exit(0);
             }
         },
-        // ----- FE-13 §11.2 deprecation shims (standalone only) -----
-        Some(("list", _)) => {
-            let sm = parse_shim_for("list", &raw_args, &prog_name);
-            handle_list(&sm, &registry_provider);
-        }
-        Some(("describe", _)) => {
-            let sm = parse_shim_for("describe", &raw_args, &prog_name);
-            handle_describe(&sm, &registry_provider);
-        }
-        Some(("exec", _)) => {
-            let sm = parse_shim_for("exec", &raw_args, &prog_name);
-            handle_exec(&sm, &registry_provider, &apcore_executor).await;
-        }
-        Some(("init", _)) => {
-            let sm = parse_shim_for("init", &raw_args, &prog_name);
-            apcore_cli::init_cmd::handle_init(&sm);
-            std::process::exit(0);
-        }
-        Some(("validate", _)) => {
-            let sm = parse_shim_for("validate", &raw_args, &prog_name);
-            apcore_cli::validate::dispatch_validate(&sm, &registry_provider, &apcore_executor)
-                .await;
-        }
-        Some(("health", _)) => {
-            let sm = parse_shim_for("health", &raw_args, &prog_name);
-            apcore_cli::system_cmd::dispatch_health(&sm, &apcore_executor);
-        }
-        Some(("usage", _)) => {
-            let sm = parse_shim_for("usage", &raw_args, &prog_name);
-            apcore_cli::system_cmd::dispatch_usage(&sm, &apcore_executor);
-        }
-        Some(("enable", _)) => {
-            let sm = parse_shim_for("enable", &raw_args, &prog_name);
-            apcore_cli::system_cmd::dispatch_enable(&sm, &apcore_executor);
-        }
-        Some(("disable", _)) => {
-            let sm = parse_shim_for("disable", &raw_args, &prog_name);
-            apcore_cli::system_cmd::dispatch_disable(&sm, &apcore_executor);
-        }
-        Some(("reload", _)) => {
-            let sm = parse_shim_for("reload", &raw_args, &prog_name);
-            apcore_cli::system_cmd::dispatch_reload(&sm, &apcore_executor);
-        }
-        Some(("config", _)) => {
-            let sm = parse_shim_for("config", &raw_args, &prog_name);
-            apcore_cli::system_cmd::dispatch_config(&sm, &apcore_executor);
-        }
-        Some(("completion", _)) => {
-            let sm = parse_shim_for("completion", &raw_args, &prog_name);
-            handle_completion(&sm, &prog_name);
-        }
-        Some(("describe-pipeline", _)) => {
-            let sm = parse_shim_for("describe-pipeline", &raw_args, &prog_name);
-            apcore_cli::strategy::dispatch_describe_pipeline(&sm);
-        }
         // ----- Root-level meta commands (stay at root per FE-13 §4.1) -----
         Some(("man", sub_m)) => {
             let command_name = sub_m
@@ -1151,12 +994,24 @@ mod tests {
     // --- exec subcommand ---
 
     #[test]
-    fn test_exec_subcommand_exists() {
+    fn test_exec_subcommand_lives_under_apcli_group() {
+        // Audit D9-003: the v0.7 hidden root-level `exec` shim was removed in
+        // v0.8 per FE-13 §11.3. `exec` is now reachable only through the
+        // `apcli` group; the root command must NOT register a top-level
+        // `exec` subcommand.
         let cmd = build_cli_command(None, None, false, None, None);
-        let exec = cmd.get_subcommands().find(|c| c.get_name() == "exec");
+        let root_exec = cmd.get_subcommands().find(|c| c.get_name() == "exec");
         assert!(
-            exec.is_some(),
-            "build_cli_command must include 'exec' subcommand"
+            root_exec.is_none(),
+            "root-level 'exec' shim must be absent in v0.8+ (audit D9-003)"
+        );
+        let apcli = cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == "apcli")
+            .expect("apcli group must exist");
+        assert!(
+            apcli.get_subcommands().any(|c| c.get_name() == "exec"),
+            "'exec' must live under the 'apcli' group"
         );
     }
 

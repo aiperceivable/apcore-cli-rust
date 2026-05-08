@@ -33,23 +33,26 @@ fn test_e2e_version_flag() {
 
 #[test]
 fn test_e2e_list_command() {
-    // `apcore-cli --extensions-dir ... list` must exit 0.
-    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "list"]);
+    // `apcore-cli --extensions-dir ... apcli list` must exit 0.
+    // Audit D9-003: root-level `list` shim removed in v0.8.
+    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "apcli", "list"]);
     assert_eq!(out.status.code(), Some(0));
 }
 
 #[test]
 fn test_e2e_describe_command() {
+    // Audit D9-003: root-level `describe` shim removed in v0.8.
     let out = run_apcore(&[
         "--extensions-dir",
         "./examples/extensions",
+        "apcli",
         "describe",
         "math.add",
     ]);
     assert_eq!(
         out.status.code(),
         Some(0),
-        "describe math.add must exit 0 with real extensions"
+        "apcli describe math.add must exit 0 with real extensions"
     );
 }
 
@@ -82,12 +85,14 @@ fn test_e2e_execute_math_add() {
 
 #[test]
 fn test_e2e_stdin_piping() {
-    // Pipe JSON input via stdin to exec math.add.
+    // Pipe JSON input via stdin to apcli exec math.add.
+    // Audit D9-003: root-level `exec` shim removed in v0.8.
     use std::io::Write;
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .args([
             "--extensions-dir",
             "./examples/extensions",
+            "apcli",
             "exec",
             "math.add",
             "--input",
@@ -132,11 +137,13 @@ fn test_e2e_unknown_module_exits_44() {
 fn test_e2e_exec_subcommand_routes_to_dispatch() {
     // exec subcommand uses --input - for JSON input (schema flags like --a
     // are only available via the external subcommand path, not exec).
+    // Audit D9-003: root-level `exec` shim removed in v0.8.
     use std::io::Write;
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_apcore-cli"))
         .args([
             "--extensions-dir",
             "./examples/extensions",
+            "apcli",
             "exec",
             "math.add",
             "--input",
@@ -170,9 +177,11 @@ fn test_e2e_exec_subcommand_routes_to_dispatch() {
 #[test]
 fn test_e2e_exec_invalid_module_id_exits_2() {
     // An invalid module ID format (no dot separator) should exit 2.
+    // Audit D9-003: root-level `exec` shim removed in v0.8.
     let out = run_apcore(&[
         "--extensions-dir",
         "./examples/extensions",
+        "apcli",
         "exec",
         "INVALID",
     ]);
@@ -198,17 +207,25 @@ fn test_e2e_external_invalid_module_id_exits_2() {
 
 #[test]
 fn test_e2e_invalid_input_exits_2() {
-    // Missing required positional for describe exits 2.
-    let out = run_apcore(&["--extensions-dir", "./examples/extensions", "describe"]);
+    // Missing required positional for `apcli describe` exits 2.
+    // Audit D9-003: root-level `describe` shim removed in v0.8.
+    let out = run_apcore(&[
+        "--extensions-dir",
+        "./examples/extensions",
+        "apcli",
+        "describe",
+    ]);
     assert_eq!(out.status.code(), Some(2));
 }
 
 #[test]
 fn test_e2e_completion_bash() {
-    // `apcore-cli --extensions-dir ... completion bash` must exit 0.
+    // `apcore-cli --extensions-dir ... apcli completion bash` must exit 0.
+    // Audit D9-003: root-level `completion` shim removed in v0.8.
     let out = run_apcore(&[
         "--extensions-dir",
         "./examples/extensions",
+        "apcli",
         "completion",
         "bash",
     ]);
