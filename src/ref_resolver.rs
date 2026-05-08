@@ -83,7 +83,9 @@ pub fn resolve_refs(
 // ---------------------------------------------------------------------------
 
 /// Merge all branches for allOf: union properties (later wins on conflict),
-/// concatenate required arrays.
+/// concatenate required arrays. Dedups required first-seen-wins for cross-SDK
+/// parity with TS (`new Set`) and Python (explicit seen-set). Audit
+/// D9-NEW-002 (2026-05-08).
 fn merge_allof(branches: Vec<Value>) -> Value {
     let mut merged_props = Map::new();
     let mut merged_required: Vec<Value> = Vec::new();
@@ -95,7 +97,11 @@ fn merge_allof(branches: Vec<Value>) -> Value {
             }
         }
         if let Some(req) = branch.get("required").and_then(|v| v.as_array()) {
-            merged_required.extend(req.iter().cloned());
+            for item in req {
+                if !merged_required.contains(item) {
+                    merged_required.push(item.clone());
+                }
+            }
         }
     }
 

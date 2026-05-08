@@ -4,9 +4,21 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.8.0] - 2026-05-07
+## [0.8.0] - 2026-05-08
+
+### Added
+
+- **`CliError::SchemaParserFailure { module_id, source }` variant** in `src/cli.rs` — wraps `SchemaParserError::ReservedPropertyName` and `::FlagCollision` so both route to `EXIT_SCHEMA_CIRCULAR_REF` (48) via `CliError::exit_code()`. Previously these errors were re-wrapped as `CliError::InvalidModuleId` and exited with code 2, breaking cross-SDK exit-code parity with Python `sys.exit(48)` and TypeScript `process.exit(EXIT_CODES.SCHEMA_CIRCULAR_REF)`. Audit D11-NEW-005 (see Fixed).
+- **Documented parity gap for the built-in-group rename feature** in `src/lib.rs`. Python `create_cli(builtin_group_name=...)` and TypeScript `createCli({ builtinGroupName })` ship the rename kwarg today; Rust does not because the embedding API (`CliConfig` / `run_with_config`) was removed in v0.7.0 (D9-001/002). The lib-level comment block now lists the implementation requirements (regex validation, `with_builtin_group_name` builder method, accessor on `CliConfig`, conversion of static `BUILTIN_GROUP_NAME` const to per-instance state) so the rename lands at the same time the embedding API is reintroduced.
+
+### Fixed
+
+- **D11-NEW-005 — `schema_to_clap_args` `Err(SchemaParserError::*)` was mapped to exit code 2**, not 48. The call site in `src/cli.rs:425` previously wrapped both `ReservedPropertyName` and `FlagCollision` as `CliError::InvalidModuleId`, which exits 2. Both are spec-defined exit-48 schema-validity errors per `apcore-cli/docs/features/schema-parser.md` Contract: `schema_to_click_options` Errors (cross-SDK parity with Python `sys.exit(48)` and TS `process.exit(EXIT_CODES.SCHEMA_CIRCULAR_REF)`). Fix routes through the new `CliError::SchemaParserFailure` variant.
+- **D9-NEW-002 — `merge_allof` did not deduplicate `required` across branches**. The function concatenated each branch's `required` array via `.extend()`, producing duplicates when two branches independently required the same field name. Spec mandates first-seen-wins dedup (matching TypeScript `[...new Set(...)]` and Python's new explicit seen-set). Fix: replace `.extend()` with a `for item in req { if !merged_required.contains(item) { merged_required.push(...) } }` loop. Outer `obj.required` parent-vs-branches dedup at line 244-251 was already correct.
 
 ### Changed
+
+- **`Makefile` `coverage` target** now passes `--fail-under-lines 85` to `cargo llvm-cov`, matching the Python `pyproject.toml` `[tool.coverage.report] fail_under = 85` and the new TypeScript `vitest.config.ts` `thresholds.lines: 85`. Cross-SDK CI parity (audit D5-004).
 
 - **`apcli list` and `apcli describe` `--format` value-parsers** expanded to
   `[table, json, csv, yaml, jsonl, markdown, skill]`. `describe` previously

@@ -50,8 +50,10 @@ doc-clean:
 # Run tests under coverage instrumentation. Requires cargo-llvm-cov:
 #   cargo install cargo-llvm-cov
 # Outputs HTML report to target/llvm-cov/html/index.html.
+# Cross-SDK parity (audit D5-004, 2026-05-08): line-coverage floor matches
+# Python `fail_under = 85` in pyproject.toml and TS vitest `thresholds.lines: 85`.
 coverage:
-	cargo llvm-cov --html --workspace
+	cargo llvm-cov --html --workspace --fail-under-lines 85
 
 clean:
 	cargo clean

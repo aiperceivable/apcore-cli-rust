@@ -51,6 +51,16 @@ pub enum CliError {
         module_id: String,
         source: crate::ref_resolver::RefResolverError,
     },
+
+    /// Schema parsing failed (reserved property name OR flag-name collision).
+    /// Routed to `EXIT_SCHEMA_CIRCULAR_REF` (48) for cross-SDK parity with
+    /// Python `sys.exit(48)` and TS `process.exit(EXIT_CODES.SCHEMA_CIRCULAR_REF)`.
+    /// Audit D11-NEW-005 (2026-05-08).
+    #[error("schema parse error for module '{module_id}': {source}")]
+    SchemaParserFailure {
+        module_id: String,
+        source: crate::schema_parser::SchemaParserError,
+    },
 }
 
 impl CliError {
@@ -58,7 +68,9 @@ impl CliError {
     /// to switch on the variant inline.
     pub fn exit_code(&self) -> i32 {
         match self {
-            CliError::SchemaRefResolution { .. } => crate::EXIT_SCHEMA_CIRCULAR_REF,
+            CliError::SchemaRefResolution { .. } | CliError::SchemaParserFailure { .. } => {
+                crate::EXIT_SCHEMA_CIRCULAR_REF
+            }
             _ => crate::EXIT_INVALID_INPUT,
         }
     }
@@ -421,12 +433,18 @@ pub fn build_module_command_with_limit(
         source: e,
     })?;
 
-    // Build clap args from JSON Schema properties.
+    // Build clap args from JSON Schema properties. Map ReservedPropertyName /
+    // FlagCollision through `SchemaParserFailure` so they share exit-code 48
+    // with Python `sys.exit(48)` and TS `process.exit(SCHEMA_CIRCULAR_REF)`.
+    // Audit D11-NEW-005 (2026-05-08).
     let schema_args = crate::schema_parser::schema_to_clap_args_with_limit(
         &resolved_schema,
         help_text_max_length,
     )
-    .map_err(|e| CliError::InvalidModuleId(format!("schema parse error: {e}")))?;
+    .map_err(|e| CliError::SchemaParserFailure {
+        module_id: module_id.clone(),
+        source: e,
+    })?;
 
     // Check for schema property names that collide with built-in flags.
     for arg in &schema_args.args {

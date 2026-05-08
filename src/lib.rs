@@ -154,6 +154,24 @@ pub fn register_apcli_subcommands(
 // `CreateCliOptions.allowedPrefixes` semantics). Recorded in
 // `apcore-cli/docs/features/core-dispatcher.md` Cross-SDK API surface
 // appendix as a known parity gap.
+//
+// Cross-SDK parity gap (tracked, not a bug; 2026-05-08): Python
+// `create_cli(builtin_group_name="apcli")` and TypeScript `createCli({
+// builtinGroupName: "apcli" })` both accept a kwarg/option to rename the
+// built-in command group from the default "apcli" to a custom namespace
+// (e.g. downstream branded CLIs that prefer `mycorp-cli admin health` over
+// `mycorp-cli apcli health`). Rust currently has no equivalent because the
+// entry point that would host it does not exist. When the Rust embedding
+// API is reintroduced, an equivalent should be added at the same time:
+// either as a builder method on the future `CliConfig` (e.g.
+// `with_builtin_group_name("admin")`) or as a parameter on the future
+// factory function. Implementation requirements: validate the name against
+// `^[a-z][a-z0-9_-]*$`, plumb it through the apcli sub-group construction,
+// and surface it via a `builtin_group_name()` accessor on the resulting
+// `CliConfig` so collision checks at the registry-driven dispatch layer
+// see the resolved name. The static `BUILTIN_GROUP_NAME = "apcli"` const
+// in `cli.rs` and `RESERVED_FLAG_NAMES` should become per-instance state
+// once the API exists.
 
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{

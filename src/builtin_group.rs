@@ -899,6 +899,8 @@ mod tests {
 
     #[test]
     fn try_from_yaml_include_non_array_warns_and_empty() {
+        let _g = ENV_MUTEX.lock().unwrap();
+        clear_env();
         let yaml: Value = serde_yaml::from_str("mode: include\ninclude: not-a-list").unwrap();
         let group = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap();
         assert_eq!(group.resolve_visibility(), "include");
