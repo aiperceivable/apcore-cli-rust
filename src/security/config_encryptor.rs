@@ -230,23 +230,46 @@ impl ConfigEncryptor {
                 let hostname = gethostname()
                     .into_string()
                     .unwrap_or_else(|_| "unknown".to_string());
-                let username = std::env::var("USER")
-                    .or_else(|_| std::env::var("LOGNAME"))
-                    .unwrap_or_else(|_| "unknown".to_string());
+                let username = Self::resolve_username_from_env();
                 format!("{hostname}:{username}")
             }
         } else {
             let hostname = gethostname()
                 .into_string()
                 .unwrap_or_else(|_| "unknown".to_string());
-            let username = std::env::var("USER")
-                .or_else(|_| std::env::var("LOGNAME"))
-                .unwrap_or_else(|_| "unknown".to_string());
+            let username = Self::resolve_username_from_env();
             format!("{hostname}:{username}")
         };
         let mut key = [0u8; 32];
         pbkdf2_hmac::<Sha256>(material.as_bytes(), salt, iterations, &mut key);
         Ok(key)
+    }
+
+    /// Resolve the username for key-derivation material.
+    ///
+    /// Audit D11-W1 (2026-05-08): the chain is `USER → LOGNAME → USERNAME →
+    /// "unknown"`. The previous Rust implementation stopped at LOGNAME,
+    /// breaking Windows hosts where only `USERNAME` is set (Python and TS
+    /// reference implementations include `USERNAME` in the chain).
+    fn resolve_username_from_env() -> String {
+        Self::resolve_username_from_env_with(&|k| std::env::var(k).ok())
+    }
+
+    /// Pure variant of [`Self::resolve_username_from_env`] that takes an
+    /// injectable env lookup. Exposed for unit testing the priority chain
+    /// without process-wide env mutation.
+    fn resolve_username_from_env_with<F>(env_lookup: &F) -> String
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        for key in ["USER", "LOGNAME", "USERNAME"] {
+            if let Some(v) = env_lookup(key) {
+                if !v.is_empty() {
+                    return v;
+                }
+            }
+        }
+        "unknown".to_string()
     }
 
     /// Encrypt `plaintext` and return v2 wire bytes.
@@ -365,6 +388,74 @@ mod tests {
     /// Build an encryptor that always uses the AES path (keyring skipped).
     fn aes_encryptor() -> ConfigEncryptor {
         ConfigEncryptor { _force_aes: true }
+    }
+
+    /// D11-W1 (2026-05-08): the username fallback chain must walk
+    /// `USER → LOGNAME → USERNAME → "unknown"`. The previous chain stopped
+    /// at LOGNAME, so Windows hosts (which expose only `USERNAME`) silently
+    /// derived their key from "unknown" instead of the real account, making
+    /// previously-encrypted v1/v2 payloads undecryptable across hosts.
+    #[test]
+    fn test_resolve_username_walks_user_logname_username_chain() {
+        // USER wins over LOGNAME and USERNAME.
+        let env = |k: &str| -> Option<String> {
+            match k {
+                "USER" => Some("user_val".to_string()),
+                "LOGNAME" => Some("logname_val".to_string()),
+                "USERNAME" => Some("username_val".to_string()),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            ConfigEncryptor::resolve_username_from_env_with(&env),
+            "user_val"
+        );
+
+        // LOGNAME wins when USER is unset.
+        let env = |k: &str| -> Option<String> {
+            match k {
+                "LOGNAME" => Some("logname_val".to_string()),
+                "USERNAME" => Some("username_val".to_string()),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            ConfigEncryptor::resolve_username_from_env_with(&env),
+            "logname_val"
+        );
+
+        // USERNAME wins when both USER and LOGNAME are unset (Windows).
+        let env = |k: &str| -> Option<String> {
+            match k {
+                "USERNAME" => Some("username_val".to_string()),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            ConfigEncryptor::resolve_username_from_env_with(&env),
+            "username_val"
+        );
+
+        // All unset → "unknown".
+        let env = |_: &str| -> Option<String> { None };
+        assert_eq!(
+            ConfigEncryptor::resolve_username_from_env_with(&env),
+            "unknown"
+        );
+
+        // Empty values are skipped (non-Windows env where USER is exported as "").
+        let env = |k: &str| -> Option<String> {
+            match k {
+                "USER" => Some(String::new()),
+                "LOGNAME" => Some(String::new()),
+                "USERNAME" => Some("windows_account".to_string()),
+                _ => None,
+            }
+        };
+        assert_eq!(
+            ConfigEncryptor::resolve_username_from_env_with(&env),
+            "windows_account"
+        );
     }
 
     #[test]
