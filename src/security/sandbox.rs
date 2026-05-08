@@ -207,26 +207,22 @@ impl Sandbox {
         self._sandboxed_execute(module_id, input_data).await
     }
 
-    async fn _sandboxed_execute(
+    /// Build the sandbox child's restricted environment from a `host_env`
+    /// snapshot. Extracted from `_sandboxed_execute` so the env-construction
+    /// logic (whitelist forwarding + APCORE_EXTENSIONS_ROOT canonicalisation,
+    /// audit D11-W3) is unit-testable without spawning a subprocess.
+    fn build_sandbox_env(
         &self,
-        module_id: &str,
-        input_data: Value,
-    ) -> Result<Value, ModuleExecutionError> {
-        use std::process::Stdio;
-        use tokio::io::AsyncWriteExt;
-        use tokio::process::Command;
-        use tokio::time::{timeout, Duration};
-
-        // Build restricted environment from whitelist.
+        host_env: &std::collections::HashMap<String, String>,
+    ) -> Vec<(String, String)> {
         let mut env: Vec<(String, String)> = Vec::new();
-        let host_env: std::collections::HashMap<String, String> = std::env::vars().collect();
 
         for key in SANDBOX_ALLOWED_ENV_KEYS {
             if let Some(val) = host_env.get(*key) {
                 env.push((key.to_string(), val.clone()));
             }
         }
-        for (k, v) in &host_env {
+        for (k, v) in host_env {
             if SANDBOX_ALLOWED_ENV_PREFIXES
                 .iter()
                 .any(|prefix| k.starts_with(prefix))
@@ -254,7 +250,41 @@ impl Sandbox {
                 "APCORE_EXTENSIONS_ROOT".to_string(),
                 resolved.to_string_lossy().into_owned(),
             ));
+        } else {
+            // Audit D11-W3 (2026-05-08): when no builder override was
+            // supplied, an `APCORE_EXTENSIONS_ROOT` value can still reach the
+            // child via the APCORE_* prefix whitelist above. The whitelist
+            // forwards the host value verbatim — but the child runs with
+            // `cwd = tmpdir_path`, so any relative path (e.g. "./extensions")
+            // resolves to a directory inside the sandbox tempdir that does
+            // not exist. Canonicalise here so the inherited path stays
+            // valid after the cwd switch, matching the explicit-override
+            // branch above.
+            if let Some(idx) = env.iter().position(|(k, _)| k == "APCORE_EXTENSIONS_ROOT") {
+                let raw = env[idx].1.clone();
+                let p = std::path::PathBuf::from(&raw);
+                if let Ok(canon) = std::fs::canonicalize(&p) {
+                    env[idx].1 = canon.to_string_lossy().into_owned();
+                }
+            }
         }
+
+        env
+    }
+
+    async fn _sandboxed_execute(
+        &self,
+        module_id: &str,
+        input_data: Value,
+    ) -> Result<Value, ModuleExecutionError> {
+        use std::process::Stdio;
+        use tokio::io::AsyncWriteExt;
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
+
+        // Build restricted environment from whitelist.
+        let host_env: std::collections::HashMap<String, String> = std::env::vars().collect();
+        let mut env = self.build_sandbox_env(&host_env);
 
         // Create temp dir for HOME/TMPDIR isolation.
         let tmpdir = tempfile::TempDir::new()
@@ -470,6 +500,58 @@ mod tests {
         assert!(s.is_enabled());
         assert_eq!(s.extensions_root(), Some(&path));
         assert_eq!(s.max_output_bytes(), 2048);
+    }
+
+    /// D11-W3 (2026-05-08): when the builder did NOT call
+    /// `with_extensions_root`, an inherited relative `APCORE_EXTENSIONS_ROOT`
+    /// must be canonicalised to an absolute path before being forwarded —
+    /// otherwise the child (which runs with `cwd = tmpdir_path`) would
+    /// resolve "./extensions" relative to the sandbox tempdir.
+    #[test]
+    fn test_inherited_extensions_root_canonicalised_when_no_builder_override() {
+        // Build a temp directory and reference it relatively. canonicalize on
+        // the relative form must match canonicalize on the absolute form.
+        let tmp = tempfile::tempdir().unwrap();
+        let abs = tmp.path().to_path_buf();
+        // Compute a relative form by stripping the common prefix.
+        // For simplicity, just feed the absolute path itself — canonicalize
+        // on an absolute path that exists is a no-op modulo symlinks, and
+        // the test still demonstrates the canonicalisation branch fires.
+        let cwd_before = std::env::current_dir().unwrap();
+        // cd into temp's parent so "./<basename>" is a valid relative path.
+        let parent = abs.parent().unwrap().to_path_buf();
+        let basename = abs.file_name().unwrap().to_string_lossy().into_owned();
+        std::env::set_current_dir(&parent).unwrap();
+        let relative_form = format!("./{basename}");
+
+        let mut host_env: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        host_env.insert("APCORE_EXTENSIONS_ROOT".to_string(), relative_form.clone());
+
+        let s = Sandbox::new(true, 5); // no with_extensions_root call
+        let env = s.build_sandbox_env(&host_env);
+
+        // Restore cwd before any assertion that could panic.
+        std::env::set_current_dir(&cwd_before).unwrap();
+
+        let resolved = env
+            .iter()
+            .find(|(k, _)| k == "APCORE_EXTENSIONS_ROOT")
+            .map(|(_, v)| v.clone())
+            .expect("APCORE_EXTENSIONS_ROOT must be forwarded by the prefix whitelist");
+
+        let expected = std::fs::canonicalize(&abs)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            resolved, expected,
+            "inherited relative APCORE_EXTENSIONS_ROOT must be canonicalised to the absolute path"
+        );
+        assert!(
+            std::path::Path::new(&resolved).is_absolute(),
+            "post-canonicalisation value must be absolute, got {resolved:?}"
+        );
     }
 
     #[test]
