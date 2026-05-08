@@ -3,6 +3,8 @@
 
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use chrono::Utc;
 use serde_json::{json, Value};
@@ -51,9 +53,15 @@ fn sorted_json(v: &Value) -> String {
 /// Append-only audit logger that records each module execution to a JSONL file.
 ///
 /// When constructed with `path = None`, logging is a no-op (disabled).
+///
+/// `write_failure_warned` is shared across clones so a single logger instance
+/// (and any of its clones) emits the "Could not write audit log" warning at
+/// most once. Cross-SDK parity with TypeScript `_writeFailureWarned` and
+/// Python `_write_failure_warned` (audit D11-010).
 #[derive(Debug, Clone)]
 pub struct AuditLogger {
     path: Option<PathBuf>,
+    write_failure_warned: Arc<AtomicBool>,
 }
 
 impl AuditLogger {
@@ -84,7 +92,10 @@ impl AuditLogger {
                 }
             }
         }
-        Self { path: resolved }
+        Self {
+            path: resolved,
+            write_failure_warned: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Resolve the username for an audit log entry.
@@ -225,7 +236,16 @@ impl AuditLogger {
         })();
 
         if let Err(e) = result {
-            tracing::warn!("Could not write audit log: {e}");
+            // Dedup write-failure warnings: emit at most once per logger
+            // instance (and any of its clones, since the flag is held in an
+            // Arc). Subsequent failures fall through to trace level so log
+            // output stays diagnosable without flooding stderr. Cross-SDK
+            // parity with TypeScript and Python (audit D11-010).
+            if !self.write_failure_warned.swap(true, Ordering::Relaxed) {
+                tracing::warn!("Could not write audit log: {e}");
+            } else {
+                tracing::trace!("Could not write audit log (suppressed): {e}");
+            }
         }
     }
 }
@@ -252,7 +272,10 @@ mod tests {
     #[test]
     fn test_audit_logger_disabled_no_op() {
         // AuditLogger with path=None must not write any files.
-        let logger = AuditLogger { path: None };
+        let logger = AuditLogger {
+            path: None,
+            write_failure_warned: Arc::new(AtomicBool::new(false)),
+        };
         // Should not panic even with no path.
         logger.log_execution("mod.test", &json!({}), "success", 0, 1);
     }

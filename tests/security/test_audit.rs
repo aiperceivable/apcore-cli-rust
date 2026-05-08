@@ -1,9 +1,14 @@
 // apcore-cli — Integration tests for AuditLogger.
 // Protocol spec: SEC-01
 
+use std::sync::{Arc, Mutex};
+
 use apcore_cli::security::audit::AuditLogger;
 use serde_json::json;
 use tempfile::tempdir;
+use tracing::Level;
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+use tracing_subscriber::Registry;
 
 #[test]
 fn test_audit_logger_disabled_no_file_written() {
@@ -85,5 +90,102 @@ fn test_audit_logger_record_has_required_fields() {
     assert!(
         entry["duration_ms"].is_number(),
         "duration_ms must be a number"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Custom tracing layer that records WARN-level event messages so the
+// write-failure dedup test can assert "warn fired exactly N times".
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct WarnCaptureLayer {
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+impl WarnCaptureLayer {
+    fn handle(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.events)
+    }
+}
+
+struct StringVisitor<'a>(&'a mut String);
+
+impl tracing::field::Visit for StringVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            use std::fmt::Write as _;
+            let _ = write!(self.0, "{value:?}");
+        }
+    }
+}
+
+impl<S> Layer<S> for WarnCaptureLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        if *event.metadata().level() != Level::WARN {
+            return;
+        }
+        let mut buf = String::new();
+        event.record(&mut StringVisitor(&mut buf));
+        if let Ok(mut guard) = self.events.lock() {
+            guard.push(buf);
+        }
+    }
+}
+
+/// D11-010: write-failure warnings must be deduplicated. Repeated IO failures
+/// against the same logger instance must emit "Could not write audit log"
+/// exactly once. Cross-SDK parity with TypeScript/Python `_writeFailureWarned`
+/// / `_write_failure_warned`.
+#[cfg(unix)]
+#[test]
+fn test_audit_logger_write_failure_warning_is_deduped() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let layer = WarnCaptureLayer::default();
+    let captured = layer.handle();
+    let subscriber = Registry::default().with(layer);
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Build an unwritable target directory so every log_execution() write
+    // fails. We point AuditLogger at an explicit subpath inside this dir
+    // so AuditLogger::new() does not silently chmod the parent back to 0700.
+    let dir = tempdir().expect("tempdir");
+    let unwritable = dir.path().join("unwritable");
+    std::fs::create_dir(&unwritable).expect("mkdir");
+    // 0o500 = read+execute, no write — so OpenOptions::create+append fails.
+    std::fs::set_permissions(&unwritable, std::fs::Permissions::from_mode(0o500))
+        .expect("chmod 0500");
+
+    // AuditLogger::new() will try to set parent perms to 0o700, but the parent
+    // here is `unwritable` itself; chmod is best-effort and silent on failure.
+    // To keep the parent unwritable for the test, point at a deeper file so
+    // the parent we restrict is not the one AuditLogger touches.
+    let log_path = unwritable.join("nested").join("audit.jsonl");
+
+    let logger = AuditLogger::new(Some(log_path));
+
+    // First failure should emit a warning; second/third failures should not.
+    logger.log_execution("m1", &json!({}), "success", 0, 0);
+    logger.log_execution("m2", &json!({}), "success", 0, 0);
+    logger.log_execution("m3", &json!({}), "success", 0, 0);
+
+    // Restore perms so tempdir cleanup succeeds.
+    let _ = std::fs::set_permissions(&unwritable, std::fs::Permissions::from_mode(0o700));
+
+    let warns: Vec<String> = captured.lock().unwrap().clone();
+    let audit_warns: Vec<&String> = warns
+        .iter()
+        .filter(|m| m.contains("Could not write audit log"))
+        .collect();
+    assert_eq!(
+        audit_warns.len(),
+        1,
+        "expected exactly one write-failure warning across three failed log_execution() calls; got {}: {:?}",
+        audit_warns.len(),
+        warns
     );
 }
