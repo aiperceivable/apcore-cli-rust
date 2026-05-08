@@ -32,7 +32,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "proce
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", features = ["json"] }
-comfy-table = "6"
+comfy-table = "7"
 keyring = "2"
 aes-gcm = "0.10"
 sha2 = "0.10"
