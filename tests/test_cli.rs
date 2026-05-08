@@ -280,3 +280,44 @@ fn test_build_module_command_propagates_circular_ref_error() {
     );
     assert_eq!(err.exit_code(), apcore_cli::EXIT_SCHEMA_CIRCULAR_REF);
 }
+
+#[test]
+fn test_build_module_command_unresolvable_ref_maps_to_exit_45() {
+    // Audit D10-002 (2026-05-08): an unresolvable `$ref` (target missing)
+    // must surface with EXIT_SCHEMA_VALIDATION_ERROR (45). Previously every
+    // SchemaRefResolution variant collapsed to 48, so callers could not
+    // distinguish "schema is invalid" from "schema cannot be inlined".
+    use apcore_cli::cli::{build_module_command, CliError};
+
+    let module_def = apcore::registry::registry::ModuleDescriptor {
+        module_id: "unresolvable.test".to_string(),
+        name: None,
+        description: String::new(),
+        documentation: None,
+        input_schema: json!({
+            "$ref": "#/definitions/missing",
+            "definitions": { "x": { "type": "string" } }
+        }),
+        output_schema: json!({}),
+        version: "1.0.0".to_string(),
+        tags: vec![],
+        annotations: Some(apcore::module::ModuleAnnotations::default()),
+        examples: vec![],
+        metadata: std::collections::HashMap::new(),
+        display: None,
+        sunset_date: None,
+        dependencies: vec![],
+        enabled: true,
+    };
+    let err =
+        build_module_command(&module_def).expect_err("unresolvable ref must surface as error");
+    assert!(
+        matches!(err, CliError::SchemaRefResolution { .. }),
+        "expected SchemaRefResolution, got {err:?}"
+    );
+    assert_eq!(
+        err.exit_code(),
+        apcore_cli::EXIT_SCHEMA_VALIDATION_ERROR,
+        "unresolvable $ref must map to EXIT_SCHEMA_VALIDATION_ERROR (45), not 48"
+    );
+}

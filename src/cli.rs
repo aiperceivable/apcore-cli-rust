@@ -66,11 +66,27 @@ pub enum CliError {
 impl CliError {
     /// Map a `CliError` to the protocol-spec exit code so callers don't have
     /// to switch on the variant inline.
+    ///
+    /// Schema $ref failures route to two different exit codes per spec
+    /// (audit D10-002, 2026-05-08):
+    ///
+    /// - `Unresolvable` (missing target) → `EXIT_SCHEMA_VALIDATION_ERROR`
+    ///   (45) — the schema itself is invalid because the `$ref` points at
+    ///   nothing.
+    /// - `Circular` / `MaxDepthExceeded` → `EXIT_SCHEMA_CIRCULAR_REF` (48)
+    ///   — the schema is structurally well-formed but cannot be inlined.
     pub fn exit_code(&self) -> i32 {
         match self {
-            CliError::SchemaRefResolution { .. } | CliError::SchemaParserFailure { .. } => {
-                crate::EXIT_SCHEMA_CIRCULAR_REF
-            }
+            CliError::SchemaRefResolution { source, .. } => match source {
+                crate::ref_resolver::RefResolverError::Unresolvable { .. } => {
+                    crate::EXIT_SCHEMA_VALIDATION_ERROR
+                }
+                crate::ref_resolver::RefResolverError::Circular { .. }
+                | crate::ref_resolver::RefResolverError::MaxDepthExceeded { .. } => {
+                    crate::EXIT_SCHEMA_CIRCULAR_REF
+                }
+            },
+            CliError::SchemaParserFailure { .. } => crate::EXIT_SCHEMA_CIRCULAR_REF,
             _ => crate::EXIT_INVALID_INPUT,
         }
     }
