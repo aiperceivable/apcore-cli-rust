@@ -56,7 +56,12 @@ impl Default for ExposureFilter {
 }
 
 /// Modes accepted by `ExposureFilter`. Anything else is a configuration error.
-const VALID_MODES: &[&str] = &["all", "include", "exclude"];
+///
+/// `"none"` is included as a silently-accepted user input (cross-SDK parity
+/// with Python and TypeScript, audit D11-011). Although unknown modes also
+/// clamp to `"none"`, accepting it explicitly keeps the warn path quiet for
+/// callers that legitimately want to hide every module.
+const VALID_MODES: &[&str] = &["all", "include", "exclude", "none"];
 
 impl ExposureFilter {
     /// Create a new exposure filter.
