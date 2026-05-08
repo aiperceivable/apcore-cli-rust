@@ -619,18 +619,22 @@ impl ApcliGroup {
     // Env parser (Tier 2) — co-located per spec §4.4
     // -------------------------------------------------------------------------
 
-    /// Parse `APCORE_CLI_APCLI`. Case-insensitive.
+    /// Parse `APCORE_CLI_APCLI`. Case-insensitive and trim-on-read
+    /// (spec invariant 2 — `apcore-cli/docs/features/builtin-group.md`).
     ///
     /// - `show` / `1` / `true` → `Some("all")`
     /// - `hide` / `0` / `false` → `Some("none")`
-    /// - Empty / unset → `None`
+    /// - Empty / whitespace-only / unset → `None`
     /// - Anything else → warn and return `None`
     fn parse_env(raw: Option<String>) -> Option<&'static str> {
         let raw = raw?;
         if raw.is_empty() {
             return None;
         }
-        let normalized = raw.to_lowercase();
+        let normalized = raw.trim().to_lowercase();
+        if normalized.is_empty() {
+            return None;
+        }
         match normalized.as_str() {
             "show" | "1" | "true" => Some("all"),
             "hide" | "0" | "false" => Some("none"),
@@ -908,6 +912,41 @@ mod tests {
         let _g = ENV_MUTEX.lock().unwrap();
         set_env("");
         let group = ApcliGroup::from_yaml(None, /*registry_injected*/ false);
+        assert_eq!(group.resolve_visibility(), "all");
+        clear_env();
+    }
+
+    #[test]
+    fn env_value_is_trimmed_on_read() {
+        // Spec invariant 2 — env-var parser is case-insensitive AND trim-on-read.
+        // Surrounding whitespace must not flip a recognized value into the
+        // "unknown" warn-and-fallthrough branch. Cross-SDK parity with Python
+        // and TypeScript (D10-info-1).
+        let _g = ENV_MUTEX.lock().unwrap();
+        for (raw, expected) in &[
+            ("  show  ", "all"),
+            ("\tshow\n", "all"),
+            (" hide ", "none"),
+            ("  TRUE  ", "all"),
+            ("  false  ", "none"),
+            ("  1  ", "all"),
+            ("  0  ", "none"),
+        ] {
+            set_env(raw);
+            let group = ApcliGroup::from_yaml(None, /*registry_injected*/ true);
+            assert_eq!(group.resolve_visibility(), *expected, "raw={raw:?}");
+        }
+        clear_env();
+    }
+
+    #[test]
+    fn env_whitespace_only_treated_as_unset() {
+        // After trim, "   " collapses to empty, which must be treated like
+        // "unset" rather than warned-as-unknown.
+        let _g = ENV_MUTEX.lock().unwrap();
+        set_env("   ");
+        let group = ApcliGroup::from_yaml(None, /*registry_injected*/ false);
+        // No env contribution → Tier 4 standalone auto-detect → "all".
         assert_eq!(group.resolve_visibility(), "all");
         clear_env();
     }
