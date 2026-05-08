@@ -202,10 +202,14 @@ pub use builtin_group::{APCLI_SUBCOMMAND_NAMES, RESERVED_GROUP_NAMES};
 pub use config::ConfigResolver;
 
 // Discovery + Registry providers (FE-03 / FE-09)
+//
+// Audit D9-W3 (2026-05-08): `register_discovery_commands` was deleted (zero
+// production callers; FE-13 routes attach `list`/`describe`/`exec`
+// individually under the `apcli` group). `cmd_list` was demoted to
+// `pub(crate)` since it is a thin in-tree wrapper over `cmd_list_enhanced`.
 pub use discovery::{
-    cmd_describe, cmd_list, cmd_list_enhanced, register_describe_command,
-    register_discovery_commands, register_exec_command, register_list_command,
-    ApCoreRegistryProvider, DiscoveryError, ListOptions, RegistryProvider,
+    cmd_describe, cmd_list_enhanced, register_describe_command, register_exec_command,
+    register_list_command, ApCoreRegistryProvider, DiscoveryError, ListOptions, RegistryProvider,
 };
 
 // Test utilities — available behind the `test-support` feature.

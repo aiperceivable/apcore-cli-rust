@@ -1,8 +1,6 @@
 // apcore-cli — Discovery subcommands (list + describe).
 // Protocol spec: FE-04
 
-use std::sync::Arc;
-
 use clap::{Arg, ArgAction, Command};
 use serde_json::Value;
 use thiserror::Error;
@@ -107,12 +105,15 @@ pub struct ListOptions<'a> {
 ///
 /// Exit code mapping for the caller: `DiscoveryError::InvalidTag` -> exit 2.
 ///
-/// **Design note (audit D9):** This is a thin convenience wrapper over
-/// [`cmd_list_enhanced`] for the common case of "tags + format only". Audit
-/// D9 flagged it as a parallel implementation, but the cure (migrating
-/// 16+ test sites to construct full `ListOptions` literals) is worse than
-/// the disease (one extra 1-line wrapper). Retained intentionally.
-pub fn cmd_list(
+/// **Design note (audit D9-W3):** This is a thin convenience wrapper over
+/// [`cmd_list_enhanced`] for in-tree tests of the "tags + format only" path.
+/// It has no production callers — every dispatch path goes through
+/// `cmd_list_enhanced` with full `ListOptions`. Demoted to `pub(crate)` in
+/// v0.8 so external consumers cannot bind to a symbol that exists purely for
+/// internal test convenience. Gated behind `#[cfg(test)]` so non-test builds
+/// don't carry the dead wrapper.
+#[cfg(test)]
+pub(crate) fn cmd_list(
     registry: &dyn RegistryProvider,
     tags: &[&str],
     explicit_format: Option<&str>,
@@ -292,27 +293,6 @@ pub fn register_describe_command(cli: Command) -> Command {
 /// [`crate::cli::exec_command`] to avoid duplicating the builder.
 pub fn register_exec_command(cli: Command) -> Command {
     cli.subcommand(crate::cli::exec_command())
-}
-
-// ---------------------------------------------------------------------------
-// register_discovery_commands (backward-compat wrapper)
-// ---------------------------------------------------------------------------
-
-/// Attach `list` and `describe` subcommands to the given root command.
-///
-/// **Retained for backward compatibility.** FE-13 integration should use the
-/// per-subcommand registrars ([`register_list_command`],
-/// [`register_describe_command`], [`register_exec_command`],
-/// [`crate::validate::register_validate_command`]) so that include/exclude filtering can be
-/// applied per subcommand. This wrapper preserves the pre-FE-13 call site
-/// shape (root-level `list` + `describe` attachment) for callers that have not
-/// yet migrated.
-///
-/// Returns the root command with the subcommands added. Follows the clap v4
-/// builder idiom (commands are consumed and returned, not mutated in-place).
-pub fn register_discovery_commands(cli: Command, _registry: Arc<dyn RegistryProvider>) -> Command {
-    let cli = register_list_command(cli);
-    register_describe_command(cli)
 }
 
 // ---------------------------------------------------------------------------
@@ -883,14 +863,13 @@ mod tests {
         );
     }
 
-    // --- register_discovery_commands ---
+    // --- per-subcommand registrars (audit D9-W3, replaces the deleted
+    // register_discovery_commands wrapper) ---
 
     #[test]
-    fn test_register_discovery_commands_adds_list() {
-        use std::sync::Arc;
-        let registry = Arc::new(MockRegistry::new(vec![]));
+    fn test_register_list_command_adds_list() {
         let root = Command::new("apcore-cli");
-        let cmd = register_discovery_commands(root, registry);
+        let cmd = register_list_command(root);
         let names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(
             names.contains(&"list"),
@@ -899,11 +878,9 @@ mod tests {
     }
 
     #[test]
-    fn test_register_discovery_commands_adds_describe() {
-        use std::sync::Arc;
-        let registry = Arc::new(MockRegistry::new(vec![]));
+    fn test_register_describe_command_adds_describe() {
         let root = Command::new("apcore-cli");
-        let cmd = register_discovery_commands(root, registry);
+        let cmd = register_describe_command(root);
         let names: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(
             names.contains(&"describe"),
