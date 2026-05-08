@@ -565,7 +565,7 @@ pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) ->
             }
         }
 
-        _ if format == "yaml" => serde_yaml::to_string(&result)
+        _ if format == "yaml" => serde_yaml_ng::to_string(&result)
             .map(|s| s.trim_end().to_string())
             .unwrap_or_else(|_| {
                 serde_json::to_string_pretty(&result).unwrap_or_else(|_| "null".to_string())

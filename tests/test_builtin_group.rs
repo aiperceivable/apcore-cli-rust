@@ -117,7 +117,7 @@ fn auto_detect_falls_back_to_none_when_registry_injected() {
 #[test]
 fn try_from_yaml_rejects_invalid_mode_value() {
     // Spec §7 error table — validation surface used by the YAML loader.
-    let yaml: serde_yaml::Value = serde_yaml::from_str("mode: not-a-mode").unwrap();
+    let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str("mode: not-a-mode").unwrap();
     let result = ApcliGroup::try_from_yaml(Some(yaml), false);
     assert!(
         matches!(result, Err(ApcliGroupError::ModeInvalid(_))),
@@ -127,7 +127,7 @@ fn try_from_yaml_rejects_invalid_mode_value() {
 
 #[test]
 fn try_from_yaml_rejects_non_string_mode() {
-    let yaml: serde_yaml::Value = serde_yaml::from_str("mode: 42").unwrap();
+    let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str("mode: 42").unwrap();
     let result = ApcliGroup::try_from_yaml(Some(yaml), false);
     assert!(
         matches!(result, Err(ApcliGroupError::ModeNotString(_))),

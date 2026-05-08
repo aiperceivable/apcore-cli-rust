@@ -387,7 +387,7 @@ fn assert_subcommand_registration(scenario: &Scenario, root: &Command) {
 
 fn extract_yaml_include(yaml: Option<&str>) -> Option<Vec<String>> {
     let text = yaml?;
-    let parsed: serde_yaml::Value = serde_yaml::from_str(text).ok()?;
+    let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(text).ok()?;
     let apcli = parsed.get("apcli")?;
     if apcli.get("mode")?.as_str()? != "include" {
         return None;

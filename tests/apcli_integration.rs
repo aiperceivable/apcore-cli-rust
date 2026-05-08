@@ -263,7 +263,7 @@ fn apcli_cli_config_tier1_overrides_yaml_tier3() {
     // Tier 3 yaml = false (hide). Tier 1 programmatic cli-config = true (show).
     // Tier 1 wins per spec §5.
     let yaml_cfg = ApcliGroup::from_yaml(
-        Some(serde_yaml::Value::Bool(false)),
+        Some(serde_yaml_ng::Value::Bool(false)),
         /*registry_injected*/ false,
     );
     assert_eq!(yaml_cfg.resolve_visibility(), "none");
@@ -365,15 +365,15 @@ fn apcli_disable_env_seals_tier2_override() {
     // rely on the behavioral contract — a sealed group returns the yaml
     // mode unchanged.
     let cfg = ApcliGroup::from_yaml(
-        Some(serde_yaml::Value::Mapping({
-            let mut m = serde_yaml::Mapping::new();
+        Some(serde_yaml_ng::Value::Mapping({
+            let mut m = serde_yaml_ng::Mapping::new();
             m.insert(
-                serde_yaml::Value::String("mode".to_string()),
-                serde_yaml::Value::String("none".to_string()),
+                serde_yaml_ng::Value::String("mode".to_string()),
+                serde_yaml_ng::Value::String("none".to_string()),
             );
             m.insert(
-                serde_yaml::Value::String("disable_env".to_string()),
-                serde_yaml::Value::Bool(true),
+                serde_yaml_ng::Value::String("disable_env".to_string()),
+                serde_yaml_ng::Value::Bool(true),
             );
             m
         })),

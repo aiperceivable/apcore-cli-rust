@@ -27,7 +27,7 @@ pub struct ConfigResolver {
     /// Cached parsed YAML root, loaded once at construction. Used by
     /// `resolve_object` so it doesn't re-read+re-parse the file on every
     /// call. `None` when the file is absent, unreadable, or malformed.
-    config_yaml: Option<serde_yaml::Value>,
+    config_yaml: Option<serde_yaml_ng::Value>,
 
     /// Path to the config file that was loaded (or attempted).
     #[allow(dead_code)]
@@ -152,22 +152,22 @@ impl ConfigResolver {
     /// Resolve a non-leaf (object-valued) key from the YAML config file.
     ///
     /// Unlike [`Self::resolve`], which returns a flattened scalar string,
-    /// this returns the raw `serde_yaml::Value` living at the requested
+    /// this returns the raw `serde_yaml_ng::Value` living at the requested
     /// dot-path. Used by FE-13 (`apcli`) where the top-level key can be a
     /// bool, a mapping, or absent.
     ///
     /// Only consults the config file (Tier 3) — CLI flags and env vars
     /// carry scalar values only. Returns `None` when the file is absent,
     /// unreadable, malformed, or the key is missing.
-    pub fn resolve_object(&self, key: &str) -> Option<serde_yaml::Value> {
+    pub fn resolve_object(&self, key: &str) -> Option<serde_yaml_ng::Value> {
         // Walk the cached parsed YAML rather than re-reading + re-parsing on
         // every call (review #16). The cache is populated once in `new()`.
         let root = self.config_yaml.as_ref()?;
         let mut cursor = root;
         for segment in key.split('.') {
             match cursor {
-                serde_yaml::Value::Mapping(map) => {
-                    cursor = map.get(serde_yaml::Value::String(segment.to_string()))?;
+                serde_yaml_ng::Value::Mapping(map) => {
+                    cursor = map.get(serde_yaml_ng::Value::String(segment.to_string()))?;
                 }
                 _ => return None,
             }
@@ -182,7 +182,10 @@ impl ConfigResolver {
     /// previously incurred on every `ConfigResolver::new` call.
     fn load_config_both(
         path: &PathBuf,
-    ) -> (Option<HashMap<String, String>>, Option<serde_yaml::Value>) {
+    ) -> (
+        Option<HashMap<String, String>>,
+        Option<serde_yaml_ng::Value>,
+    ) {
         let content = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, None),
@@ -196,7 +199,7 @@ impl ConfigResolver {
             }
         };
 
-        let parsed: serde_yaml::Value = match serde_yaml::from_str(&content) {
+        let parsed: serde_yaml_ng::Value = match serde_yaml_ng::from_str(&content) {
             Ok(v) => v,
             Err(_) => {
                 warn!(
@@ -207,7 +210,7 @@ impl ConfigResolver {
             }
         };
 
-        if !matches!(parsed, serde_yaml::Value::Mapping(_)) {
+        if !matches!(parsed, serde_yaml_ng::Value::Mapping(_)) {
             warn!(
                 "Configuration file '{}' is malformed, using defaults.",
                 path.display()
@@ -235,15 +238,15 @@ impl ConfigResolver {
 
     /// Recursively flatten a nested YAML value into dot-separated keys.
     fn flatten_yaml_value(
-        value: serde_yaml::Value,
+        value: serde_yaml_ng::Value,
         prefix: &str,
         out: &mut HashMap<String, String>,
     ) {
         match value {
-            serde_yaml::Value::Mapping(map) => {
+            serde_yaml_ng::Value::Mapping(map) => {
                 for (k, v) in map {
                     let key_str = match k {
-                        serde_yaml::Value::String(s) => s,
+                        serde_yaml_ng::Value::String(s) => s,
                         other => format!("{other:?}"),
                     };
                     let full_key = if prefix.is_empty() {
@@ -254,21 +257,21 @@ impl ConfigResolver {
                     Self::flatten_yaml_value(v, &full_key, out);
                 }
             }
-            serde_yaml::Value::Bool(b) => {
+            serde_yaml_ng::Value::Bool(b) => {
                 out.insert(prefix.to_string(), b.to_string());
             }
-            serde_yaml::Value::Number(n) => {
+            serde_yaml_ng::Value::Number(n) => {
                 out.insert(prefix.to_string(), n.to_string());
             }
-            serde_yaml::Value::String(s) => {
+            serde_yaml_ng::Value::String(s) => {
                 out.insert(prefix.to_string(), s);
             }
-            serde_yaml::Value::Null => {
+            serde_yaml_ng::Value::Null => {
                 out.insert(prefix.to_string(), String::new());
             }
             // Sequences and tagged values are serialised as their debug repr;
             // no spec requirement for nested array flattening.
-            serde_yaml::Value::Sequence(_) | serde_yaml::Value::Tagged(_) => {
+            serde_yaml_ng::Value::Sequence(_) | serde_yaml_ng::Value::Tagged(_) => {
                 out.insert(prefix.to_string(), format!("{value:?}"));
             }
         }
@@ -561,7 +564,7 @@ mod tests {
         let (_dir, path) = write_tmp_yaml("apcli: false\n");
         let resolver = ConfigResolver::new(None, Some(path));
         let v = resolver.resolve_object("apcli").expect("apcli key present");
-        assert!(matches!(v, serde_yaml::Value::Bool(false)));
+        assert!(matches!(v, serde_yaml_ng::Value::Bool(false)));
     }
 
     #[test]
@@ -571,11 +574,11 @@ mod tests {
         let resolver = ConfigResolver::new(None, Some(path));
         let v = resolver.resolve_object("apcli").expect("apcli key present");
         let map = match v {
-            serde_yaml::Value::Mapping(m) => m,
+            serde_yaml_ng::Value::Mapping(m) => m,
             _ => panic!("expected mapping"),
         };
         let mode = map
-            .get(serde_yaml::Value::String("mode".to_string()))
+            .get(serde_yaml_ng::Value::String("mode".to_string()))
             .unwrap();
         assert_eq!(mode.as_str(), Some("include"));
     }

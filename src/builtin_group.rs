@@ -312,7 +312,7 @@ impl ApcliGroup {
     /// `disable_env` is true. On validation error, prints a message to stderr
     /// and calls [`std::process::exit`] with [`EXIT_INVALID_INPUT`]; the
     /// fallible variant [`ApcliGroup::try_from_yaml`] is available for tests.
-    pub fn from_yaml(yaml_value: Option<serde_yaml::Value>, registry_injected: bool) -> Self {
+    pub fn from_yaml(yaml_value: Option<serde_yaml_ng::Value>, registry_injected: bool) -> Self {
         Self::from_yaml_with_name(yaml_value, registry_injected, None)
     }
 
@@ -320,7 +320,7 @@ impl ApcliGroup {
     /// validation failure (mode shape or invalid name) prints the error
     /// and calls [`std::process::exit`] with [`EXIT_INVALID_INPUT`].
     pub fn from_yaml_with_name(
-        yaml_value: Option<serde_yaml::Value>,
+        yaml_value: Option<serde_yaml_ng::Value>,
         registry_injected: bool,
         name: Option<String>,
     ) -> Self {
@@ -336,7 +336,7 @@ impl ApcliGroup {
     /// Fallible sibling of [`ApcliGroup::from_yaml`]. Used by tests; the
     /// production wrapper prints the error and exits.
     pub fn try_from_yaml(
-        yaml_value: Option<serde_yaml::Value>,
+        yaml_value: Option<serde_yaml_ng::Value>,
         registry_injected: bool,
     ) -> Result<Self, ApcliGroupError> {
         Self::try_from_yaml_with_name(yaml_value, registry_injected, None)
@@ -344,11 +344,11 @@ impl ApcliGroup {
 
     /// Fallible Tier 3 constructor with explicit name.
     pub fn try_from_yaml_with_name(
-        yaml_value: Option<serde_yaml::Value>,
+        yaml_value: Option<serde_yaml_ng::Value>,
         registry_injected: bool,
         name: Option<String>,
     ) -> Result<Self, ApcliGroupError> {
-        use serde_yaml::Value;
+        use serde_yaml_ng::Value;
 
         let resolved_name = name.unwrap_or_else(|| DEFAULT_BUILTIN_GROUP_NAME.to_string());
         validate_builtin_group_name(&resolved_name)?;
@@ -400,11 +400,11 @@ impl ApcliGroup {
     }
 
     fn build_from_mapping(
-        map: serde_yaml::Mapping,
+        map: serde_yaml_ng::Mapping,
         registry_injected: bool,
         name: String,
     ) -> Result<Self, ApcliGroupError> {
-        use serde_yaml::Value;
+        use serde_yaml_ng::Value;
 
         // Look up by string key. Skip (with warning) keys that are not
         // scalar strings — uncommon in yaml but technically legal.
@@ -479,8 +479,8 @@ impl ApcliGroup {
     /// Normalize a yaml include/exclude list. Non-array → warn + empty.
     /// Unknown-but-well-formed entries emit a warning but are retained for
     /// forward compatibility (spec §7 / T-APCLI-25).
-    fn normalize_list(raw: Option<serde_yaml::Value>, label: &str) -> Vec<String> {
-        use serde_yaml::Value;
+    fn normalize_list(raw: Option<serde_yaml_ng::Value>, label: &str) -> Vec<String> {
+        use serde_yaml_ng::Value;
         let raw = match raw {
             None | Some(Value::Null) => return Vec::new(),
             Some(v) => v,
@@ -650,8 +650,8 @@ impl ApcliGroup {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn yaml_type_name(v: &serde_yaml::Value) -> &'static str {
-    use serde_yaml::Value;
+fn yaml_type_name(v: &serde_yaml_ng::Value) -> &'static str {
+    use serde_yaml_ng::Value;
     match v {
         Value::Null => "null",
         Value::Bool(_) => "boolean",
@@ -670,7 +670,7 @@ fn yaml_type_name(v: &serde_yaml::Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_yaml::Value;
+    use serde_yaml_ng::Value;
     use std::sync::Mutex;
 
     /// Serializes tests that set/unset `APCORE_CLI_APCLI`. Same pattern as
@@ -836,7 +836,7 @@ mod tests {
         // Tier 2 > Tier 3 when disable_env is false.
         let _g = ENV_MUTEX.lock().unwrap();
         set_env("show");
-        let yaml: Value = serde_yaml::from_str("mode: none").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: none").unwrap();
         let group = ApcliGroup::from_yaml(Some(yaml), /*registry_injected*/ true);
         assert_eq!(group.resolve_visibility(), "all");
         clear_env();
@@ -847,7 +847,7 @@ mod tests {
         // disable_env: true seals Tier 2 — yaml mode:none wins.
         let _g = ENV_MUTEX.lock().unwrap();
         set_env("show");
-        let yaml: Value = serde_yaml::from_str("mode: none\ndisable_env: true").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: none\ndisable_env: true").unwrap();
         let group = ApcliGroup::from_yaml(Some(yaml), /*registry_injected*/ true);
         assert_eq!(group.resolve_visibility(), "none");
         clear_env();
@@ -857,7 +857,7 @@ mod tests {
     fn from_yaml_disable_env_camel_case_also_accepted() {
         let _g = ENV_MUTEX.lock().unwrap();
         set_env("show");
-        let yaml: Value = serde_yaml::from_str("mode: none\ndisableEnv: true").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: none\ndisableEnv: true").unwrap();
         let group = ApcliGroup::from_yaml(Some(yaml), /*registry_injected*/ true);
         assert_eq!(group.resolve_visibility(), "none");
         clear_env();
@@ -919,7 +919,7 @@ mod tests {
         let _g = ENV_MUTEX.lock().unwrap();
         clear_env();
         let yaml: Value =
-            serde_yaml::from_str("mode: include\ninclude:\n  - list\n  - describe").unwrap();
+            serde_yaml_ng::from_str("mode: include\ninclude:\n  - list\n  - describe").unwrap();
         let group = ApcliGroup::from_yaml(Some(yaml), /*registry_injected*/ true);
         assert_eq!(group.resolve_visibility(), "include");
         assert!(group.is_subcommand_included("list"));
@@ -934,7 +934,7 @@ mod tests {
     fn exclude_mode_filters_correctly() {
         let _g = ENV_MUTEX.lock().unwrap();
         clear_env();
-        let yaml: Value = serde_yaml::from_str("mode: exclude\nexclude:\n  - init").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: exclude\nexclude:\n  - init").unwrap();
         let group = ApcliGroup::from_yaml(Some(yaml), /*registry_injected*/ true);
         assert_eq!(group.resolve_visibility(), "exclude");
         assert!(!group.is_subcommand_included("init"));
@@ -1000,28 +1000,28 @@ mod tests {
     fn try_from_yaml_rejects_mode_auto() {
         // Even though Auto is the internal default, user-supplied "auto"
         // is rejected per spec §4.2.
-        let yaml: Value = serde_yaml::from_str("mode: auto").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: auto").unwrap();
         let err = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap_err();
         assert!(matches!(err, ApcliGroupError::ModeInvalid(ref s) if s == "auto"));
     }
 
     #[test]
     fn try_from_yaml_rejects_unknown_mode() {
-        let yaml: Value = serde_yaml::from_str("mode: whitelist").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: whitelist").unwrap();
         let err = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap_err();
         assert!(matches!(err, ApcliGroupError::ModeInvalid(_)));
     }
 
     #[test]
     fn try_from_yaml_rejects_non_string_mode() {
-        let yaml: Value = serde_yaml::from_str("mode: 42").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: 42").unwrap();
         let err = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap_err();
         assert!(matches!(err, ApcliGroupError::ModeNotString(_)));
     }
 
     #[test]
     fn try_from_yaml_rejects_array_shape() {
-        let yaml: Value = serde_yaml::from_str("- a\n- b").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("- a\n- b").unwrap();
         let err = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap_err();
         assert!(matches!(err, ApcliGroupError::InvalidShape(ref s) if s == "array"));
     }
@@ -1039,7 +1039,7 @@ mod tests {
     fn try_from_yaml_object_without_mode_is_auto() {
         let _g = ENV_MUTEX.lock().unwrap();
         clear_env();
-        let yaml: Value = serde_yaml::from_str("disable_env: true").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("disable_env: true").unwrap();
         let group = ApcliGroup::try_from_yaml(Some(yaml), /*registry_injected*/ false).unwrap();
         // Tier 3 falls to Tier 4 auto-detect → standalone → "all".
         assert_eq!(group.resolve_visibility(), "all");
@@ -1050,7 +1050,7 @@ mod tests {
     fn try_from_yaml_include_non_array_warns_and_empty() {
         let _g = ENV_MUTEX.lock().unwrap();
         clear_env();
-        let yaml: Value = serde_yaml::from_str("mode: include\ninclude: not-a-list").unwrap();
+        let yaml: Value = serde_yaml_ng::from_str("mode: include\ninclude: not-a-list").unwrap();
         let group = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap();
         assert_eq!(group.resolve_visibility(), "include");
         assert!(group.include().is_empty());
@@ -1059,7 +1059,7 @@ mod tests {
     #[test]
     fn try_from_yaml_unknown_include_entry_retained() {
         let yaml: Value =
-            serde_yaml::from_str("mode: include\ninclude:\n  - list\n  - bogus").unwrap();
+            serde_yaml_ng::from_str("mode: include\ninclude:\n  - list\n  - bogus").unwrap();
         let group = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap();
         // Unknown entry is retained for forward-compat.
         assert_eq!(group.include(), &["list", "bogus"]);
@@ -1067,7 +1067,8 @@ mod tests {
 
     #[test]
     fn try_from_yaml_disable_env_non_bool_treated_as_false() {
-        let yaml: Value = serde_yaml::from_str("mode: none\ndisable_env: \"yes-please\"").unwrap();
+        let yaml: Value =
+            serde_yaml_ng::from_str("mode: none\ndisable_env: \"yes-please\"").unwrap();
         let group = ApcliGroup::try_from_yaml(Some(yaml), true).unwrap();
         assert!(!group.disable_env());
     }
