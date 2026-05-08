@@ -74,10 +74,17 @@ pub const KNOWN_BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
 // ---------------------------------------------------------------------------
 
 /// Attach the `completion` subcommand to the given command. Returns the
-/// command with the subcommand added. `prog_name` is accepted for API
-/// symmetry and future dynamic use; the builder itself is currently static.
-pub fn register_completion_command(cli: Command, prog_name: &str) -> Command {
-    let _ = prog_name; // prog_name reserved for future dynamic use
+/// command with the subcommand added.
+///
+/// **API divergence (audit D9-W5, 2026-05-08):** Unlike Python's
+/// `register_completion_command(group, prog_name=...)`, this Rust variant
+/// does NOT accept a `prog_name` parameter. The clap-derived builder is
+/// static metadata and has no place to thread a program name into the
+/// generated script — the program name only matters at dispatch time, where
+/// [`cmd_completion`] already takes it as an explicit argument and
+/// `clap_complete` derives the rest from the live command tree (matching the
+/// TypeScript `registerCompletionCommand(host)` shape).
+pub fn register_completion_command(cli: Command) -> Command {
     cli.subcommand(completion_command())
 }
 
@@ -1381,7 +1388,7 @@ mod tests {
 
     #[test]
     fn test_register_completion_command_attaches_completion() {
-        let root = register_completion_command(Command::new("root"), "apcore-cli");
+        let root = register_completion_command(Command::new("root"));
         let names: Vec<&str> = root.get_subcommands().map(|c| c.get_name()).collect();
         assert!(
             names.contains(&"completion"),

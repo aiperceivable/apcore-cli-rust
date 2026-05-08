@@ -22,7 +22,7 @@ fn make_root_cmd() -> Command {
 
 #[test]
 fn test_compose_registrars_adds_completion() {
-    let root = register_man_command(register_completion_command(make_root_cmd(), "apcore-cli"));
+    let root = register_man_command(register_completion_command(make_root_cmd()));
     let names: Vec<_> = root.get_subcommands().map(|c| c.get_name()).collect();
     assert!(
         names.contains(&"completion"),
@@ -32,7 +32,7 @@ fn test_compose_registrars_adds_completion() {
 
 #[test]
 fn test_compose_registrars_adds_man() {
-    let root = register_man_command(register_completion_command(make_root_cmd(), "apcore-cli"));
+    let root = register_man_command(register_completion_command(make_root_cmd()));
     let names: Vec<_> = root.get_subcommands().map(|c| c.get_name()).collect();
     assert!(
         names.contains(&"man"),

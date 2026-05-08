@@ -70,7 +70,14 @@ pub const APCLI_ALWAYS_REGISTERED: &[&str] = &["exec"];
 /// * `apcli_group` — the `apcli` clap [`Command`](clap::Command) to receive
 ///   subcommands.
 /// * `cfg` — the resolved apcli visibility configuration.
-/// * `prog_name` — program name forwarded to `register_completion_command`.
+/// * `prog_name` — kept for source-level Python/TS parity. Audit D9-W5
+///   (2026-05-08) dropped the `prog_name` argument from
+///   `register_completion_command` — the static clap-derived builder has no
+///   place to thread it; the program name is consumed at dispatch time by
+///   `cmd_completion` instead. The argument is retained on this outer
+///   function so call sites do not break and so future per-subcommand
+///   registrars that DO take `prog_name` (e.g. for help-text customisation)
+///   can pick it up without another signature churn.
 ///
 /// Returns the updated command with registered subcommands attached.
 pub fn register_apcli_subcommands(
@@ -80,7 +87,7 @@ pub fn register_apcli_subcommands(
 ) -> clap::Command {
     type Registrar = Box<dyn FnOnce(clap::Command) -> clap::Command>;
 
-    let prog_name_for_completion = prog_name.to_string();
+    let _ = prog_name; // see doc-comment above (audit D9-W5).
     let table: Vec<(&'static str, Registrar)> = vec![
         ("list", Box::new(discovery::register_list_command)),
         ("describe", Box::new(discovery::register_describe_command)),
@@ -93,10 +100,7 @@ pub fn register_apcli_subcommands(
         ("disable", Box::new(system_cmd::register_disable_command)),
         ("reload", Box::new(system_cmd::register_reload_command)),
         ("config", Box::new(system_cmd::register_config_command)),
-        (
-            "completion",
-            Box::new(move |cli| shell::register_completion_command(cli, &prog_name_for_completion)),
-        ),
+        ("completion", Box::new(shell::register_completion_command)),
         (
             "describe-pipeline",
             Box::new(strategy::register_pipeline_command),
