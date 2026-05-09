@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [Unreleased]
+
+### Added
+
+- **`tests/conformance_snake_case_kwargs.rs`** — runs the cross-language Algorithm C-SNAKE fixture (`apcore-cli/conformance/fixtures/snake-case-kwargs/cases.json`) against `schema_to_clap_args` + `reconcile_bool_pairs`, mirroring `extract_cli_kwargs`'s extraction path. Five cases verify that schema property names with underscores (`has_solution`, `sort_by`, `sort_order`) survive the round trip from clap parse to the kwargs dict. No source change required — clap's `Arg::new(prop_name)` keeps the snake_case id as the access key; the Rust SDK is a parity reference for the parallel TypeScript fix. Surfaced as part of the cross-SDK regression coverage gap audit.
+
+
 ## [0.8.0] - 2026-05-08
 
 ### Security
