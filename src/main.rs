@@ -364,7 +364,7 @@ fn apply_discovery_flags(cmd: clap::Command, standalone: bool) -> clap::Command 
             .long("extensions-dir")
             .global(true)
             .value_name("PATH")
-            .help("Path to apcore extensions directory."),
+            .help("Path to extensions directory."),
     )
     .arg(
         clap::Arg::new("commands-dir")

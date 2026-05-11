@@ -181,28 +181,31 @@ fn test_format_exec_result_array() {
 // CSV emission — RFC 4180 escaping
 // ---------------------------------------------------------------------------
 
+// Following tests assert the toolkit-delegated CSV contract:
+// - RFC 4180 CRLF line terminator
+// - Insertion-order keys (matches Python / JS canonical form)
+// The `format_exec_result` wrapper trims the trailing CRLF to keep existing
+// caller conventions (which append their own newline).
+
 #[test]
 fn test_csv_object_quotes_value_with_comma() {
     let result = json!({"description": "foo, bar"});
     let out = format_exec_result(&result, "csv", None);
-    // Must quote the value; reader parsing "description\n\"foo, bar\"" yields
-    // one column, not two. The review flagged that the old code produced
-    // `description\nfoo, bar` which downstream CSV libs would split.
-    assert_eq!(out, "description\n\"foo, bar\"");
+    assert_eq!(out, "description\r\n\"foo, bar\"");
 }
 
 #[test]
 fn test_csv_object_escapes_embedded_quote() {
     let result = json!({"msg": "she said \"hi\""});
     let out = format_exec_result(&result, "csv", None);
-    assert_eq!(out, "msg\n\"she said \"\"hi\"\"\"");
+    assert_eq!(out, "msg\r\n\"she said \"\"hi\"\"\"");
 }
 
 #[test]
 fn test_csv_object_quotes_value_with_newline() {
     let result = json!({"multi": "line1\nline2"});
     let out = format_exec_result(&result, "csv", None);
-    assert_eq!(out, "multi\n\"line1\nline2\"");
+    assert_eq!(out, "multi\r\n\"line1\nline2\"");
 }
 
 #[test]
@@ -212,7 +215,7 @@ fn test_csv_array_quotes_rows_independently() {
         {"a": "p\"q", "b": "r"},
     ]);
     let out = format_exec_result(&result, "csv", None);
-    let lines: Vec<&str> = out.split('\n').collect();
+    let lines: Vec<&str> = out.split("\r\n").collect();
     assert_eq!(lines[0], "a,b");
     assert_eq!(lines[1], "x,\"y,z\"");
     assert_eq!(lines[2], "\"p\"\"q\",r");
@@ -223,13 +226,24 @@ fn test_csv_header_with_comma_in_key_is_quoted() {
     // Keys with commas (unusual but legal JSON) must also be quoted.
     let result = json!({"a,b": 1});
     let out = format_exec_result(&result, "csv", None);
-    assert_eq!(out, "\"a,b\"\n1");
+    assert_eq!(out, "\"a,b\"\r\n1");
 }
 
 #[test]
 fn test_csv_plain_value_passthrough() {
-    // Values without any special character survive without being wrapped.
+    // Insertion order preserved; toolkit uses serde_json's preserve_order feature.
     let result = json!({"name": "alpha", "count": 3});
     let out = format_exec_result(&result, "csv", None);
-    assert_eq!(out, "count,name\n3,alpha");
+    assert_eq!(out, "name,count\r\nalpha,3");
+}
+
+// --- New regression: heterogeneous-keys union (toolkit fix) ---
+#[test]
+fn test_csv_heterogeneous_keys_union() {
+    let result = json!([
+        {"sn": 1, "title": "A"},
+        {"sn": 2, "title": "B", "description": "later-only"},
+    ]);
+    let out = format_exec_result(&result, "csv", None);
+    assert_eq!(out, "sn,title,description\r\n1,A,\r\n2,B,later-only");
 }

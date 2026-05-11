@@ -48,7 +48,9 @@ Terminal adapter for apcore. Execute AI-Perceivable modules from the command lin
 cargo install apcore-cli
 ```
 
-Requires Rust 1.75+ and `apcore = 0.21.0` (exact pin). The optional `toolkit` feature pulls in `apcore-toolkit = 0.6.0`.
+Requires Rust 1.75+, `apcore = 0.21.0` (exact pin), and `apcore-toolkit >= 0.7.0` (now a **required** runtime dependency as of v0.9.0). The `toolkit` Cargo feature is retained in `default-features` as a no-op for backward compatibility — consumers using `default-features = false` must explicitly enable `features = ["toolkit"]` to compile. See [tech-design ADR-09](https://github.com/aiperceivable/apcore-cli/blob/main/docs/tech-design.md) for the byte-equivalent toolkit-delegated tier rationale.
+
+> **Note:** `apcore-toolkit-rust` 0.7.0 enables `serde_json/preserve_order`. This transitively affects all `serde_json::Map` iteration in your dependency tree — code that relied on alphabetical key ordering must re-sort explicitly.
 
 ## Quick Start
 
@@ -202,7 +204,7 @@ apcore-cli [OPTIONS] COMMAND [ARGS]
 | `--log-level` | `WARNING` | Logging: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `--version` | | Show version and exit |
 | `--help` | | Show help and exit |
-| `--verbose` | | Show all options in help (including built-in apcore options) |
+| `--verbose` | | Show all options in help (including built-in options) |
 | `--man` | | Output man page in roff format (use with `--help`) |
 
 ### Built-in Commands
@@ -254,7 +256,7 @@ When executing a module (e.g. `apcore-cli math.add` or `apcore-cli exec math.add
 | `--input -` | Read JSON input from STDIN |
 | `--yes` / `-y` | Bypass approval prompts |
 | `--large-input` | Allow STDIN input larger than 10MB |
-| `--format <fmt>` | Output format: `json`, `table`, `csv`, `yaml`, or `jsonl` |
+| `--format <fmt>` | Output format: `json`, `table`, `csv`, `yaml`, `jsonl`, `markdown`, `skill`. **v0.9.0:** `csv` / `jsonl` are byte-identical across SDKs via `apcore_toolkit::format_csv` / `format_jsonl`. CSV now uses RFC 4180 CRLF (was `\n`) and union-of-keys headers. |
 | `--sandbox` | Run module in subprocess sandbox |
 | `--dry-run` | Run preflight checks without executing (FE-11, routed through the `validate` module) |
 | `--trace` | Emit a pipeline execution trace |

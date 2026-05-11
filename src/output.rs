@@ -159,27 +159,28 @@ fn extract_tags(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Render a JSON `Value` as a plain-text CSV cell *payload* (pre-quoting).
-/// String variants return their raw contents; all others return
-/// `Value::to_string` (numbers unquoted, bools as `true`/`false`, null as
-/// `null`, nested objects/arrays as their JSON serialisation).
-fn csv_scalar_string(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-/// Quote a CSV field per RFC 4180. Fields containing a comma, a carriage
-/// return, a newline, or a double-quote are wrapped in double-quotes and
-/// have embedded double-quotes doubled. Otherwise the field is returned
-/// unchanged.
-fn csv_field(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
-        let escaped = s.replace('"', "\"\"");
-        format!("\"{escaped}\"")
-    } else {
-        s.to_string()
+/// Coerce a JSON `Value` into the row shape expected by the toolkit's
+/// tabular formatters: a slice of `Map<String, Value>`. Returns `None` for
+/// shapes that don't map to tabular (scalars, empty arrays, arrays of
+/// non-objects).
+fn rows_for_tabular(value: &Value) -> Option<Vec<serde_json::Map<String, Value>>> {
+    match value {
+        Value::Null => None,
+        Value::Object(obj) => Some(vec![obj.clone()]),
+        Value::Array(arr) => {
+            if arr.is_empty() {
+                return None;
+            }
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                match item {
+                    Value::Object(obj) => out.push(obj.clone()),
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        _ => None,
     }
 }
 
@@ -515,53 +516,19 @@ pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) ->
 
         Value::String(s) => s.clone(),
 
-        Value::Object(_) if format == "csv" => {
-            let obj = result.as_object().unwrap();
-            let keys: Vec<&String> = obj.keys().collect();
-            let header = keys
-                .iter()
-                .map(|k| csv_field(k.as_str()))
-                .collect::<Vec<_>>()
-                .join(",");
-            let values = keys
-                .iter()
-                .map(|k| {
-                    let v = obj.get(*k).unwrap();
-                    csv_field(&csv_scalar_string(v))
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("{header}\n{values}")
-        }
-
-        Value::Array(arr) if format == "csv" => {
-            if arr.is_empty() {
-                return String::new();
-            }
-            if let Some(first_obj) = arr[0].as_object() {
-                let keys: Vec<&String> = first_obj.keys().collect();
-                let header = keys
-                    .iter()
-                    .map(|k| csv_field(k.as_str()))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let mut rows = vec![header];
-                for item in arr {
-                    if let Some(obj) = item.as_object() {
-                        let row = keys
-                            .iter()
-                            .map(|k| {
-                                let v = obj.get(*k).unwrap_or(&Value::Null);
-                                csv_field(&csv_scalar_string(v))
-                            })
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        rows.push(row);
-                    }
+        _ if format == "csv" => {
+            // Delegate to apcore-toolkit for byte-equivalent cross-SDK output.
+            // Toolkit's format_csv: header = union of keys across all rows
+            // (fixes the prior single-row-keys data-loss bug).
+            match rows_for_tabular(&result) {
+                Some(rows) => {
+                    // Trim trailing CRLF for compatibility with the existing
+                    // caller convention (which appends its own newline).
+                    apcore_toolkit::format_csv(&rows, false)
+                        .trim_end_matches("\r\n")
+                        .to_string()
                 }
-                rows.join("\n")
-            } else {
-                serde_json::to_string(&result).unwrap_or_default()
+                None => serde_json::to_string(&result).unwrap_or_default(),
             }
         }
 
@@ -571,13 +538,12 @@ pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) ->
                 serde_json::to_string_pretty(&result).unwrap_or_else(|_| "null".to_string())
             }),
 
-        Value::Array(arr) if format == "jsonl" => arr
-            .iter()
-            .map(|item| serde_json::to_string(item).unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("\n"),
-
-        _ if format == "jsonl" => serde_json::to_string(&result).unwrap_or_default(),
+        _ if format == "jsonl" => match rows_for_tabular(&result) {
+            Some(rows) => apcore_toolkit::format_jsonl(&rows)
+                .trim_end_matches('\n')
+                .to_string(),
+            None => serde_json::to_string(&result).unwrap_or_default(),
+        },
 
         Value::Object(_) if format == "table" => {
             let obj = result.as_object().unwrap();

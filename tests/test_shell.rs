@@ -10,8 +10,8 @@ use clap_complete::Shell;
 fn make_root_cmd() -> Command {
     Command::new("apcore-cli")
         .version("0.2.0")
-        .about("Command-line interface for apcore modules")
-        .subcommand(Command::new("exec").about("Execute an apcore module"))
+        .about("Command-line interface for modules")
+        .subcommand(Command::new("exec").about("Execute a module"))
         .subcommand(Command::new("list").about("List available modules"))
         .subcommand(Command::new("describe").about("Show module metadata and schema"))
 }

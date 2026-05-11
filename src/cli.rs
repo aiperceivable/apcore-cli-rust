@@ -341,7 +341,7 @@ pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
 pub fn exec_command() -> clap::Command {
     use clap::{Arg, Command};
 
-    let cmd = Command::new("exec").about("Execute an apcore module").arg(
+    let cmd = Command::new("exec").about("Execute a module").arg(
         Arg::new("module_id")
             .required(true)
             .value_name("MODULE_ID")

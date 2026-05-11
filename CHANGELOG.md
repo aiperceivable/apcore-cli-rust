@@ -4,12 +4,32 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [Unreleased]
+## [0.9.0] - 2026-05-11
 
 ### Added
 
 - **`tests/conformance_snake_case_kwargs.rs`** — runs the cross-language Algorithm C-SNAKE fixture (`apcore-cli/conformance/fixtures/snake-case-kwargs/cases.json`) against `schema_to_clap_args` + `reconcile_bool_pairs`, mirroring `extract_cli_kwargs`'s extraction path. Five cases verify that schema property names with underscores (`has_solution`, `sort_by`, `sort_order`) survive the round trip from clap parse to the kwargs dict. No source change required — clap's `Arg::new(prop_name)` keeps the snake_case id as the access key; the Rust SDK is a parity reference for the parallel TypeScript fix. Surfaced as part of the cross-SDK regression coverage gap audit.
+### Fixed
 
+- **CSV `--format csv` heterogeneous-keys data loss** — `format_exec_result` previously derived headers from `arr[0].as_object().keys()` only, silently dropping fields that first appeared in later rows. Now delegates to `apcore_toolkit::format_csv()` which uses the **union of keys across all rows** in insertion-order. `src/output.rs:537-566`.
+- **CSV line terminator** — now `\r\n` per RFC 4180 (was `\n`). Existing test expectations updated; old `\n`-based assertions replaced with CRLF assertions in `tests/test_output.rs`.
+
+### Changed
+
+- **User-visible help/man/completion text no longer leaks the `apcore` framework name** to end users of downstream CLIs built on apcore-cli. Affected strings: `--extensions-dir` option help (`Path to apcore extensions directory.` → `Path to extensions directory.`, `src/main.rs:367`), `exec` subcommand description (`Execute an apcore module` → `Execute a module`, `src/shell.rs:62`, `src/cli.rs:344`, plus the `shell.rs:1102` test fixture and the `tests/test_shell.rs:13-14` integration-test fixture), and man-page `ENVIRONMENT` text in `src/shell.rs:640, 653, 658` (`Path to the apcore extensions directory` → `Path to the extensions directory`, `Global apcore logging verbosity` → `Global logging verbosity`, `API key for authenticating with the apcore registry` → `API key for authenticating with the registry`). README's `--verbose` row updated to match. The `test_generate_man_page_name_uses_description` assertion updated to the new "about" text. Logger fields, source comments, doc comments, and environment-variable identifiers (`APCORE_*`) are unchanged — only descriptive copy that appears in `--help`, shell completion, and `man` output. Cross-SDK parity with Python 0.8.1 and TypeScript 0.8.2.
+
+### Changed (breaking feature-flag semantics)
+
+- **`apcore-toolkit` promoted from optional Cargo feature to REQUIRED runtime dependency** (`>=0.7.0`). The `toolkit` feature flag is retained in `default` features for backward compatibility — existing `#[cfg(feature = "toolkit")]` gates continue to work — but consumers using `default-features = false` must explicitly enable `features = ["toolkit"]` to compile. Reqired because csv/yaml/jsonl now route through the toolkit's reference implementation.
+- **`serde_json::Map` iteration order** — transitively switched to insertion-order via the toolkit's `preserve_order` feature. Test assertions that relied on alphabetical iteration (`tests/test_output.rs::test_csv_plain_value_passthrough`) updated to expect insertion-order.
+
+### Removed
+
+- `csv_scalar_string` and `csv_field` private helpers — replaced by `apcore_toolkit::format_csv()` and the toolkit's RFC 4180 internals.
+
+### Why
+
+See ADR-09 in `apcore-cli/docs/tech-design.md` for the byte-equivalent toolkit-delegated tier rationale.
 
 ## [0.8.0] - 2026-05-08
 

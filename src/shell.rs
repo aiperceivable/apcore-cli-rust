@@ -59,7 +59,7 @@ pub const KNOWN_BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     ("disable", "Disable a module at runtime"),
     ("enable", "Enable a module at runtime"),
-    ("exec", "Execute an apcore module"),
+    ("exec", "Execute a module"),
     ("health", "Show module or registry health status"),
     ("init", "Scaffolding commands"),
     ("list", "List available modules"),
@@ -637,7 +637,7 @@ pub fn generate_man_page(
 pub const ENV_ENTRIES: &[(&str, &str)] = &[
     (
         "APCORE_EXTENSIONS_ROOT",
-        "Path to the apcore extensions directory. Overrides the default \\fI./extensions\\fR.",
+        "Path to the extensions directory. Overrides the default \\fI./extensions\\fR.",
     ),
     (
         "APCORE_CLI_AUTO_APPROVE",
@@ -650,12 +650,12 @@ pub const ENV_ENTRIES: &[(&str, &str)] = &[
     ),
     (
         "APCORE_LOGGING_LEVEL",
-        "Global apcore logging verbosity. One of: DEBUG, INFO, WARNING, ERROR. \
+        "Global logging verbosity. One of: DEBUG, INFO, WARNING, ERROR. \
          Used as fallback when \\fBAPCORE_CLI_LOGGING_LEVEL\\fR is not set. Default: WARNING.",
     ),
     (
         "APCORE_AUTH_API_KEY",
-        "API key for authenticating with the apcore registry.",
+        "API key for authenticating with the registry.",
     ),
 ];
 
@@ -1099,7 +1099,7 @@ mod tests {
 
     fn make_exec_cmd() -> clap::Command {
         clap::Command::new("exec")
-            .about("Execute an apcore module")
+            .about("Execute a module")
             .arg(
                 clap::Arg::new("module_id")
                     .value_name("MODULE_ID")
@@ -1223,7 +1223,7 @@ mod tests {
         let cmd = make_exec_cmd();
         let page = generate_man_page("exec", Some(&cmd), "apcore-cli", "0.2.0");
         assert!(
-            page.contains("Execute an apcore module"),
+            page.contains("Execute a module"),
             "NAME must use about text"
         );
     }
