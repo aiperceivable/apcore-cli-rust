@@ -204,7 +204,7 @@ apcore-cli [OPTIONS] COMMAND [ARGS]
 | `--log-level` | `WARNING` | Logging: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `--version` | | Show version and exit |
 | `--help` | | Show help and exit |
-| `--verbose` | | Show all options in help (including built-in options) |
+| `--all-options` | | Show all options in help (including built-in options) |
 | `--man` | | Output man page in roff format (use with `--help`) |
 
 ### Built-in Commands
@@ -249,7 +249,7 @@ apcore-cli ships with 13 built-in subcommands, all reachable under the reserved 
 
 ### Module Execution Options
 
-When executing a module (e.g. `apcore-cli math.add` or `apcore-cli exec math.add`), these built-in options are available (hidden by default; use `--verbose` to show in `--help`):
+When executing a module (e.g. `apcore-cli math.add` or `apcore-cli exec math.add`), these built-in options are available (hidden by default; use `--all-options` to show in `--help`):
 
 | Option | Description |
 |--------|-------------|
@@ -391,7 +391,7 @@ The following items are re-exported at the crate root (`apcore_cli::*`). Everyth
 Organized by source module:
 
 - **`approval::`** `check_approval` (re-exported); `check_approval_with_timeout`, `check_approval_with_tty`, `check_approval_with_tty_timeout`, `DEFAULT_APPROVAL_TIMEOUT_SECS` (module-path access)
-- **`cli::`** `set_verbose_help`, `is_verbose_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`
+- **`cli::`** `set_all_options_help`, `is_all_options_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`
 - **`discovery::`** `cmd_list`, `cmd_list_enhanced`, `cmd_describe`, `register_list_command`, `register_describe_command`, `register_exec_command`, `register_discovery_commands`
 - **`display_helpers::`** `get_display`, `get_cli_display_fields`
 - **`init_cmd::`** `init_command`, `handle_init`, `register_init_command`

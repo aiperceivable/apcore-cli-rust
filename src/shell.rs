@@ -880,7 +880,7 @@ pub fn build_program_man_page(
 
     s.push(".SH SEE ALSO".to_string());
     s.push(format!(
-        "\\fB{prog_name} \\-\\-help \\-\\-verbose\\fR \
+        "\\fB{prog_name} \\-\\-help \\-\\-all\\-options\\fR \
          for full option list."
     ));
     if let Some(url) = docs_url {

@@ -93,21 +93,21 @@ impl CliError {
 }
 
 // ---------------------------------------------------------------------------
-// Global verbose help flag (controls built-in option visibility in help)
+// Global all-options help flag (controls built-in option visibility in help)
 // ---------------------------------------------------------------------------
 
-/// Whether --verbose was passed (controls help detail level).
-static VERBOSE_HELP: AtomicBool = AtomicBool::new(false);
+/// Whether --all-options was passed (controls help detail level).
+static ALL_OPTIONS_HELP: AtomicBool = AtomicBool::new(false);
 
-/// Set the verbose help flag. When false, built-in options are hidden
+/// Set the all-options help flag. When false, built-in options are hidden
 /// from help.
-pub fn set_verbose_help(verbose: bool) {
-    VERBOSE_HELP.store(verbose, Ordering::Relaxed);
+pub fn set_all_options_help(all_options: bool) {
+    ALL_OPTIONS_HELP.store(all_options, Ordering::Relaxed);
 }
 
-/// Check the verbose help flag.
-pub fn is_verbose_help() -> bool {
-    VERBOSE_HELP.load(Ordering::Relaxed)
+/// Check the all-options help flag.
+pub fn is_all_options_help() -> bool {
+    ALL_OPTIONS_HELP.load(Ordering::Relaxed)
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ fn audit_error(module_id: &str, input: &Value, exit_code: i32, duration_ms: u64)
 /// subcommand re-parser in main.rs.
 pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
     use clap::{Arg, ArgAction};
-    let hide = !is_verbose_help();
+    let hide = !is_all_options_help();
     cmd.arg(
         Arg::new("input")
             .long("input")
@@ -376,6 +376,7 @@ pub fn exec_command() -> clap::Command {
 /// property that collides with one of these names will cause
 /// `std::process::exit(2)`.
 const RESERVED_FLAG_NAMES: &[&str] = &[
+    "all-options",
     "approval-timeout",
     "approval-token",
     "dry-run",
@@ -387,7 +388,6 @@ const RESERVED_FLAG_NAMES: &[&str] = &[
     "strategy",
     "stream",
     "trace",
-    "verbose",
     "yes",
 ];
 
@@ -476,13 +476,13 @@ pub fn build_module_command_with_limit(
         }
     }
 
-    let hide = !is_verbose_help();
+    let hide = !is_all_options_help();
 
-    // Build after_help footer: verbose hint + optional docs link
+    // Build after_help footer: all-options hint + optional docs link
     let mut footer_parts = Vec::new();
     if hide {
         footer_parts.push(
-            "Use --verbose to show all options \
+            "Use --all-options to show all options \
              (including built-in options)."
                 .to_string(),
         );

@@ -11,7 +11,7 @@ use apcore_cli::cli::{collect_input_from_reader, validate_module_id, CliError};
 use apcore_cli::collect_input;
 use serde_json::{json, Value};
 
-/// Mutex serializes tests that manipulate the global verbose help flag.
+/// Mutex serializes tests that manipulate the global all-options help flag.
 /// (`dead_code` false positive: statics in integration test files trigger
 /// this warning even when used, because each test file is a separate crate.)
 #[allow(dead_code)]
@@ -168,10 +168,10 @@ fn build_test_module_command(name: &str) -> clap::Command {
 #[test]
 fn test_build_module_command_creates_command() {
     let _guard = VERBOSE_MUTEX.lock().unwrap();
-    // Ensure verbose is on so built-in flags are visible, then restore.
-    apcore_cli::cli::set_verbose_help(true);
+    // Ensure all-options is on so built-in flags are visible, then restore.
+    apcore_cli::cli::set_all_options_help(true);
     let cmd = build_test_module_command("math.add");
-    apcore_cli::cli::set_verbose_help(false);
+    apcore_cli::cli::set_all_options_help(false);
 
     assert_eq!(cmd.get_name(), "math.add");
     // Verify built-in flags are present.
@@ -186,23 +186,23 @@ fn test_build_module_command_creates_command() {
 }
 
 // ---------------------------------------------------------------------------
-// verbose help flag — built-in option visibility
+// all-options help flag — built-in option visibility
 // ---------------------------------------------------------------------------
 
 #[test]
 fn builtin_flags_hidden_by_default() {
     let _guard = VERBOSE_MUTEX.lock().unwrap();
-    apcore_cli::cli::set_verbose_help(false);
+    apcore_cli::cli::set_all_options_help(false);
     let cmd = build_test_module_command("test.hidden");
     let input_arg = cmd.get_arguments().find(|a| a.get_id() == "input").unwrap();
     assert!(
         input_arg.is_hide_set(),
-        "--input should be hidden when verbose is off"
+        "--input should be hidden when all-options is off"
     );
     let yes_arg = cmd.get_arguments().find(|a| a.get_id() == "yes").unwrap();
     assert!(
         yes_arg.is_hide_set(),
-        "--yes should be hidden when verbose is off"
+        "--yes should be hidden when all-options is off"
     );
     let sandbox_arg = cmd
         .get_arguments()
@@ -210,24 +210,24 @@ fn builtin_flags_hidden_by_default() {
         .unwrap();
     assert!(
         sandbox_arg.is_hide_set(),
-        "--sandbox should be hidden when verbose is off"
+        "--sandbox should be hidden when all-options is off"
     );
 }
 
 #[test]
-fn builtin_flags_shown_when_verbose() {
+fn builtin_flags_shown_when_all_options() {
     let _guard = VERBOSE_MUTEX.lock().unwrap();
-    apcore_cli::cli::set_verbose_help(true);
+    apcore_cli::cli::set_all_options_help(true);
     let cmd = build_test_module_command("test.visible");
     let input_arg = cmd.get_arguments().find(|a| a.get_id() == "input").unwrap();
     assert!(
         !input_arg.is_hide_set(),
-        "--input should be visible when verbose is on"
+        "--input should be visible when all-options is on"
     );
     let yes_arg = cmd.get_arguments().find(|a| a.get_id() == "yes").unwrap();
     assert!(
         !yes_arg.is_hide_set(),
-        "--yes should be visible when verbose is on"
+        "--yes should be visible when all-options is on"
     );
     // sandbox is always hidden (not yet implemented)
     let sandbox_arg = cmd
@@ -239,7 +239,7 @@ fn builtin_flags_shown_when_verbose() {
         "--sandbox should always be hidden (not yet implemented)"
     );
     // Reset to default state.
-    apcore_cli::cli::set_verbose_help(false);
+    apcore_cli::cli::set_all_options_help(false);
 }
 
 // ---------------------------------------------------------------------------

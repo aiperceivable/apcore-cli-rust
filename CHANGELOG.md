@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [0.9.0] - 2026-05-11
+## [0.9.0] - 2026-05-12
 
 ### Added
 
@@ -17,6 +17,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - **User-visible help/man/completion text no longer leaks the `apcore` framework name** to end users of downstream CLIs built on apcore-cli. Affected strings: `--extensions-dir` option help (`Path to apcore extensions directory.` → `Path to extensions directory.`, `src/main.rs:367`), `exec` subcommand description (`Execute an apcore module` → `Execute a module`, `src/shell.rs:62`, `src/cli.rs:344`, plus the `shell.rs:1102` test fixture and the `tests/test_shell.rs:13-14` integration-test fixture), and man-page `ENVIRONMENT` text in `src/shell.rs:640, 653, 658` (`Path to the apcore extensions directory` → `Path to the extensions directory`, `Global apcore logging verbosity` → `Global logging verbosity`, `API key for authenticating with the apcore registry` → `API key for authenticating with the registry`). README's `--verbose` row updated to match. The `test_generate_man_page_name_uses_description` assertion updated to the new "about" text. Logger fields, source comments, doc comments, and environment-variable identifiers (`APCORE_*`) are unchanged — only descriptive copy that appears in `--help`, shell completion, and `man` output. Cross-SDK parity with Python 0.8.1 and TypeScript 0.8.2.
+
+### Changed (breaking CLI surface)
+
+- **Global `--verbose` flag renamed to `--all-options`** — The help-display flag is now `--all-options`; use `apcore-cli module --help --all-options` to reveal hidden built-in options. `verbose` is removed from the reserved schema property names set — module schemas may now freely define `verbose: boolean` for runtime output control. Public API: `set_verbose_help` / `is_verbose_help` renamed to `set_all_options_help` / `is_all_options_help`; statics renamed accordingly. Tracked in [apcore-cli#21](https://github.com/aiperceivable/apcore-cli/issues/21).
 
 ### Changed (breaking feature-flag semantics)
 

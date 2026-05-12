@@ -22,7 +22,7 @@ pub const RESERVED_PROPERTY_NAMES: &[&str] = &[
     "format",
     "fields",
     "sandbox",
-    "verbose",
+    "all_options",
     "dry_run",
     "trace",
     "stream",
@@ -55,9 +55,9 @@ pub enum SchemaParserError {
 /// A single boolean --flag / --no-flag pair generated from a `type: boolean` property.
 #[derive(Debug)]
 pub struct BoolFlagPair {
-    /// Original schema property name (e.g. "verbose").
+    /// Original schema property name (e.g. "log_output").
     pub prop_name: String,
-    /// Long name used for the positive flag (e.g. "verbose").
+    /// Long name used for the positive flag (e.g. "log-output").
     pub flag_long: String,
     /// Default value from the schema's `default` field (defaults to false).
     pub default_val: bool,
@@ -1230,6 +1230,41 @@ mod tests {
                 "expected ReservedPropertyName error for '{reserved}'"
             );
         }
+    }
+
+    #[test]
+    fn test_all_options_property_name_rejected() {
+        // FR-DISP-007: `all_options` replaces `verbose` as the reserved name.
+        assert!(
+            RESERVED_PROPERTY_NAMES.contains(&"all_options"),
+            "RESERVED_PROPERTY_NAMES must include 'all_options' (FR-DISP-007)"
+        );
+        let schema: Value =
+            serde_json::from_str(r#"{"properties": {"all_options": {"type": "string"}}}"#).unwrap();
+        let result = schema_to_clap_args(&schema, None);
+        assert!(
+            matches!(
+                result,
+                Err(SchemaParserError::ReservedPropertyName { ref name }) if name == "all_options"
+            ),
+            "expected ReservedPropertyName error for 'all_options', got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_verbose_property_name_now_valid() {
+        // FR-DISP-007: `verbose` is no longer reserved; schemas may use it freely.
+        assert!(
+            !RESERVED_PROPERTY_NAMES.contains(&"verbose"),
+            "RESERVED_PROPERTY_NAMES must NOT include 'verbose' (FR-DISP-007)"
+        );
+        let schema: Value =
+            serde_json::from_str(r#"{"properties": {"verbose": {"type": "boolean"}}}"#).unwrap();
+        let result = schema_to_clap_args(&schema, None);
+        assert!(
+            result.is_ok(),
+            "schema property 'verbose' must be accepted after FR-DISP-007, got {result:?}"
+        );
     }
 
     #[test]

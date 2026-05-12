@@ -203,11 +203,11 @@ fn build_scenario_command(shared: &Value) -> Command {
                 .help("Logging level (DEBUG|INFO|WARNING|ERROR)"),
         )
         .arg(
-            clap::Arg::new("verbose")
-                .long("verbose")
+            clap::Arg::new("all-options")
+                .long("all-options")
                 .global(true)
                 .action(clap::ArgAction::SetTrue)
-                .help("Show all options in help output (including built-in options)"),
+                .help("Show all options in help output (including built-in options)."),
         );
     if !registry_injected {
         cmd = cmd

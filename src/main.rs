@@ -45,9 +45,9 @@ fn extract_argv_option(args: &[String], flag: &str) -> Option<String> {
     None
 }
 
-/// Check if `--verbose` is present in raw argv (pre-parse, before clap).
-fn has_verbose_flag(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--verbose")
+/// Check if `--all-options` is present in raw argv (pre-parse, before clap).
+fn has_all_options_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--all-options")
 }
 
 /// Pre-parse `--extensions-dir` from raw argv before clap processes arguments.
@@ -264,7 +264,7 @@ fn build_cli_command(
     }
     cmd = cmd
         .after_help(
-            "Use --help --verbose to show all options (including built-in options).\n\
+            "Use --help --all-options to show all options (including built-in options).\n\
              Use --help --man to display a formatted man page.",
         )
         .allow_external_subcommands(true)
@@ -277,8 +277,8 @@ fn build_cli_command(
                 .help("Log verbosity (DEBUG|INFO|WARNING|ERROR)."),
         )
         .arg(
-            clap::Arg::new("verbose")
-                .long("verbose")
+            clap::Arg::new("all-options")
+                .long("all-options")
                 .global(true)
                 .action(clap::ArgAction::SetTrue)
                 .help(
@@ -567,10 +567,10 @@ async fn main() {
         std::process::exit(0);
     }
 
-    // Pre-parse --verbose before clap sees argv (must happen before
+    // Pre-parse --all-options before clap sees argv (must happen before
     // create_cli, since clap renders help during parsing).
-    let verbose = has_verbose_flag(&raw_args);
-    apcore_cli::cli::set_verbose_help(verbose);
+    let all_options = has_all_options_flag(&raw_args);
+    apcore_cli::cli::set_all_options_help(all_options);
 
     // Pre-parse --extensions-dir before clap sees argv.
     let extensions_dir = extract_extensions_dir(&raw_args[1..]);
