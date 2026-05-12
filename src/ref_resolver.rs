@@ -86,9 +86,19 @@ pub fn resolve_refs(
 /// concatenate required arrays. Dedups required first-seen-wins for cross-SDK
 /// parity with TS (`new Set`) and Python (explicit seen-set). Audit
 /// D9-NEW-002 (2026-05-08).
-fn merge_allof(branches: Vec<Value>) -> Value {
+///
+/// `parent_required` seeds the required list before branch iteration so that
+/// parent-required items appear first — matching Python/TS order where
+/// `merged["required"]` is seeded from the parent BEFORE the branch loop.
+fn merge_allof(parent_required: &[Value], branches: Vec<Value>) -> Value {
     let mut merged_props = Map::new();
+    // Seed with parent's required first (first-seen-wins dedup — parity with py/ts).
     let mut merged_required: Vec<Value> = Vec::new();
+    for item in parent_required {
+        if !merged_required.contains(item) {
+            merged_required.push(item.clone());
+        }
+    }
 
     for branch in branches {
         if let Some(props) = branch.get("properties").and_then(|v| v.as_object()) {
@@ -226,7 +236,15 @@ fn resolve_node(
             resolved_branches.push(resolved_sub);
         }
 
-        let merged = merge_allof(resolved_branches);
+        // Seed parent's own required BEFORE branch merging so parent-required items
+        // appear first — matching Python/TS first-seen-wins order. Audit fix 2026-05-12.
+        let parent_required = obj
+            .get("required")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let merged = merge_allof(&parent_required, resolved_branches);
         let merged_map = match merged {
             Value::Object(m) => m,
             _ => Map::new(),
@@ -235,11 +253,9 @@ fn resolve_node(
         // Carry over non-composition keys from the parent node.
         let mut result_map = merged_map;
 
-        // Seed parent node's own `properties`/`required` into the merged result
-        // AFTER branch merging — parent properties that are NOT already present
-        // from any branch are inserted here. This matches Python behaviour where
-        // `{properties:{x:...}, allOf:[{properties:{y:...}}]}` preserves both
-        // x and y (branches win on conflict; parent fills gaps).
+        // Seed parent node's own `properties` into the merged result — parent
+        // properties that are NOT already present from any branch fill gaps
+        // (branches win on conflict).
         if let Some(parent_props) = obj.get("properties").and_then(|v| v.as_object()) {
             if let Some(Value::Object(merged_props)) = result_map.get_mut("properties") {
                 for (k, v) in parent_props {
@@ -247,15 +263,7 @@ fn resolve_node(
                 }
             }
         }
-        if let Some(parent_req) = obj.get("required").and_then(|v| v.as_array()) {
-            if let Some(Value::Array(merged_req)) = result_map.get_mut("required") {
-                for item in parent_req {
-                    if !merged_req.contains(item) {
-                        merged_req.push(item.clone());
-                    }
-                }
-            }
-        }
+        // Parent's required is already seeded in merge_allof; do NOT append again.
 
         for (k, v) in &obj {
             if k != "allOf" && !result_map.contains_key(k) {
@@ -733,5 +741,29 @@ mod tests {
             .collect();
         // Sibling "a" present once; branch intersection ["a"] dedup-skipped.
         assert_eq!(required, vec!["a"]);
+    }
+
+    /// Regression for A-D-002 (2026-05-12): allOf `required` parent-first ordering.
+    /// Python/TS emit parent-required first; Rust previously emitted branch-first.
+    /// Fixed by seeding merge_allof with parent_required before the branch loop.
+    #[test]
+    fn test_allof_required_parent_first_ordering() {
+        let schema = json!({
+            "type": "object",
+            "required": ["x"],
+            "allOf": [
+                {"properties": {"a": {"type": "string"}}, "required": ["a"]},
+                {"properties": {"b": {"type": "integer"}}, "required": ["b"]},
+            ]
+        });
+        let result = resolve_refs(&schema, 32, "mod").unwrap();
+        let required: Vec<&str> = result["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        // Parent "x" must appear first — cross-SDK parity with Python/TS.
+        assert_eq!(required, vec!["x", "a", "b"]);
     }
 }

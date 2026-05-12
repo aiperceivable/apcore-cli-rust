@@ -32,26 +32,36 @@
 - Rust edition: 2021
 - MSRV: 1.75+
 - Async runtime: tokio
-- apcore pinned exactly: `apcore = "=0.19.0"` (v0.7.0 bump, was 0.18.0)
+- apcore pinned exactly: `apcore = "0.21"` (v0.9.0 bump, was 0.19.0 at v0.7.0)
 - Runtime schema validation: jsonschema 0.28
-- Optional: apcore-toolkit = "=0.5.0" behind the `toolkit` feature flag
+- apcore-toolkit-rust >= 0.7.0 — required runtime dependency as of v0.9.0; the `toolkit` Cargo
+  feature flag is retained as a no-op for back-compat
 
-## v0.6.0 Conventions
+## Current Conventions (v0.9.0)
 
-- exposure module + ExposureFilter + `with_exposure_filter` builder pattern on the
-  grouped command group (FE-12). Note: the Rust embedding API (`CliConfig`) was
-  removed in v0.7.0 (D9-001/002); filter must be wired via the builder method on
-  the command group.
+- exposure module + ExposureFilter. Use `ExposureFilter::new` / `ExposureFilter::from_config` —
+  the old `with_exposure_filter` builder was removed in v0.7.0 (D9-001/002).
 - system_cmd module registers health/usage/enable/disable/reload/config commands (FE-11).
 - strategy module + describe-pipeline + --strategy flag (FE-11).
 - validate module + --dry-run flag (FE-11).
-- 4 Config Bus exit codes added: 65 (EXIT_CONFIG_BIND_ERROR), 66 (EXIT_CONFIG_MOUNT_ERROR),
+- 4 Config Bus exit codes: 65 (EXIT_CONFIG_BIND_ERROR), 66 (EXIT_CONFIG_MOUNT_ERROR),
   70 (EXIT_ERROR_FORMATTER_DUPLICATE), 78 (EXIT_CONFIG_NAMESPACE_*).
-- `CliApprovalHandler` struct is currently a configuration holder only (stores
-  `auto_approve` and `timeout`). Actual approval gating is performed by standalone
-  `approval::check_approval` / `check_approval_with_tty` functions. Full trait-method
-  implementation is tracked as apcore-skills:sync finding A-001.
-- `Sandbox::execute()` currently needs executor wiring — tracked as A-003.
-- Public surface hygiene: `dispatch_*`/`register_*`/command builder fns should be
-  `pub(crate)` not `pub` — only called from main.rs. Ongoing cleanup per D9-005.
-- schemars moved to [dev-dependencies] (v0.6.0 cleanup) — used only in examples/.
+- `CliApprovalHandler` struct is a configuration holder (stores `auto_approve` and `timeout`).
+  Actual approval gating is performed by standalone `approval::check_approval` / `check_approval_with_tty` functions.
+- `Sandbox::execute(&self, module_id, input)` — 2-parameter signature; executor is NOT passed
+  per-call. The Rust sandbox binds the module path at construction time via APCORE_EXTENSIONS_ROOT.
+  This intentionally differs from Python/TS 3-parameter form; see apcore-cli/docs/features/security.md
+  for the Rust language note.
+- `set_all_options_help(bool)` / `is_all_options_help()` — Rust uses the v0.9.0 renamed form;
+  Python/TS still export `set_verbose_help` (internal name retained for back-compat).
+- `register_pipeline_command(cli) -> Command` — no executor param; differs from Python/TS form.
+  See builtin-group.md for the Rust language note.
+- `resolve_refs(schema, defs)` — 2-parameter form; defs extracted externally. Differs from
+  Python/TS 3-param form. See schema-parser.md for the Rust language note.
+- ApcliGroup has 6 constructors (`from_cli_config`, `from_cli_config_with_name`, `from_yaml`,
+  `from_yaml_with_name`, `try_from_yaml`, `try_from_yaml_with_name`) vs Python/TS 4 (name
+  is a kwarg). The `_with_name` variants expose the FE-13 `builtin_group_name` feature.
+- csv/jsonl/markdown/skill output formats are toolkit-delegated (ADR-09, v0.9.0).
+- No top-level `create_cli` factory — see `src/lib.rs:142-178` for the documented embed-API
+  parity gap. Pending rebuild.
+- schemars in [dev-dependencies] only (used in examples/).

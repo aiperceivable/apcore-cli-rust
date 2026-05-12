@@ -333,7 +333,7 @@ cli:
 
 - **Auto-discovery** -- all modules in the extensions directory are found and exposed as CLI commands
 - **Auto-generated flags** -- JSON Schema `input_schema` is converted to `--flag value` CLI options with type validation
-- **Boolean flag pairs** -- `--verbose` / `--no-verbose` from `"type": "boolean"` schema properties
+- **Boolean flag pairs** -- `--quiet` / `--no-quiet` from `"type": "boolean"` schema properties (example uses `quiet`; `verbose` is also valid since it was removed from reserved names in v0.9.0)
 - **Enum choices** -- `"enum": ["json", "csv"]` becomes `--format json` with clap validation
 - **STDIN piping** -- `--input -` reads JSON from STDIN, CLI flags override for duplicate keys
 - **TTY-adaptive output** -- comfy-table for terminals, JSON for pipes (configurable via `--format`)
