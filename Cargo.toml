@@ -48,7 +48,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3"
 nix = { version = "0.30", features = ["user"] }
 libc = "0.2"
-apcore-toolkit = { version = ">=0.7.0", path = "../apcore-toolkit-rust" }
+apcore-toolkit = "=0.7.0"
 
 [features]
 # `toolkit` is now always-on. apcore-toolkit is a required runtime dependency
