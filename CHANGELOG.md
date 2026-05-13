@@ -9,6 +9,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - **`tests/conformance_snake_case_kwargs.rs`** — runs the cross-language Algorithm C-SNAKE fixture (`apcore-cli/conformance/fixtures/snake-case-kwargs/cases.json`) against `schema_to_clap_args` + `reconcile_bool_pairs`, mirroring `extract_cli_kwargs`'s extraction path. Five cases verify that schema property names with underscores (`has_solution`, `sort_by`, `sort_order`) survive the round trip from clap parse to the kwargs dict. No source change required — clap's `Arg::new(prop_name)` keeps the snake_case id as the access key; the Rust SDK is a parity reference for the parallel TypeScript fix. Surfaced as part of the cross-SDK regression coverage gap audit.
+### Fixed (2026-05-13 — cross-SDK audit D10/D11/D1)
+
+- **Sandbox output-cap raises wrong error class** (D11-007) — byte-cap overflow now returns `ModuleExecutionError::OutputSizeExceeded { module_id, limit_bytes, overflow_stream }` instead of `OutputParseFailed`. Display message uses MiB units and names the overflowing stream (`stdout`/`stderr`/`stdout+stderr`), matching Python and TypeScript. `src/security/sandbox.rs:374`.
+- **`exec --dry-run` emits Rust-only "Pipeline preview" stderr block** (D11-011) — the preview was not declared in the spec and had no Python/TS equivalent. Removed for cross-SDK parity; `--trace` now uniformly routes through `executor.call_with_trace` across all three SDKs.
+- **CLI brand string inconsistency in error messages** (D11-006) — `src/security/config_encryptor.rs:56` `DecryptFailed` error text changed from `apcore-cli config set` to canonical `apcli config set`, matching `src/security/auth.rs` which already used `apcli`.
+- **Unused `schemars` dev-dependency** (D6 re-audit) — `schemars = "0.8"` in `[dev-dependencies]` had zero usage (`use schemars`, `#[derive(JsonSchema)]`). Removed.
+- **Stale `CLAUDE.md` `Sandbox::execute` arity claim** (D10 re-audit) — the "Current Conventions" bullet claimed Rust used a 2-parameter signature with executor bound at construction time; actual source has been 3-parameter since v0.7. Updated to reflect the real 3-parameter form.
+
+### Added
+
+- **`set_all_options_help` cross-SDK parity note** (D1-W1) — `src/cli.rs:104` doc-comment now documents that Rust intentionally ships without the deprecated `set_verbose_help` alias (post-rename, no pre-v0.9 callers). Python/TS keep the alias for one MINOR deprecation cycle.
+- **`ConfigResolver::resolve` language-idiom note** (D10-W1) — `src/config.rs:113` doc-comment documents that Rust narrows the return to `Option<String>` (serde_yaml_ng string-coercion) while Python returns `Any` and TypeScript returns `unknown`. Embedders needing typed YAML access are pointed at a v0.10 typed-resolver follow-up.
+- **`AuthProvider` encryptor-fallback language-idiom note** (D11-005) — `src/security/auth.rs` now documents that Rust's two-tier encryptor chain (explicit arg → fresh instance) differs from Python/TS's three-tier chain (explicit arg → `config.encryptor` peer attribute → fresh instance). The peer-attribute tier requires a `ConfigResolver` field addition tracked as a v0.10 follow-up.
+
 ### Fixed
 
 - **CSV `--format csv` heterogeneous-keys data loss** — `format_exec_result` previously derived headers from `arr[0].as_object().keys()` only, silently dropping fields that first appeared in later rows. Now delegates to `apcore_toolkit::format_csv()` which uses the **union of keys across all rows** in insertion-order. `src/output.rs:537-566`.
