@@ -26,9 +26,9 @@ const SANDBOX_DENIED_ENV_PREFIXES: &[&str] = &["APCORE_AUTH_"];
 const SANDBOX_DENIED_ENV_KEYS: &[&str] = &["APCORE_AUTH_API_KEY"];
 
 /// Default maximum bytes collected from sandbox stdout or stderr before the
-/// child is killed and OutputParseFailed is returned. Guards against OOM from
-/// hostile or buggy modules that write unboundedly. Overridable per-Sandbox
-/// via `Sandbox::with_max_output_bytes` (parity with Python).
+/// child is killed and `OutputSizeExceeded` is returned. Guards against OOM
+/// from hostile or buggy modules that write unboundedly. Overridable per-
+/// Sandbox via `Sandbox::with_max_output_bytes` (parity with Python).
 const SANDBOX_OUTPUT_SIZE_LIMIT_BYTES: usize = 64 * 1024 * 1024; // 64 MiB (aligned with Python/TS)
 
 // ---------------------------------------------------------------------------
@@ -60,6 +60,19 @@ pub enum ModuleExecutionError {
     /// The subprocess output could not be parsed.
     #[error("failed to parse sandbox output for module '{module_id}': {reason}")]
     OutputParseFailed { module_id: String, reason: String },
+
+    /// The subprocess output exceeded the per-Sandbox capture cap (default
+    /// 64 MiB). This is distinct from `OutputParseFailed`, which is reserved
+    /// for malformed JSON. Parity with Python/TS: the cap is reported in MiB
+    /// units (1024*1024) and the overflowing stream is named explicitly so
+    /// operators can pinpoint the offending direction (stdout vs. stderr).
+    #[error("Module '{module_id}' {overflow_stream} exceeded the {}MiB sandbox limit.",
+            limit_bytes / (1024 * 1024))]
+    OutputSizeExceeded {
+        module_id: String,
+        limit_bytes: usize,
+        overflow_stream: String,
+    },
 
     /// Failed to spawn the sandbox subprocess.
     #[error("failed to spawn sandbox process: {0}")]
@@ -372,9 +385,23 @@ impl Sandbox {
         let (stdout_bytes, stderr_bytes, status) = collect_result;
 
         if stdout_bytes.len() > cap || stderr_bytes.len() > cap {
-            return Err(ModuleExecutionError::OutputParseFailed {
+            // D11-007: classify the overflow stream so operators can identify
+            // which direction breached the cap. Both streams use `take(cap+1)`,
+            // so a length strictly greater than `cap` indicates that stream
+            // was the offender.
+            let overflow_stream = match (stdout_bytes.len() > cap, stderr_bytes.len() > cap) {
+                (true, true) => "stdout+stderr",
+                (true, false) => "stdout",
+                (false, true) => "stderr",
+                // Unreachable given the surrounding `if` condition, but match
+                // exhaustively to avoid a panic if the condition is widened.
+                (false, false) => "stdout",
+            }
+            .to_string();
+            return Err(ModuleExecutionError::OutputSizeExceeded {
                 module_id: module_id.to_string(),
-                reason: format!("sandbox output exceeded {} bytes", cap),
+                limit_bytes: cap,
+                overflow_stream,
             });
         }
 

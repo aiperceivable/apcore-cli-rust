@@ -166,6 +166,39 @@ async fn test_sandbox_with_max_output_bytes_enforces_smaller_cap() {
 }
 
 #[tokio::test]
+async fn test_output_size_exceeded_variant_display_and_fields() {
+    // D11-007: when stdout (or stderr) exceeds the sandbox cap, the error must
+    // be the dedicated OutputSizeExceeded variant — NOT OutputParseFailed,
+    // which is reserved for malformed JSON. The Display string must report
+    // the limit in MiB (parity with Python/TS) and name the overflowing stream.
+    let err = ModuleExecutionError::OutputSizeExceeded {
+        module_id: "noisy.module".to_string(),
+        limit_bytes: 64 * 1024 * 1024,
+        overflow_stream: "stdout".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("MiB"),
+        "Display must report cap in MiB, got: {msg}"
+    );
+    assert!(
+        msg.contains("stdout"),
+        "Display must name the overflowing stream, got: {msg}"
+    );
+    assert!(
+        msg.contains("noisy.module"),
+        "Display must include module id, got: {msg}"
+    );
+
+    // Variant pattern match must succeed (compile-time guard against the
+    // variant being collapsed back into OutputParseFailed).
+    match err {
+        ModuleExecutionError::OutputSizeExceeded { .. } => {}
+        other => panic!("expected OutputSizeExceeded, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
 #[ignore = "requires the compiled apcore-cli binary to be present at current_exe(); \
             run manually after `cargo build --bin apcore-cli` with `cargo test -- --ignored`"]
 async fn test_sandbox_nonzero_exit_returns_error() {

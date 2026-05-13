@@ -1398,8 +1398,8 @@ pub async fn dispatch_module(
                         // Preserve protocol exit-code semantics when the
                         // disabled passthrough surfaces an apcore ModuleError;
                         // other sandbox failures (NonZeroExit, Timeout,
-                        // OutputParseFailed, SpawnFailed) map to the generic
-                        // execute-error code.
+                        // OutputParseFailed, OutputSizeExceeded, SpawnFailed)
+                        // map to the generic execute-error code.
                         match &e {
                             crate::security::ModuleExecutionError::ModuleError(inner) => {
                                 let code = map_module_error_to_exit_code(inner);
