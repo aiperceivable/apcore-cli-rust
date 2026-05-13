@@ -48,10 +48,12 @@
   70 (EXIT_ERROR_FORMATTER_DUPLICATE), 78 (EXIT_CONFIG_NAMESPACE_*).
 - `CliApprovalHandler` struct is a configuration holder (stores `auto_approve` and `timeout`).
   Actual approval gating is performed by standalone `approval::check_approval` / `check_approval_with_tty` functions.
-- `Sandbox::execute(&self, module_id, input)` — 2-parameter signature; executor is NOT passed
-  per-call. The Rust sandbox binds the module path at construction time via APCORE_EXTENSIONS_ROOT.
-  This intentionally differs from Python/TS 3-parameter form; see apcore-cli/docs/features/security.md
-  for the Rust language note.
+- `Sandbox::execute(&self, module_id, input, executor)` — 3-parameter async signature, identical
+  in arity to Python `sandbox.execute(module_id, input_data, executor)` and TS
+  `sandbox.execute(moduleId, inputData, executor)`. The Rust sandbox does additionally
+  bind APCORE_EXTENSIONS_ROOT at construction time via `withExtensionsRoot`, but the
+  per-call executor is still passed in. (Earlier docs claimed a 2-param form — that
+  divergence no longer exists, audit D10 follow-up 2026-05-13.)
 - `set_all_options_help(bool)` / `is_all_options_help()` — Rust uses the v0.9.0 renamed form;
   Python/TS still export `set_verbose_help` (internal name retained for back-compat).
 - `register_pipeline_command(cli) -> Command` — no executor param; differs from Python/TS form.

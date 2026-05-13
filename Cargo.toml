@@ -62,7 +62,6 @@ test-support = []
 toolkit = []
 
 [dev-dependencies]
-schemars = "0.8"
 apcore-cli = { path = ".", features = ["test-support"] }
 
 [[test]]

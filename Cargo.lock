@@ -183,7 +183,6 @@ dependencies = [
  "pbkdf2",
  "regex",
  "reqwest",
- "schemars",
  "serde",
  "serde_json",
  "serde_yaml_ng",
