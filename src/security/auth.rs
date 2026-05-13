@@ -112,6 +112,15 @@ impl AuthProvider {
         };
 
         // If the stored value is a keyring ref or enc blob, decode it.
+        //
+        // D11-005 language-idiom note (2026-05-12): Python's `auth.py:_get_encryptor`
+        // and TypeScript's `auth.ts:getEncryptor()` walk a three-tier chain
+        // (explicit constructor arg -> `config.encryptor` peer attribute -> fresh
+        // instance). Rust's `ConfigResolver` does not yet carry an `encryptor`
+        // peer field, so the peer-attribute tier is unreachable; the Rust
+        // fallback is the two-tier (explicit arg -> fresh instance) form below.
+        // Adding the field to `ConfigResolver` is tracked as a v0.10 follow-up;
+        // the divergence is documented in apcore-cli/docs/features/security.md.
         if raw.starts_with("keyring:") || raw.starts_with("enc:") {
             let decoded = match self.encryptor.as_ref() {
                 Some(enc) => enc.retrieve(&raw, "auth.api_key"),

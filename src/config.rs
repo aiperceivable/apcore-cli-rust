@@ -109,6 +109,21 @@ impl ConfigResolver {
     /// * `env_var`   — optional environment variable name
     ///
     /// Returns `None` when the key is not present in any tier.
+    ///
+    /// # Cross-SDK language-idiom note (D10-W1, 2026-05-12)
+    ///
+    /// The spec declares `Returns: Any` (Python `Any` / `dict|bool|int|str|None`;
+    /// TypeScript `unknown`). Rust narrows the return to `Option<String>` and
+    /// string-coerces booleans / integers via `serde_yaml_ng` flattening.
+    /// In-tree callers parse the string back into the desired type (e.g.
+    /// `cli.approval_timeout` is parsed via `.parse::<u64>()` in cli.rs:1213).
+    /// Embedders that need typed YAML access should reach for the underlying
+    /// `serde_yaml_ng::Value` directly via the config loader (today this
+    /// requires a fresh read; a typed-resolver helper is tracked as a v0.10
+    /// follow-up). The string-coercion preserves the spec semantics — the
+    /// returned value round-trips through YAML serialization — but a Rust
+    /// embedder naively comparing `Some("true".to_string())` against a YAML
+    /// boolean will silently mismatch. See apcore-cli/docs/features/config.md.
     pub fn resolve(
         &self,
         key: &str,

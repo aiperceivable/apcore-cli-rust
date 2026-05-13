@@ -101,6 +101,16 @@ static ALL_OPTIONS_HELP: AtomicBool = AtomicBool::new(false);
 
 /// Set the all-options help flag. When false, built-in options are hidden
 /// from help.
+///
+/// # Cross-SDK note (D1-W1, 2026-05-12)
+///
+/// Python and TypeScript ship a deprecated `set_verbose_help` /
+/// `setVerboseHelp` alias kept for one MINOR cycle (FE-13 v0.9 rename
+/// `--verbose` -> `--all-options`). Rust intentionally does NOT export
+/// the alias because the Rust SDK shipped its canonical form post-rename
+/// — there are no pre-v0.9 Rust callers to break. Embedders writing
+/// new cross-SDK glue should reference `set_all_options_help` in all
+/// three languages.
 pub fn set_all_options_help(all_options: bool) {
     ALL_OPTIONS_HELP.store(all_options, Ordering::Relaxed);
 }
@@ -1113,40 +1123,12 @@ pub async fn dispatch_module(
 
     // -- F1: Dry-run / validate: preflight only, no execution --
     if dry_run {
-        // --trace --dry-run: show pipeline preview after preflight result.
-        let show_trace_preview = trace_flag;
-        let print_pipeline_preview = || {
-            if show_trace_preview {
-                let pure_steps = [
-                    "context_creation",
-                    "call_chain_guard",
-                    "module_lookup",
-                    "acl_check",
-                    "input_validation",
-                ];
-                let all_steps = [
-                    "context_creation",
-                    "call_chain_guard",
-                    "module_lookup",
-                    "acl_check",
-                    "approval_gate",
-                    "middleware_before",
-                    "input_validation",
-                    "execute",
-                    "output_validation",
-                    "middleware_after",
-                    "return_result",
-                ];
-                eprintln!("\nPipeline preview (dry-run):");
-                for s in &all_steps {
-                    if pure_steps.contains(s) {
-                        eprintln!("  v {:<24} (pure -- would execute)", s);
-                    } else {
-                        eprintln!("  o {:<24} (impure -- skipped in dry-run)", s);
-                    }
-                }
-            }
-        };
+        // D11-011 (2026-05-12): the Rust-only stderr "Pipeline preview"
+        // emitter has been removed for cross-SDK parity — neither Python nor
+        // TypeScript emits a pipeline preview, and the spec does not declare
+        // one. `--trace` now uniformly routes through executor.call_with_trace
+        // in all three SDKs without additional stderr decoration.
+        let _ = trace_flag; // intentionally unused; trace path runs via call_with_trace.
         let input_value =
             serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
 
@@ -1158,7 +1140,6 @@ pub async fn dispatch_module(
             crate::validate::build_preflight_result(apcore_executor, &module_def, &input_value)
                 .await;
         crate::validate::format_preflight_result(&preflight, format_flag.as_deref());
-        print_pipeline_preview();
         let valid = preflight
             .get("valid")
             .and_then(|v| v.as_bool())

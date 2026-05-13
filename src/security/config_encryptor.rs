@@ -47,13 +47,13 @@ pub enum ConfigDecryptionError {
 
     /// Decryption of a stored config value failed. Carries the originating
     /// config key so the user-facing message can name it and direct the
-    /// caller to remediate via `apcore-cli config set {key}`. Cross-language
+    /// caller to remediate via `apcli config set {key}`. Cross-language
     /// parity with Python `ConfigDecryptionError(f"Failed to decrypt
     /// configuration value '{key}'. ...")` and TS equivalent — audit
-    /// D10-truncated #1 (2026-05-07).
+    /// D11-006 (2026-05-12) canonicalized the CLI brand to `apcli` per FE-13.
     #[error(
         "Failed to decrypt configuration value '{key}'. \
-         Re-configure with 'apcore-cli config set {key}'."
+         Re-store with 'apcli config set {key}'."
     )]
     DecryptFailed { key: String },
 
@@ -622,7 +622,7 @@ mod tests {
             "error message must name the config key, got: {msg}"
         );
         assert!(
-            msg.contains("apcore-cli config set auth.api_key"),
+            msg.contains("apcli config set auth.api_key"),
             "error message must include remediation guidance, got: {msg}"
         );
     }
