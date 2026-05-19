@@ -155,6 +155,13 @@ fn create_decorator_module(
 
     let struct_name = to_struct_name(func_name);
 
+    // The format! template below emits `// TODO: implement` placeholders
+    // into the GENERATED user module. These are user-facing scaffolding —
+    // not SDK source-level TODOs — and intentionally match the parity
+    // templates in ../apcore-cli-python/src/apcore_cli/init_cmd.py and
+    // ../apcore-cli-typescript/src/init-cmd.ts. Audit tools that grep for
+    // "TODO" should treat occurrences inside the format! literal below
+    // (and in the convention/binding templates further down) as expected.
     let content = format!(
         "use apcore::module::Module;\n\
          use apcore::context::Context;\n\

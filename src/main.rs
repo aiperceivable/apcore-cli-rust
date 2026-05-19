@@ -636,7 +636,6 @@ async fn main() {
     let descriptions = discoverer.load_descriptions();
 
     // Optional toolkit integration (requires --features toolkit)
-    #[cfg(feature = "toolkit")]
     {
         let binding_path = extract_binding_path(&raw_args[1..]);
         let commands_dir = extract_commands_dir(&raw_args[1..]);

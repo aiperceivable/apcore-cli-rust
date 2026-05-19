@@ -5,10 +5,6 @@
 use serde_json::Value;
 use std::io::IsTerminal;
 
-#[cfg(not(feature = "toolkit"))]
-const TOOLKIT_MISSING_HINT: &str =
-    "The 'markdown' and 'skill' output formats require the 'toolkit' Cargo feature.";
-
 /// Adapt a registry-style JSON Value (module descriptor) to the toolkit's
 /// `ScannedModule` so the surface formatters can render it.
 ///
@@ -17,7 +13,6 @@ const TOOLKIT_MISSING_HINT: &str =
 /// `metadata`); the toolkit additionally needs `target` (set to ""),
 /// `version` (defaulted), and `display` (sourced from `metadata.display`
 /// when present).
-#[cfg(feature = "toolkit")]
 pub(crate) fn descriptor_to_scanned(m: &Value) -> apcore_toolkit::ScannedModule {
     use apcore_toolkit::ScannedModule;
 
@@ -246,24 +241,16 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
             serde_json::to_string_pretty(&result).unwrap_or_else(|_| "[]".to_string())
         }
         "markdown" | "skill" => {
-            #[cfg(feature = "toolkit")]
-            {
-                use apcore_toolkit::{format_modules, FormatOutput, ModuleStyle};
-                let style = if format == "skill" {
-                    ModuleStyle::Skill
-                } else {
-                    ModuleStyle::Markdown
-                };
-                let scanned: Vec<_> = modules.iter().map(descriptor_to_scanned).collect();
-                match format_modules(&scanned, style, None, true) {
-                    FormatOutput::Text(s) => s,
-                    other => format!("{:?}", other),
-                }
-            }
-            #[cfg(not(feature = "toolkit"))]
-            {
-                tracing::warn!("{}", TOOLKIT_MISSING_HINT);
-                format_module_list(modules, "json", filter_tags)
+            use apcore_toolkit::{format_modules, FormatOutput, ModuleStyle};
+            let style = if format == "skill" {
+                ModuleStyle::Skill
+            } else {
+                ModuleStyle::Markdown
+            };
+            let scanned: Vec<_> = modules.iter().map(descriptor_to_scanned).collect();
+            match format_modules(&scanned, style, None, true) {
+                FormatOutput::Text(s) => s,
+                other => format!("{:?}", other),
             }
         }
         unknown => {
@@ -431,26 +418,18 @@ pub fn format_module_detail(module: &Value, format: &str) -> String {
                 .unwrap_or_else(|_| "{}".to_string())
         }
         "markdown" | "skill" => {
-            #[cfg(feature = "toolkit")]
-            {
-                use apcore_toolkit::{
-                    format_module as toolkit_format_module, FormatOutput, ModuleStyle,
-                };
-                let style = if format == "skill" {
-                    ModuleStyle::Skill
-                } else {
-                    ModuleStyle::Markdown
-                };
-                let scanned = descriptor_to_scanned(module);
-                match toolkit_format_module(&scanned, style, true) {
-                    FormatOutput::Text(s) => s,
-                    other => format!("{:?}", other),
-                }
-            }
-            #[cfg(not(feature = "toolkit"))]
-            {
-                tracing::warn!("{}", TOOLKIT_MISSING_HINT);
-                format_module_detail(module, "json")
+            use apcore_toolkit::{
+                format_module as toolkit_format_module, FormatOutput, ModuleStyle,
+            };
+            let style = if format == "skill" {
+                ModuleStyle::Skill
+            } else {
+                ModuleStyle::Markdown
+            };
+            let scanned = descriptor_to_scanned(module);
+            match toolkit_format_module(&scanned, style, true) {
+                FormatOutput::Text(s) => s,
+                other => format!("{:?}", other),
             }
         }
         unknown => {
@@ -971,7 +950,6 @@ mod tests {
     // markdown / skill — toolkit delegation (issue #20)
     // ---------------------------------------------------------------------
 
-    #[cfg(feature = "toolkit")]
     fn fixture_module() -> Value {
         json!({
             "module_id": "math.add",
@@ -993,7 +971,6 @@ mod tests {
         })
     }
 
-    #[cfg(feature = "toolkit")]
     #[test]
     fn test_format_module_list_markdown_matches_toolkit() {
         use apcore_toolkit::{format_modules, FormatOutput, ModuleStyle};
@@ -1007,7 +984,6 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    #[cfg(feature = "toolkit")]
     #[test]
     fn test_format_module_list_skill_matches_toolkit() {
         use apcore_toolkit::{format_modules, FormatOutput, ModuleStyle};
@@ -1021,7 +997,6 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    #[cfg(feature = "toolkit")]
     #[test]
     fn test_format_module_detail_markdown_matches_toolkit() {
         use apcore_toolkit::{format_module as toolkit_fmt, FormatOutput, ModuleStyle};
@@ -1035,7 +1010,6 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    #[cfg(feature = "toolkit")]
     #[test]
     fn test_format_module_detail_skill_emits_yaml_frontmatter() {
         let m = fixture_module();
@@ -1051,7 +1025,6 @@ mod tests {
         assert_eq!(lines[3], "---");
     }
 
-    #[cfg(feature = "toolkit")]
     #[test]
     fn test_format_module_detail_skill_matches_toolkit() {
         use apcore_toolkit::{format_module as toolkit_fmt, FormatOutput, ModuleStyle};

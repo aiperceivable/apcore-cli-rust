@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.10.0] - 2026-05-18
+
+### Changed — BREAKING (feature surface)
+
+- **Removed `toolkit` Cargo feature flag — apcore-toolkit is now unconditionally required (resolves 6.2; lands ADR-07).** `apcore-toolkit = "=0.7.0"` was already declared as a hard runtime dependency in `Cargo.toml`, but the code base wrapped every toolkit-delegating path in `#[cfg(feature = "toolkit")]` and provided silent-downgrade fallbacks under `#[cfg(not(feature = "toolkit"))]`. This created the same "fake optional" self-contradiction the PY / TS 0.10.0 release fixed: required at the manifest level, soft-degraded at the code level. The sweep landed in this release:
+  - Deleted 10 `#[cfg(feature = "toolkit")]` gates across `src/output.rs` (descriptor adapter, markdown/skill arms in `format_module_list` / `format_module_detail`, and 5 test helpers / tests) and `src/main.rs` (toolkit-integration block).
+  - Deleted 3 `#[cfg(not(feature = "toolkit"))]` fallback branches that silently degraded `--format markdown` / `--format skill` to JSON with a `tracing::warn!`.
+  - Removed the now-dead `TOOLKIT_MISSING_HINT` const.
+  - Removed `toolkit = []` and `default = ["toolkit"]` from `Cargo.toml` `[features]`. Only `test-support` remains.
+- **Migration for downstream crates** that depended on `apcore-cli` with `default-features = false`: explicitly opting out of the `toolkit` feature was previously a way to compile without the toolkit code paths (at the cost of silent format downgrade); that option is gone. apcore-toolkit will always be linked. If you genuinely cannot tolerate the toolkit dependency, pin to `apcore-cli = "0.9"` and stay there until you can adopt the unified surface.
+
 ## [0.9.0] - 2026-05-13
 
 ### Added
