@@ -578,22 +578,16 @@ pub fn dispatch_config(matches: &clap::ArgMatches, executor: &apcore::Executor) 
     match matches.subcommand() {
         Some(("get", sub_m)) => {
             let key = sub_m.get_one::<String>("key").expect("key is required");
-            // Try reading from apcore Config directly.
-            match call_system_module(
-                executor,
-                "system.config.get",
-                serde_json::json!({"key": key}),
-            ) {
-                Ok(val) => {
-                    let display = val
-                        .get("value")
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| val.to_string());
-                    println!("{key} = {display}");
-                    std::process::exit(0);
-                }
-                Err(e) => exit_on_system_error(e),
-            }
+            // Spec (usability-enhancements.md): `config get` reads Config::get(key)
+            // directly (read-only, no approval, no executor round-trip). Matches
+            // apcore-cli-python `Config().get(key)`. Does NOT route through
+            // executor.call("system.config.get").
+            let display = apcore::Config::default()
+                .get(key)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".to_string());
+            println!("{key} = {display}");
+            std::process::exit(0);
         }
         Some(("set", sub_m)) => {
             let key = sub_m.get_one::<String>("key").expect("key is required");

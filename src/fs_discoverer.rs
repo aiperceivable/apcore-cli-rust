@@ -405,6 +405,6 @@ mod tests {
         let count = registry.discover(&discoverer).await.unwrap();
 
         assert_eq!(count, 1);
-        assert!(registry.get_definition("math.add").is_some());
+        assert!(registry.get_definition("math.add").ok().flatten().is_some());
     }
 }

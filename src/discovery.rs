@@ -455,7 +455,7 @@ impl RegistryProvider for ApCoreRegistryProvider {
     fn list(&self) -> Vec<String> {
         let mut ids: Vec<String> = self
             .registry
-            .list(None, None)
+            .list(None, None, None)
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -470,8 +470,10 @@ impl RegistryProvider for ApCoreRegistryProvider {
     fn get_definition(&self, id: &str) -> Option<Value> {
         self.registry
             .get_definition(id)
+            .ok()
+            .flatten()
             .and_then(|d| serde_json::to_value(d).ok())
-            .map(|mut v| {
+            .map(|mut v: Value| {
                 // Inject description from discovery metadata if available,
                 // since ModuleDescriptor does not carry a description field.
                 if let Some(desc) = self.descriptions.get(id) {
@@ -487,7 +489,7 @@ impl RegistryProvider for ApCoreRegistryProvider {
         &self,
         id: &str,
     ) -> Option<apcore::registry::registry::ModuleDescriptor> {
-        self.registry.get_definition(id)
+        self.registry.get_definition(id).ok().flatten()
     }
 }
 

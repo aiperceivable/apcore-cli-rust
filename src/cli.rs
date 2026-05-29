@@ -120,6 +120,33 @@ pub fn is_all_options_help() -> bool {
     ALL_OPTIONS_HELP.load(Ordering::Relaxed)
 }
 
+/// Whether system modules (`system.health.summary` etc.) are available on the
+/// executor backing this CLI. Gates registration of the six system subcommands
+/// (`health`/`usage`/`enable`/`disable`/`reload`/`config`) so that — matching
+/// apcore-cli-python `_system_modules_available` (factory.py) and the
+/// apcore-cli-typescript probe — either all six appear or none do. Partial
+/// registration is a cross-SDK parity bug (apcore-cli
+/// usability-enhancements.md §register_system_commands).
+///
+/// Defaults to `true` so the building-block composer `register_apcli_subcommands`
+/// keeps registering the full set for callers that have not probed availability
+/// (mirrors how `register_health_command` always registers when called directly
+/// in Python). The standalone binary calls `set_system_modules_available` with
+/// the probed value before building the command tree.
+static SYSTEM_MODULES_AVAILABLE: AtomicBool = AtomicBool::new(true);
+
+/// Set whether system modules are available (gates the six system subcommands).
+/// Call before building the CLI command tree. See [`is_system_modules_available`].
+pub fn set_system_modules_available(available: bool) {
+    SYSTEM_MODULES_AVAILABLE.store(available, Ordering::Relaxed);
+}
+
+/// Check whether system modules are available. When false, the six system
+/// subcommands are skipped atomically during registration.
+pub fn is_system_modules_available() -> bool {
+    SYSTEM_MODULES_AVAILABLE.load(Ordering::Relaxed)
+}
+
 // ---------------------------------------------------------------------------
 // Global docs URL (shown in help and man pages)
 // ---------------------------------------------------------------------------

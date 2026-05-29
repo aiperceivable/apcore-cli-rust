@@ -579,32 +579,14 @@ async fn main() {
     let default_level = resolve_log_level(None);
     init_tracing(&default_level);
 
-    // Build and parse CLI. The standalone binary explicitly passes its
-    // SDK package version through `create_cli_with` so `--version` is
-    // wired up. `create_cli` (the no-version factory) is reserved for
-    // embedders that do not want to leak the SDK's own version through
-    // their host CLI's `--version` flag (issue #18 opt-in semantics).
-    let cmd = create_cli_with(
-        extensions_dir,
-        None,
-        Some(env!("CARGO_PKG_VERSION").to_string()),
-        None,
-    );
-    let matches = cmd.get_matches();
-
-    // Optionally reload log filter from --log-level flag.
-    if let Some(level) = matches.get_one::<String>("log-level") {
-        if let Some(handle) = RELOAD_HANDLE.get() {
-            let new_filter = EnvFilter::try_new(level).unwrap_or_else(|_| EnvFilter::new("warn"));
-            let _ = handle.reload(new_filter);
-        }
-    }
-
-    // Build shared registry, executor, and apcore executor for dispatch.
-    // Discover modules from the extensions directory when available.
-    let extensions_dir_for_discovery = matches
-        .get_one::<String>("extensions-dir")
-        .cloned()
+    // ---- Discover modules BEFORE building the CLI command tree (D10-004) ----
+    // The system-module availability probe must run before the `apcli`
+    // subcommand group is built, so the six system subcommands can be gated
+    // atomically (cross-SDK parity with apcore-cli-python factory.py and the
+    // apcore-cli-typescript registration probe). clap has not parsed argv yet,
+    // so resolve the extensions root from the pre-parsed flag > env > default.
+    let extensions_dir_for_discovery = extensions_dir
+        .clone()
         .or_else(|| {
             std::env::var("APCORE_EXTENSIONS_ROOT")
                 .ok()
@@ -628,12 +610,46 @@ async fn main() {
         tracing::warn!("Module discovery failed: {e}");
     }
     // Collect discovered names from the registry after discovery.
-    let discovered_names: Vec<String> = registry.list(None, None);
+    let discovered_names: Vec<String> = registry.list(None, None, None);
 
     // Store discovered executables in the global map for dispatch_module.
     apcore_cli::set_executables(discoverer.executables_snapshot());
 
     let descriptions = discoverer.load_descriptions();
+
+    // Probe system-module availability and publish it BEFORE the CLI is built,
+    // so `register_apcli_subcommands` gates the six system subcommands
+    // atomically. Mirrors apcore-cli-python `_system_modules_available`
+    // (registry-lookup path). The standalone binary's executor has no
+    // `system.*` modules unless a host registered them via apcore
+    // `register_sys_modules`, so the system subcommands are hidden when absent.
+    let system_modules_available = registry
+        .get_definition("system.health.summary")
+        .ok()
+        .flatten()
+        .is_some();
+    apcore_cli::set_system_modules_available(system_modules_available);
+
+    // Build and parse CLI. The standalone binary explicitly passes its
+    // SDK package version through `create_cli_with` so `--version` is
+    // wired up. `create_cli` (the no-version factory) is reserved for
+    // embedders that do not want to leak the SDK's own version through
+    // their host CLI's `--version` flag (issue #18 opt-in semantics).
+    let cmd = create_cli_with(
+        extensions_dir,
+        None,
+        Some(env!("CARGO_PKG_VERSION").to_string()),
+        None,
+    );
+    let matches = cmd.get_matches();
+
+    // Optionally reload log filter from --log-level flag.
+    if let Some(level) = matches.get_one::<String>("log-level") {
+        if let Some(handle) = RELOAD_HANDLE.get() {
+            let new_filter = EnvFilter::try_new(level).unwrap_or_else(|_| EnvFilter::new("warn"));
+            let _ = handle.reload(new_filter);
+        }
+    }
 
     // Optional toolkit integration (requires --features toolkit)
     {

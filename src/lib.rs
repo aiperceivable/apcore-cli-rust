@@ -107,6 +107,17 @@ pub fn register_apcli_subcommands(
         ),
     ];
 
+    // The six system subcommands register atomically: either all appear (the
+    // executor exposes `system.health.summary`) or none do. Partial registration
+    // is a cross-SDK parity bug (apcore-cli usability-enhancements.md
+    // §register_system_commands). Availability is probed by the binary and
+    // published via `set_system_modules_available`; it defaults to true so this
+    // building-block composer keeps registering the full set unless told
+    // otherwise. Mirrors apcore-cli-python factory.py `system_available` gating
+    // and the apcore-cli-typescript registration probe.
+    const SYSTEM_COMMANDS: [&str; 6] = ["health", "usage", "enable", "disable", "reload", "config"];
+    let system_available = cli::is_system_modules_available();
+
     let mode = cfg.resolve_visibility();
     let mut cmd = apcli_group;
     for (name, registrar) in table {
@@ -117,6 +128,12 @@ pub fn register_apcli_subcommands(
             "all" | "none" => true,
             _ => APCLI_ALWAYS_REGISTERED.contains(&name) || cfg.is_subcommand_included(name),
         };
+        // System-module gating: skip the six system subcommands atomically when
+        // system modules are unavailable (e.g. the standalone binary's executor
+        // has no `system.*` modules registered).
+        if SYSTEM_COMMANDS.contains(&name) && !system_available {
+            continue;
+        }
         if should_register {
             cmd = registrar(cmd);
         }
@@ -194,8 +211,8 @@ pub use builtin_group::{
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
     collect_input_from_reader, dispatch_module, get_docs_url, is_all_options_help,
-    set_all_options_help, set_audit_logger, set_docs_url, set_executables, validate_module_id,
-    CliError,
+    is_system_modules_available, set_all_options_help, set_audit_logger, set_docs_url,
+    set_executables, set_system_modules_available, validate_module_id, CliError,
 };
 
 // FE-13 retires `cli::BUILTIN_COMMANDS`. Downstream consumers that pinned to
