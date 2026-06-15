@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.10.1] - 2026-06-15
+
+### Changed
+
+- **Required runtime bumped to apcore 0.24.0 and apcore-toolkit 0.8.1.** `Cargo.toml`
+  dependencies raised from `apcore = "0.22"` / `apcore-toolkit = "=0.8.0"` to
+  `apcore = "0.24"` / `apcore-toolkit = "=0.8.1"`, tracking the aligned apcore 0.24.0
+  and apcore-toolkit 0.8.1 releases (both resolve from crates.io). **No source
+  changes** — the full test suite passes unchanged.
+
+  The apcore 0.22.0 → 0.24.0 delta does not touch any surface the CLI consumes:
+  - **Schema type coercion now default-on; `SchemaValidator` returns the coerced
+    value** — the CLI does not use apcore's `SchemaValidator`. It implements its own
+    JSON-Schema → clap translator (`schema_parser.rs`) and validates via the
+    `jsonschema` crate directly (`cli.rs`), so the coercion change has no effect.
+  - **Per-instance `ToggleState` isolation (#71)** — the CLI never constructs
+    `ToggleState`/`APCore` nor calls `is_module_disabled()`; toggling is delegated to
+    `system.*` modules via `Executor::call()`.
+  - **Error `details` snake_case alignment (A-D-019)** — the CLI reads only
+    `err.code` (for exit-code mapping); it never serializes apcore error `details`.
+  - **`Registry::list()/get_definition()`**, **`Executor::call()/set_approval_handler()`**,
+    `Config::default()`, the `ApprovalHandler` trait, and `ModuleAnnotations` are
+    unchanged across the delta.
+  - Out of scope and unused by the CLI: registry-event delivery/DLQ (A-D-013),
+    middleware `on_error` (A-D-010/012/015), `APCore.on()/events()` bus (D1-011),
+    array redaction (A-D-003), `Config` env coercion (A-D-007/009),
+    `CircuitBreakerMiddleware`, `Context::create()`.
+
 ## [0.10.0] - 2026-05-18
 
 ### Changed — BREAKING (feature surface)
