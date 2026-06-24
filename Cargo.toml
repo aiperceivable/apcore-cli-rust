@@ -1,6 +1,6 @@
 [package]
 name = "apcore-cli"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2021"
 description = "Command-line interface for apcore modules"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ name = "apcore_cli"
 path = "src/lib.rs"
 
 [dependencies]
-apcore = "0.24"
+apcore = "0.25"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "string"] }
 serde = { version = "1", features = ["derive"] }
@@ -48,11 +48,11 @@ chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3"
 nix = { version = "0.30", features = ["user"] }
 libc = "0.2"
-apcore-toolkit = "=0.8.1"
+apcore-toolkit = "=0.9.1"
 
 [features]
 # ADR-07 is fully landed as of 0.10.0 (6.2 fix): apcore-toolkit is a hard
-# runtime dependency (`apcore-toolkit = "=0.8.1"` above) and the prior
+# runtime dependency (`apcore-toolkit = "=0.9.1"` above) and the prior
 # `toolkit` feature flag + `#[cfg(feature = "toolkit")]` gates have been
 # removed. All toolkit-delegating code paths now compile unconditionally,
 # matching the post-0.10 PY / TS CLIs. The only remaining feature is

@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.10.2] - 2026-06-24
+
+### Changed
+
+- **Required runtime bumped to apcore 0.25.0 and apcore-toolkit 0.9.1.** `Cargo.toml`
+  dependencies raised from `apcore = "0.24"` / `apcore-toolkit = "=0.8.1"` to
+  `apcore = "0.25"` / `apcore-toolkit = "=0.9.1"`, tracking the aligned apcore 0.25.0
+  and apcore-toolkit 0.9.1 releases (both resolve from crates.io). **No source
+  changes** — the full test suite passes unchanged.
+
+  Neither delta touches a surface the CLI consumes:
+  - **apcore 0.24.0 → 0.25.0** adds config-driven ACL discovery (`acl.root`
+    activation + `ACL.discover`), auto-wired only by the `APCore` bootstrap and
+    skipped when the caller supplies its own `Executor`. The CLI builds its own
+    `Executor::new(Arc<Registry>, config)` and never constructs `APCore`, so
+    discovery does not engage. The companion change — Rust's `acl.root` now
+    defaulting to `./acl` instead of being hard-required — only relaxes config
+    validation and is backward-compatible.
+  - **apcore-toolkit 0.8.1 → 0.9.1** is a bug-fix release; its only API-surface
+    change relaxes `RegistryWriter::write` / `HttpProxyWriter::write` from
+    `&mut Registry` to `&Registry` (source-compatible, and unused by the CLI). The
+    toolkit surface the CLI uses (`format_*`, `DisplayResolver`, `ScannedModule`,
+    `ModuleStyle`, `FormatOutput`) is unchanged.
+
 ## [0.10.1] - 2026-06-15
 
 ### Changed
