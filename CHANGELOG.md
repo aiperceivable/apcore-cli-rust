@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.10.3] - 2026-07-07
+update package dependency version for apcore-toolkit (0.10.0) and increment project patch version
+
 ## [0.10.2] - 2026-06-24
 
 ### Changed
