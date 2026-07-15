@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.10.4] - 2026-07-14
+
+Patch release. Bumps the required `apcore` floor to `0.26` to align the ecosystem on the 0.26.0 governance layer (additive, no breaking changes). No code or API changes.
+
 ## [0.10.3] - 2026-07-07
 update package dependency version for apcore-toolkit (0.10.0) and increment project patch version
 
