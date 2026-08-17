@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.10.5] - 2026-08-17
+
+Patch release. Bumps the required `apcore` floor to `0.27` to track the aligned apcore 0.27.0 release (2026-08-14). **No source changes** — the full test suite (fmt + clippy + all tests) passes unchanged against apcore 0.27.0, including the 511-case conformance suite.
+
+The apcore 0.26.0 → 0.27.0 delta is BREAKING at the spec level, but touches no surface the CLI consumes — verified against the release notes and the actual call sites:
+
+- **Middleware semantics** — `before_step` failure is now terminal/non-recoverable, `after_step` fires after a recovered step body. The CLI never constructs or configures middleware or pipelines; it only constructs `Executor::new(Arc<Registry>, Config)` and calls `Executor::call(module_id, input, None, None)` / `describe_pipeline` (read-only `StrategyInfo`). No exposure.
+- **ACL-failed `validate()` introspection** — a failed `acl` check now withholds `module_preflight` / `module_preview` checks and `predicted_changes`. The CLI's validate path builds its own preflight checks locally from the registry descriptor (`validate.rs`), never consuming `Executor::validate()`'s return shape. No exposure.
+- **`Registry.register_versioned` metadata `dependencies` persistence** — the CLI never calls `register`; module registration is via `Registry::discover(&FsDiscoverer)`, which emits `dependencies: vec![]` / empty `metadata`. No exposure.
+- **Schema conversion (A23)** — object detection, nullable `anyOf` wrapping, sorted `required` are SDK-conversion rules. The CLI runs its **own** schema→clap converter (`schema_parser.rs` / `ref_resolver.rs`) on the descriptor's `input_schema`; `required` is order-insensitive and `type`-less nullable branches already fall to the string default. No exposure.
+- **`pipeline.configure` 4-field set / `requires`/`provides` non-configurable** — the CLI never configures pipelines; a host config carrying other keys now fails at load (spec-mandated strictness, upstream concern).
+- **No type coercion at the module boundary** — the CLI's own clap-string→JSON coercion (`cli.rs`) applies before `call()`, which receives already-typed JSON values. No exposure.
+- **Removed/renamed API surface** — `ErrorCode::ConfigurationError` → `PipelineConfigurationError`, OtelTracing* removal + `opentelemetry` feature, `TracingMiddlewareConfig` field removal, `SchemaValidator::new()` no-coerce default — none used by the CLI (which uses only the `ModuleExecuteError` variant and no tracing middleware).
+
 ## [0.10.4] - 2026-07-14
 
 Patch release. Bumps the required `apcore` floor to `0.26` to align the ecosystem on the 0.26.0 governance layer (additive, no breaking changes). No code or API changes.
