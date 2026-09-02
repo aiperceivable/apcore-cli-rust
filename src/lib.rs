@@ -7,6 +7,17 @@
 //!
 //! See the apcore-cli docs repo for the authoritative feature spec and tech design.
 
+// `ModuleExecutionError` carries `apcore::errors::ModuleError` by value on its
+// passthrough variant, deliberately: `cli::map_module_error_to_exit_code` reads
+// the underlying `ErrorCode` to keep the exit-code taxonomy identical between
+// the `--sandbox` and direct execution paths, and stringifying or boxing it
+// would either lose that or change a public enum. apcore-rust suppresses the
+// same lint at its own crate root for the same reason ("ModuleError is
+// intentionally large (rich structured error for an SDK); boxing it everywhere
+// would change the public API"), so this mirrors the decision of the crate that
+// owns the type rather than making a different one downstream.
+#![allow(clippy::result_large_err)]
+
 pub mod approval;
 pub mod builtin_group;
 pub mod cli;
@@ -36,6 +47,12 @@ pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_MODULE_EXECUTE_ERROR: i32 = 1;
 pub const EXIT_INVALID_INPUT: i32 = 2;
 pub const EXIT_MODULE_NOT_FOUND: i32 = 44;
+// A dependency that cannot be found or whose version does not satisfy the
+// declared range is a module-resolution failure, so it shares 44 with
+// MODULE_NOT_FOUND. Named separately to mirror `EXIT_DEPENDENCY_*` in
+// apcore-cli-python and `DEPENDENCY_*` in apcore-cli-typescript.
+pub const EXIT_DEPENDENCY_NOT_FOUND: i32 = 44;
+pub const EXIT_DEPENDENCY_VERSION_MISMATCH: i32 = 44;
 pub const EXIT_SCHEMA_VALIDATION_ERROR: i32 = 45;
 pub const EXIT_APPROVAL_DENIED: i32 = 46;
 pub const EXIT_CONFIG_NOT_FOUND: i32 = 47;

@@ -698,20 +698,35 @@ fn format_health_summary_tty(result: &Value) {
         println!("  {mid:<28} {status:<12} {rate:<12} {top_str}");
     }
 
+    println!("\nSummary: {}", health_summary_line(&summary));
+}
+
+/// Build the one-line health tally rendered under the overview table.
+///
+/// Extracted from `format_health_summary_tty` so the tier coverage is
+/// assertable without capturing stdout.
+///
+/// The tiers are healthy / degraded / error / **unknown** — four, not three.
+/// `unknown` means "no calls recorded yet", which is the state every module in
+/// a fresh project is in, so omitting it made this line contradict the table
+/// printed directly above it: the rows listed modules while the total read
+/// "no data". apcore >= 0.28.0 declares the four-tier set canonically in
+/// `sys-health-summary.schema.json` (§6.6); the SDKs have emitted `unknown`
+/// all along.
+fn health_summary_line(summary: &Value) -> String {
     let mut parts = Vec::new();
-    for key in ["healthy", "degraded", "error"] {
+    for key in ["healthy", "degraded", "error", "unknown"] {
         if let Some(count) = summary.get(key).and_then(|v| v.as_u64()) {
             if count > 0 {
                 parts.push(format!("{count} {key}"));
             }
         }
     }
-    let summary_str = if parts.is_empty() {
+    if parts.is_empty() {
         "no data".to_string()
     } else {
         parts.join(", ")
-    };
-    println!("\nSummary: {summary_str}");
+    }
 }
 
 fn format_health_module_tty(result: &Value) {
@@ -834,6 +849,38 @@ fn format_usage_summary_tty(result: &Value) {
 
 #[cfg(test)]
 mod tests {
+    // -----------------------------------------------------------------------
+    // health_summary_line — four-tier coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn health_summary_line_reports_unknown_instead_of_no_data() {
+        // The shape a fresh project produces: modules registered, none called.
+        let summary = serde_json::json!({
+            "total_modules": 1, "healthy": 0, "degraded": 0, "error": 0, "unknown": 1
+        });
+        assert_eq!(health_summary_line(&summary), "1 unknown");
+    }
+
+    #[test]
+    fn health_summary_line_reports_all_four_tiers() {
+        let summary = serde_json::json!({
+            "total_modules": 10, "healthy": 4, "degraded": 3, "error": 2, "unknown": 1
+        });
+        assert_eq!(
+            health_summary_line(&summary),
+            "4 healthy, 3 degraded, 2 error, 1 unknown"
+        );
+    }
+
+    #[test]
+    fn health_summary_line_still_says_no_data_when_genuinely_empty() {
+        let summary = serde_json::json!({
+            "total_modules": 0, "healthy": 0, "degraded": 0, "error": 0, "unknown": 0
+        });
+        assert_eq!(health_summary_line(&summary), "no data");
+    }
+
     use super::*;
 
     #[test]

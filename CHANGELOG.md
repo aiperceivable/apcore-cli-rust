@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.11.0] - 2026-09-02
+
+Bumps the required `apcore` floor to `0.28` and `apcore-toolkit` to `0.10.2` to track the aligned apcore 0.28.0 release (2026-08-31). Carries one display fix and a crate-root lint attribute (both under Fixed). `make check` is green end to end: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings` (0 warnings), and 800 tests across 31 binaries including the conformance suite, all against apcore 0.28.0.
+
+**Why a minor rather than a patch.** This SDK needed no correctness fix of its own, but the three CLI SDKs ship as one version line, and the `apcli health` summary output changes here too. Version-locking them is what keeps the compatibility table and the cross-SDK conformance fixtures meaningful; see apcore-cli-python 0.11.0 for the changes that set the bump. Note for downstream crates: a `apcore-cli = "0.10"` pin does not resolve 0.11 — widen it to `">=0.11"` or `"0.11"`.
+
+### Added
+
+- **`tests/acl_argument_scoped_approval.rs` (4 cases)** pins the cross-SDK contract that an ACL-sourced approval requirement reaches `CliApprovalHandler`, replacing what had been a code-path argument with a measurement. The fourth case is the discriminating one — with auto-approve off and no TTY under `cargo test` the handler refuses, so the ungated call must still succeed while the `force`-carrying call must fail with `ErrorCode::ApprovalDenied`. Without that pair a gate that never fired would pass the suite.
+
+### Changed
+
+- **`apcore = ">=0.28"`, `apcore-toolkit = ">=0.10.2"`.** apcore-toolkit 0.10.2 is a dependency-tracking release with no source change.
+
+### Fixed
+
+- **`DEPENDENCY_NOT_FOUND` and `DEPENDENCY_VERSION_MISMATCH` exited 1 instead of 44.** Both are real `apcore::errors::ErrorCode` variants, and both reached `map_apcore_error_to_exit_code`'s catch-all arm, which returns `EXIT_MODULE_EXECUTE_ERROR`. apcore-cli-python and apcore-cli-typescript map both to 44, so the same dependency failure ended a script with a different code depending on which CLI ran it — and 1 is the code that reads as "the module ran and failed" rather than "the module could not be resolved".
+
+  Found by a mechanical three-way diff of the exit-code maps, not by inspection: extracting all three and comparing key-for-key reported **2 divergent of 22 codes**, and re-running it after the fix reports 0. `EXIT_DEPENDENCY_NOT_FOUND` / `EXIT_DEPENDENCY_VERSION_MISMATCH` are named as their own constants to mirror the other two SDKs rather than reusing `EXIT_MODULE_NOT_FOUND` at the call site. Pinned in all three SDKs so the maps cannot drift again.
+
+- **The `apcli health` summary line reported "no data" for a project whose modules it had just listed.** apcore classifies module health in **four** tiers — `healthy` / `degraded` / `error` / `unknown` — and the tally iterated only the first three. `unknown` means "no calls recorded yet", which is the state every module in a fresh project is in, so the common case rendered a populated table above a total that denied it:
+
+  ```
+    probe.echo                   unknown      0.0%         --
+  Summary: no data
+  ```
+
+  **Pre-existing, and not introduced by this upgrade** — all three SDKs have emitted `unknown` since the tier set existed. apcore 0.28.0 is what brought it into focus: `sys-health-summary.schema.json` had declared the enum as `["healthy", "degraded", "unhealthy"]`, a value **no SDK emits**, and the release corrects it to the four tiers actually produced, splitting the summary's `unhealthy` count field into `error` and `unknown`. With the canonical shape finally naming four tiers, rendering three is a plain omission. Fixed in all three SDKs together, with the tally now covering `unknown`; a genuinely empty tally still reads "no data".
+
+- **`cargo clippy -- -D warnings` failed on `clippy::result_large_err`, which would have taken CI red.** Two `Sandbox` methods returning `Result<Value, ModuleExecutionError>` were flagged because the enum's passthrough variant carries `apcore::errors::ModuleError` by value and that type is ≥184 bytes. **Not a regression from this upgrade** — reproduced identically with the previous `apcore = ">=0.27"` pin, so the trigger was the clippy version, not apcore; but CI runs `dtolnay/rust-toolchain@stable` with `-D warnings`, so it was going to fail there regardless of when it started.
+
+  Resolved with a crate-root `#![allow(clippy::result_large_err)]`, mirroring apcore-rust, which suppresses the same lint at its own crate root with the reason that applies verbatim here: *"ModuleError is intentionally large (rich structured error for an SDK); boxing it everywhere would change the public API."* The variant holds the error by value on purpose — `cli::map_module_error_to_exit_code` reads its `ErrorCode` to keep the exit-code taxonomy identical across the `--sandbox` and direct paths — so boxing would both break a public enum in a patch release and diverge from the decision made by the crate that owns the type.
+
+### Notes
+
+- **Three of 0.28.0's BREAKING Rust changes land on types this crate names, and all three are source-compatible here.** `ACLRule` gains an `approval` field and `AuditEntry` becomes `#[non_exhaustive]` — neither is constructed by this crate, which never builds or loads an `ACL`. `CallbackApprovalHandler::new` now takes an async fallible callback — `CliApprovalHandler` implements `apcore::ApprovalHandler` directly and never uses the convenience constructor. `ACL::evaluate_conditions` returning `ConditionOutcome` and `ACL::check` failing closed on allow-with-approval-required are both unreachable: the crate calls neither.
+
+- **The one 0.28.0 change that reaches this SDK works correctly and needed no code.** Spec v1.28.0 §6.9 makes the approval gate fire on the union of three sources, so an ACL rule carrying `approval: required` (§6.1.6) now routes calls to modules annotated `requires_approval: false` through `CliApprovalHandler`. The trait adapter rebuilds its `module_def` shape from `request.annotations.requires_approval`, and `builtin_steps.rs:816` sets that to `true` before constructing the request for **any** source of the requirement — so `get_requires_approval` passes and the prompt runs. `cli_to_apcore_result` already returns a typed `apcore::ApprovalResult`; apcore-cli-python returned a bare mapping on the same path and had to be fixed in its 0.11.0.
+
+- **`system.usage.*` behaviour changes are upstream-side and pass through unread.** 0.28.0 makes both modules honour `period` (statistics were previously computed over the full retained history) and changes `hourly_distribution[].hour` to `YYYY-MM-DDTHH`. `dispatch_usage` forwards `--period` verbatim, and the two TTY formatters read only `modules`, `period`, `module_id`, `call_count`, `error_count`, `avg_latency_ms`, `trend` and `p99_latency_ms`. `hourly_distribution` appears nowhere in this crate — nor in the Python or TypeScript CLIs — so no formatter or assertion depends on the retired key shape.
+
+- **What the delta does *not* touch.** `Registry.list` / `get_definition`, `Executor::call` / `validate`, the approval handler protocol and the toolkit `format_*` surfaces are all unchanged across 0.27.0 → 0.28.0.
+
+
 ## [0.10.5] - 2026-08-17
 
 Patch release. Bumps the required `apcore` floor to `0.27` to track the aligned apcore 0.27.0 release (2026-08-14). **No source changes** — the full test suite (fmt + clippy + all tests) passes unchanged against apcore 0.27.0, including the 511-case conformance suite.

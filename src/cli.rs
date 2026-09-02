@@ -747,12 +747,18 @@ fn is_valid_module_id(s: &str) -> bool {
 pub(crate) fn map_apcore_error_to_exit_code(error_code: &str) -> i32 {
     use crate::{
         EXIT_ACL_DENIED, EXIT_APPROVAL_DENIED, EXIT_CONFIG_BIND_ERROR, EXIT_CONFIG_MOUNT_ERROR,
-        EXIT_CONFIG_NAMESPACE_RESERVED, EXIT_CONFIG_NOT_FOUND, EXIT_ERROR_FORMATTER_DUPLICATE,
+        EXIT_CONFIG_NAMESPACE_RESERVED, EXIT_CONFIG_NOT_FOUND, EXIT_DEPENDENCY_NOT_FOUND,
+        EXIT_DEPENDENCY_VERSION_MISMATCH, EXIT_ERROR_FORMATTER_DUPLICATE,
         EXIT_MODULE_EXECUTE_ERROR, EXIT_MODULE_NOT_FOUND, EXIT_SCHEMA_CIRCULAR_REF,
         EXIT_SCHEMA_VALIDATION_ERROR,
     };
     match error_code {
         "MODULE_NOT_FOUND" | "MODULE_LOAD_ERROR" | "MODULE_DISABLED" => EXIT_MODULE_NOT_FOUND,
+        // `ErrorCode::DependencyNotFound` / `DependencyVersionMismatch` are real
+        // apcore variants that reached the catch-all arm and exited 1, while
+        // apcore-cli-python and apcore-cli-typescript both mapped them to 44.
+        "DEPENDENCY_NOT_FOUND" => EXIT_DEPENDENCY_NOT_FOUND,
+        "DEPENDENCY_VERSION_MISMATCH" => EXIT_DEPENDENCY_VERSION_MISMATCH,
         "SCHEMA_VALIDATION_ERROR" => EXIT_SCHEMA_VALIDATION_ERROR,
         "APPROVAL_DENIED" | "APPROVAL_TIMEOUT" | "APPROVAL_PENDING" => EXIT_APPROVAL_DENIED,
         "CONFIG_NOT_FOUND" | "CONFIG_INVALID" => EXIT_CONFIG_NOT_FOUND,
@@ -1816,6 +1822,21 @@ mod tests {
     #[test]
     fn test_map_error_module_disabled_is_44() {
         assert_eq!(map_apcore_error_to_exit_code("MODULE_DISABLED"), 44);
+    }
+
+    #[test]
+    fn test_map_error_dependency_not_found_is_44() {
+        // Cross-SDK parity: apcore-cli-python and apcore-cli-typescript both map
+        // this to 44; here it reached the catch-all arm and exited 1.
+        assert_eq!(map_apcore_error_to_exit_code("DEPENDENCY_NOT_FOUND"), 44);
+    }
+
+    #[test]
+    fn test_map_error_dependency_version_mismatch_is_44() {
+        assert_eq!(
+            map_apcore_error_to_exit_code("DEPENDENCY_VERSION_MISMATCH"),
+            44
+        );
     }
 
     #[test]
