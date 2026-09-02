@@ -21,7 +21,7 @@ use apcore::module::Module;
 use apcore::{Config, Executor, ModuleAnnotations, Registry};
 use apcore_cli::CliApprovalHandler;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// A stand-in for `git push`: annotated `requires_approval: false`, so only an
 /// ACL rule can put one of its calls to a human.
@@ -172,13 +172,63 @@ async fn preflight_reports_the_governance_effective_requirement() {
     );
 }
 
+/// Records every request handed to it and always refuses.
+///
+/// The discriminating test deliberately does **not** use `CliApprovalHandler`
+/// with auto-approve off. That handler's refusal depends on stdin not being a
+/// terminal, and `cargo test` does not redirect stdin — so run from an
+/// interactive shell it prints its prompt, blocks for the full timeout and then
+/// answers `ApprovalTimeout` instead of `ApprovalDenied`. A stub removes the
+/// ambient dependency entirely and lets the test assert the stronger property
+/// directly: that the gate *consulted a handler at all*, and for which call.
+#[derive(Debug)]
+struct RecordingRefusingHandler {
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl apcore::ApprovalHandler for RecordingRefusingHandler {
+    async fn request_approval(
+        &self,
+        request: &apcore::ApprovalRequest,
+    ) -> Result<apcore::ApprovalResult, apcore::errors::ModuleError> {
+        let mut keys: Vec<String> = request
+            .arguments
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        keys.sort();
+        self.seen
+            .lock()
+            .expect("lock")
+            .push(format!("{}({})", request.module_id, keys.join(",")));
+
+        let mut result = apcore::ApprovalResult::default();
+        result.status = "rejected".to_string();
+        result.reason = Some("refused by the test handler".to_string());
+        Ok(result)
+    }
+
+    async fn check_approval(
+        &self,
+        _approval_id: &str,
+    ) -> Result<apcore::ApprovalResult, apcore::errors::ModuleError> {
+        let mut result = apcore::ApprovalResult::default();
+        result.status = "rejected".to_string();
+        Ok(result)
+    }
+}
+
 #[tokio::test]
-async fn a_refusing_handler_blocks_only_the_acl_matched_call() {
-    // The discriminating pair. With auto-approve off and no TTY under `cargo
-    // test`, CliApprovalHandler answers "rejected". If the gate did not fire —
-    // or fired but never reached this handler — both calls would succeed and
-    // this test would not be able to tell the difference.
-    let executor = executor_with_argument_scoped_rule(/*auto_approve*/ false);
+async fn a_refusing_handler_is_consulted_only_for_the_acl_matched_call() {
+    // The discriminating case. If the gate did not fire — or fired but never
+    // reached the registered handler — both calls would succeed and `seen`
+    // would stay empty, which no other assertion in this file would catch.
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut executor = executor_with_argument_scoped_rule(/*auto_approve*/ true);
+    executor.set_approval_handler(Box::new(RecordingRefusingHandler {
+        seen: Arc::clone(&seen),
+    }));
 
     let plain = executor
         .call("git.push", json!({"remote": "origin"}), None, None)
@@ -187,6 +237,11 @@ async fn a_refusing_handler_blocks_only_the_acl_matched_call() {
         plain.is_ok(),
         "a push with no `force` does not match the approval rule, so the \
          refusing handler must never be consulted for it: {plain:?}"
+    );
+    assert!(
+        seen.lock().expect("lock").is_empty(),
+        "the handler must not have been consulted for the ungated call, but saw: {:?}",
+        seen.lock().expect("lock")
     );
 
     let forced = executor
@@ -205,5 +260,11 @@ async fn a_refusing_handler_blocks_only_the_acl_matched_call() {
         apcore::errors::ErrorCode::ApprovalDenied,
         "the refusal must surface as APPROVAL_DENIED (exit 46), not as a \
          generic execute error: {err:?}"
+    );
+    assert_eq!(
+        *seen.lock().expect("lock"),
+        vec!["git.push(force,remote)".to_string()],
+        "the gate must have consulted the handler exactly once, for the \
+         `force`-carrying call"
     );
 }
