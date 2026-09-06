@@ -183,6 +183,37 @@ fn rows_for_tabular(value: &Value) -> Option<Vec<serde_json::Map<String, Value>>
 // format_module_list
 // ---------------------------------------------------------------------------
 
+/// Count a module descriptor's dependencies, for the `--deps` column/field.
+///
+/// Reads the top-level `"dependencies"` array `ModuleDescriptor.dependencies`
+/// serializes to (parity with Python's `getattr(m, "dependencies", None) or
+/// []`, which reads the same top-level attribute, not a nested
+/// `metadata.dependencies`). Missing or non-array values count as zero.
+fn dependency_count(m: &Value) -> usize {
+    m.get("dependencies")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0)
+}
+
+/// Additive display options for [`format_module_list_with_options`] (FE-11
+/// F7 dependency column, FE-12 exposure column/filter-echo).
+///
+/// A separate parameter object plus a separate entry point, rather than
+/// widening [`format_module_list`]'s own signature: that function has ~18
+/// existing call sites (several of them tests, in this file and in
+/// `tests/test_output.rs` / `tests/test_integration.rs`) which must keep
+/// compiling unchanged.
+#[derive(Default)]
+pub struct ListDisplayOptions<'a> {
+    /// Add a right-justified "Deps" column (table) / `dependency_count`
+    /// field (json) with each module's dependency count.
+    pub show_deps: bool,
+    /// When `Some`, add a centered "Exposure" column (table: "✓"/"—") /
+    /// `exposed` field (json), computed via `filter.is_exposed(module_id)`.
+    pub exposure_filter: Option<&'a crate::exposure::ExposureFilter>,
+}
+
 /// Render a list of module descriptors as a table or JSON.
 ///
 /// # Arguments
@@ -191,7 +222,22 @@ fn rows_for_tabular(value: &Value) -> Option<Vec<serde_json::Map<String, Value>>
 /// * `filter_tags`  — AND-filter: only modules that have ALL listed tags are shown
 ///
 /// Returns the formatted string ready for printing to stdout.
+///
+/// Thin wrapper over [`format_module_list_with_options`] with both optional
+/// columns off, preserving this function's exact historical behavior and
+/// signature.
 pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str]) -> String {
+    format_module_list_with_options(modules, format, filter_tags, &ListDisplayOptions::default())
+}
+
+/// [`format_module_list`], additionally able to show the FE-11 `--deps` and
+/// FE-12 `--exposure all` columns per `opts`.
+pub fn format_module_list_with_options(
+    modules: &[Value],
+    format: &str,
+    filter_tags: &[&str],
+    opts: &ListDisplayOptions<'_>,
+) -> String {
     use comfy_table::{ContentArrangement, Table};
 
     match format {
@@ -208,14 +254,35 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
 
             let mut table = Table::new();
             table.set_content_arrangement(ContentArrangement::Dynamic);
-            table.set_header(vec!["ID", "Description", "Tags"]);
+            let mut headers = vec!["ID", "Description", "Tags"];
+            if opts.show_deps {
+                headers.push("Deps");
+            }
+            if opts.exposure_filter.is_some() {
+                headers.push("Exposure");
+            }
+            table.set_header(headers);
 
             for m in modules {
                 let id = extract_str(m, &["module_id", "id", "canonical_id", "name"]);
                 let desc_raw = extract_str(m, &["description"]);
                 let desc = truncate(desc_raw, DESCRIPTION_TRUNCATE_LEN);
                 let tags = extract_tags(m).join(", ");
-                table.add_row(vec![id.to_string(), desc, tags]);
+                let mut row = vec![id.to_string(), desc, tags];
+                if opts.show_deps {
+                    row.push(dependency_count(m).to_string());
+                }
+                if let Some(filter) = opts.exposure_filter {
+                    row.push(
+                        if filter.is_exposed(id) {
+                            "\u{2713}"
+                        } else {
+                            "\u{2014}"
+                        }
+                        .to_string(),
+                    );
+                }
+                table.add_row(row);
             }
 
             table.to_string()
@@ -230,11 +297,18 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
                         .into_iter()
                         .map(serde_json::Value::String)
                         .collect();
-                    serde_json::json!({
+                    let mut entry = serde_json::json!({
                         "id": id,
                         "description": desc,
                         "tags": tags,
-                    })
+                    });
+                    if opts.show_deps {
+                        entry["dependency_count"] = serde_json::json!(dependency_count(m));
+                    }
+                    if let Some(filter) = opts.exposure_filter {
+                        entry["exposed"] = serde_json::json!(filter.is_exposed(id));
+                    }
+                    entry
                 })
                 .collect();
 
@@ -258,7 +332,7 @@ pub fn format_module_list(modules: &[Value], format: &str, filter_tags: &[&str])
                 "Unknown format '{}' in format_module_list, using json.",
                 unknown
             );
-            format_module_list(modules, "json", filter_tags)
+            format_module_list_with_options(modules, "json", filter_tags, opts)
         }
     }
 }
@@ -659,6 +733,65 @@ mod tests {
             "table must have Description column"
         );
         assert!(output.contains("Tags"), "table must have Tags column");
+    }
+
+    // --- format_module_list_with_options (issues #6 / #8) ---
+
+    #[test]
+    fn test_format_module_list_with_options_deps_column_table() {
+        let modules = vec![json!({
+            "module_id": "a.b",
+            "description": "Desc",
+            "tags": [],
+            "dependencies": ["x", "y"]
+        })];
+        let opts = ListDisplayOptions {
+            show_deps: true,
+            exposure_filter: None,
+        };
+        let output = format_module_list_with_options(&modules, "table", &[], &opts);
+        assert!(
+            output.contains("Deps"),
+            "table must have Deps column header"
+        );
+        assert!(
+            output.contains('2'),
+            "table must show the dependency count, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_format_module_list_default_wrapper_has_no_deps_column() {
+        // format_module_list (the pre-existing, unchanged signature) must
+        // never show the new optional column -- proves the wrapper is a
+        // true no-op delegate, not a behavior change for the ~18 existing
+        // call sites.
+        let modules = vec![json!({
+            "module_id": "a.b",
+            "description": "Desc",
+            "tags": [],
+            "dependencies": ["x", "y", "z"]
+        })];
+        let output = format_module_list(&modules, "table", &[]);
+        assert!(!output.contains("Deps"), "got:\n{output}");
+    }
+
+    #[test]
+    fn test_format_module_list_with_options_exposure_column_table() {
+        let modules = vec![
+            json!({"module_id": "admin.users", "description": "Admin", "tags": []}),
+            json!({"module_id": "public.ping", "description": "Ping", "tags": []}),
+        ];
+        let filter = crate::exposure::ExposureFilter::new("exclude", &[], &["admin.*".to_string()]);
+        let opts = ListDisplayOptions {
+            show_deps: false,
+            exposure_filter: Some(&filter),
+        };
+        let output = format_module_list_with_options(&modules, "table", &[], &opts);
+        assert!(
+            output.contains("Exposure"),
+            "table must have Exposure column header, got:\n{output}"
+        );
     }
 
     #[test]

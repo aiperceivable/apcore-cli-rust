@@ -96,6 +96,18 @@ pub struct ListOptions<'a> {
     pub sort: Option<&'a str>,
     pub reverse: bool,
     pub deprecated: bool,
+    /// `--deps`: show a dependency-count column (table) / `dependency_count`
+    /// field (json). Read from `sub_m.get_flag("deps")` in `handle_list`.
+    pub deps: bool,
+    /// `--exposure {exposed,hidden,all}` (FE-12). `None` behaves like
+    /// `"exposed"`, matching the flag's own clap default.
+    pub exposure: Option<&'a str>,
+    /// The `ExposureFilter` to filter/annotate by. `None` disables exposure
+    /// filtering and the Exposure column entirely (e.g. embedded callers that
+    /// never configured FE-12). `handle_list` always supplies
+    /// `Some(&ExposureFilter::default())` when no project-specific filter is
+    /// wired in, mirroring Python's `register_list_command` default.
+    pub exposure_filter: Option<&'a crate::exposure::ExposureFilter>,
 }
 
 /// Execute the `list` subcommand logic.
@@ -198,6 +210,26 @@ pub fn cmd_list_enhanced(
         }
     }
 
+    // FE-12: --exposure {exposed,hidden,all} filter. `exposure_filter` being
+    // `None` means the caller never wired FE-12 in at all (e.g. some
+    // embedding contexts) and exposure filtering is skipped entirely, same
+    // as before this flag existed. `handle_list` always supplies a filter
+    // (defaulting to `ExposureFilter::default()`, mode "all") so this is the
+    // normal, exercised path for the standalone binary.
+    fn module_id_of(m: &Value) -> &str {
+        m.get("module_id")
+            .or_else(|| m.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    }
+    if let Some(filter) = opts.exposure_filter {
+        match opts.exposure.unwrap_or("exposed") {
+            "exposed" => modules.retain(|m| filter.is_exposed(module_id_of(m))),
+            "hidden" => modules.retain(|m| !filter.is_exposed(module_id_of(m))),
+            _ => {} // "all": no filter, but see the Exposure column below.
+        }
+    }
+
     // F7: Sort. The clap value_parser accepts ["id", "calls", "errors",
     // "latency"] for cross-SDK parity (D11-006). Usage-based sorts read
     // aggregates from the local audit log via `system_usage` (issue #17);
@@ -209,6 +241,23 @@ pub fn cmd_list_enhanced(
         let used =
             crate::system_usage::sort_modules_by_usage(&mut modules, requested_sort, !opts.reverse);
         if !used {
+            // D11 bug: `sort_modules_by_usage`'s own empty-log fallback sorts
+            // by id using the SAME pre-inverted `!opts.reverse` it was
+            // handed (its normal direction for calls/errors/latency is
+            // descending, hence the inversion) -- so with no usage data at
+            // all it silently reused that inversion for its id fallback too,
+            // producing Z->A order even when the user passed no --reverse.
+            // Re-sort here with the user's own UN-inverted flag, discarding
+            // whichever direction the helper's internal fallback chose.
+            // Matches Python's discovery.py at the equivalent point.
+            modules.sort_by(|a, b| {
+                let aid = a.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
+                let bid = b.get("module_id").and_then(|v| v.as_str()).unwrap_or("");
+                aid.cmp(bid)
+            });
+            if opts.reverse {
+                modules.reverse();
+            }
             eprintln!(
                 "note: no usage data available for --sort {}; sorted by id. \
 Run some modules first to populate ~/.apcore-cli/audit.jsonl.",
@@ -227,7 +276,21 @@ Run some modules first to populate ~/.apcore-cli/audit.jsonl.",
     }
 
     let fmt = crate::output::resolve_format(opts.explicit_format);
-    Ok(crate::output::format_module_list(&modules, fmt, opts.tags))
+    // The Exposure column is shown only for `--exposure all` (matching
+    // Python's `show_exposure_col = exposure == "all"`) — for "exposed" /
+    // "hidden" every remaining row would show the same value, so the column
+    // would carry no information.
+    let show_exposure_col = opts.exposure.unwrap_or("exposed") == "all";
+    let display_opts = crate::output::ListDisplayOptions {
+        show_deps: opts.deps,
+        exposure_filter: opts.exposure_filter.filter(|_| show_exposure_col),
+    };
+    Ok(crate::output::format_module_list_with_options(
+        &modules,
+        fmt,
+        opts.tags,
+        &display_opts,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -385,11 +448,24 @@ fn list_command() -> Command {
                 .help("Show dependency count column."),
         )
         .arg(
-            Arg::new("flat")
-                .long("flat")
-                .action(ArgAction::SetTrue)
-                .help("Show flat list (no grouping)."),
+            Arg::new("exposure")
+                .long("exposure")
+                .value_parser(clap::builder::PossibleValuesParser::new([
+                    "exposed", "hidden", "all",
+                ]))
+                .default_value("exposed")
+                .value_name("STATUS")
+                .help("Filter by exposure status. Default: exposed."),
         )
+    // Note: no `--flat` here. Python/TS default to a GROUPED list rendering
+    // and use `--flat` to opt out of it; Rust's list has no grouping concept
+    // at all -- it is unconditionally flat. A `--flat` flag would therefore
+    // either (a) be permanently dead (declared, does nothing, exactly the
+    // status-quo bug this fix removes) or (b) require implementing full
+    // grouped-list rendering, which is a rendering feature out of proportion
+    // to this fix pass, not a bug fix. Removed rather than kept as a
+    // documented no-op so `--help` stops advertising behavior Rust's list
+    // does not have a "flat vs. grouped" distinction to opt out of.
 }
 
 fn describe_command() -> Command {
@@ -623,6 +699,195 @@ mod tests {
     fn test_mock_registry_get_definition_not_found() {
         let registry = MockRegistry::new(vec![]);
         assert!(registry.get_definition("non.existent").is_none());
+    }
+
+    // --- FE-11 --deps / FE-12 --exposure / D11 sort-fallback regressions ---
+
+    #[test]
+    fn test_deps_flag_shows_dependency_count_in_json() {
+        // issue #6: `--deps` was declared and shown in --help but nothing
+        // downstream ever read it. `dependencies` is a top-level field on
+        // the module descriptor (ModuleDescriptor.dependencies), matching
+        // what Python's output.py reads via `getattr(m, "dependencies",
+        // None)` -- not a nested `metadata.dependencies`.
+        let registry = MockRegistry::new(vec![serde_json::json!({
+            "module_id": "a.b",
+            "description": "Desc",
+            "tags": [],
+            "dependencies": ["dep.one", "dep.two", "dep.three"]
+        })]);
+        let opts = ListOptions {
+            explicit_format: Some("json"),
+            deps: true,
+            ..Default::default()
+        };
+        let output = cmd_list_enhanced(&registry, &opts).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(
+            parsed[0]["dependency_count"], 3,
+            "json output must carry dependency_count when --deps is passed, got: {parsed}"
+        );
+    }
+
+    #[test]
+    fn test_deps_flag_absent_by_default() {
+        let registry = MockRegistry::new(vec![serde_json::json!({
+            "module_id": "a.b",
+            "description": "Desc",
+            "tags": [],
+            "dependencies": ["dep.one"]
+        })]);
+        let opts = ListOptions {
+            explicit_format: Some("json"),
+            ..Default::default()
+        };
+        let output = cmd_list_enhanced(&registry, &opts).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(
+            parsed[0].get("dependency_count").is_none(),
+            "dependency_count must be absent when --deps was not passed, got: {parsed}"
+        );
+    }
+
+    #[test]
+    fn test_list_command_has_no_flat_flag() {
+        // issue #7: `--flat` was declared and fully dead, and there is no
+        // grouping concept in Rust's list output to flatten (unlike Python/
+        // TS, which default to grouped rendering). Full grouped-list
+        // rendering is out of proportion to this fix pass, so the flag is
+        // removed rather than half-implemented or left as a documented
+        // no-op -- `--help` must stop advertising behavior that does not
+        // exist.
+        let cmd = list_command();
+        let arg_names: Vec<&str> = cmd.get_opts().filter_map(|a| a.get_long()).collect();
+        assert!(
+            !arg_names.contains(&"flat"),
+            "--flat must be removed from the list command, got {arg_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_exposure_hidden_filters_using_real_exposure_filter() {
+        // issue #8: `--exposure` was missing entirely; the tested
+        // `exposure::ExposureFilter` was never imported by discovery.rs.
+        let registry = MockRegistry::new(vec![
+            mock_module("admin.users", "Admin", &[]),
+            mock_module("public.ping", "Ping", &[]),
+        ]);
+        let filter = crate::exposure::ExposureFilter::new("exclude", &[], &["admin.*".to_string()]);
+        let opts = ListOptions {
+            explicit_format: Some("json"),
+            exposure: Some("hidden"),
+            exposure_filter: Some(&filter),
+            ..Default::default()
+        };
+        let output = cmd_list_enhanced(&registry, &opts).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let ids: Vec<&str> = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["admin.users"],
+            "--exposure hidden must show only modules the filter excludes from exposure, got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn test_exposure_exposed_is_the_default() {
+        let registry = MockRegistry::new(vec![
+            mock_module("admin.users", "Admin", &[]),
+            mock_module("public.ping", "Ping", &[]),
+        ]);
+        let filter = crate::exposure::ExposureFilter::new("exclude", &[], &["admin.*".to_string()]);
+        let opts = ListOptions {
+            explicit_format: Some("json"),
+            // No `exposure` set: must default to "exposed".
+            exposure_filter: Some(&filter),
+            ..Default::default()
+        };
+        let output = cmd_list_enhanced(&registry, &opts).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let ids: Vec<&str> = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["public.ping"]);
+    }
+
+    #[test]
+    fn test_exposure_all_shows_exposure_column_and_no_filtering() {
+        let registry = MockRegistry::new(vec![
+            mock_module("admin.users", "Admin", &[]),
+            mock_module("public.ping", "Ping", &[]),
+        ]);
+        let filter = crate::exposure::ExposureFilter::new("exclude", &[], &["admin.*".to_string()]);
+        let opts = ListOptions {
+            explicit_format: Some("json"),
+            exposure: Some("all"),
+            exposure_filter: Some(&filter),
+            ..Default::default()
+        };
+        let output = cmd_list_enhanced(&registry, &opts).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2, "--exposure all must not filter anything out");
+        let admin = arr.iter().find(|m| m["id"] == "admin.users").unwrap();
+        let public = arr.iter().find(|m| m["id"] == "public.ping").unwrap();
+        assert_eq!(admin["exposed"], false);
+        assert_eq!(public["exposed"], true);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn test_sort_calls_with_empty_usage_log_sorts_ascending_by_default() {
+        // issue #9: `sort_modules_by_usage`'s own empty-log fallback sorts by
+        // id using the SAME pre-inverted `!opts.reverse` flag it was handed
+        // (its normal direction for calls/errors/latency is descending,
+        // hence the inversion) -- so an EMPTY usage log silently reused that
+        // inversion for its id-sort fallback too, producing Z->A order even
+        // when the user passed no --reverse at all.
+        //
+        // Delete the shared test-support audit-log redirect first so this
+        // test's "no usage data" premise holds regardless of what earlier
+        // tests in this binary logged; gated on `test-support` so this can
+        // never touch a real ~/.apcore-cli/audit.jsonl on a plain `cargo
+        // test` run without --all-features.
+        static AUDIT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = AUDIT_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(path) = crate::security::AuditLogger::test_redirect_path() {
+            let _ = std::fs::remove_file(&path);
+        }
+
+        let registry = MockRegistry::new(vec![
+            mock_module("z.last", "Z", &[]),
+            mock_module("a.first", "A", &[]),
+            mock_module("m.middle", "M", &[]),
+        ]);
+        let opts = ListOptions {
+            explicit_format: Some("json"),
+            sort: Some("calls"),
+            reverse: false,
+            ..Default::default()
+        };
+        let output = cmd_list_enhanced(&registry, &opts).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let ids: Vec<&str> = parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["a.first", "m.middle", "z.last"],
+            "empty usage log + no --reverse must sort ascending by module_id, got {ids:?}"
+        );
     }
 
     // --- cmd_list ---

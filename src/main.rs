@@ -452,6 +452,16 @@ fn handle_list(
     let sort = sub_m.get_one::<String>("sort").map(|s| s.as_str());
     let reverse = sub_m.get_flag("reverse");
     let deprecated = sub_m.get_flag("deprecated");
+    let deps = sub_m.get_flag("deps");
+    let exposure = sub_m.get_one::<String>("exposure").map(|s| s.as_str());
+    // FE-12: no project-specific exposure config is wired into the
+    // standalone binary yet, so default to `ExposureFilter::default()`
+    // (mode "all", exposes every module) — mirroring Python's
+    // `register_list_command`, which does the same when no filter is pushed
+    // into `ctx.obj`. This makes `--exposure`/the Exposure column fully
+    // functional using the existing, independently-tested `ExposureFilter`
+    // rather than leaving the flag unimplemented.
+    let exposure_filter = apcore_cli::ExposureFilter::default();
     let opts = apcore_cli::discovery::ListOptions {
         tags: &tags,
         explicit_format: format,
@@ -461,6 +471,9 @@ fn handle_list(
         sort,
         reverse,
         deprecated,
+        deps,
+        exposure,
+        exposure_filter: Some(&exposure_filter),
     };
     match apcore_cli::discovery::cmd_list_enhanced(registry_provider.as_ref(), &opts) {
         Ok(output) => {
