@@ -85,6 +85,18 @@ pub enum ModuleExecutionError {
     /// consistent between `--sandbox` and direct execution paths.
     #[error(transparent)]
     ModuleError(#[from] apcore::errors::ModuleError),
+
+    /// Access to `module_id` was denied by the ACL attached to the
+    /// `apcore::Executor` passed into [`Sandbox::execute`].
+    ///
+    /// Enforced in-method (FE-14 section 4.10) rather than only at the CLI's
+    /// dispatch call site: `_sandboxed_execute` spawns a subprocess that
+    /// builds its own bare `Registry` + `Executor` from inherited `APCORE_*`
+    /// env vars and never sees the attached ACL, so `--sandbox` would
+    /// otherwise be a complete access-control bypass regardless of whether
+    /// the call site remembers to gate it.
+    #[error("Permission denied for module '{module_id}'")]
+    AclDenied { module_id: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +117,157 @@ pub struct ModuleNotFoundError {
 #[error("Schema validation error: {detail}")]
 pub struct SchemaValidationError {
     pub detail: String,
+}
+
+/// Resolve `path` to an absolute path for injection into the sandbox child's
+/// environment, WITHOUT requiring the target to exist on disk.
+///
+/// Tries `std::fs::canonicalize` first — it also resolves symlinks, which is
+/// the more faithful resolution when the target is real — and falls back to a
+/// purely lexical absolutize against the parent's current working directory
+/// only when that fails (typically because the path does not exist yet, e.g.
+/// an `extensions.root` that will be populated later, or simply a typo the
+/// operator should see surfaced as "module not found" rather than a mysteriously
+/// re-rooted sandbox).
+///
+/// This mirrors Python's `Path.resolve()` / TypeScript's `path.resolve()`,
+/// both of which succeed lexically even for a path that does not exist.
+/// `std::fs::canonicalize` has no such fallback — its previous unconditional
+/// use here (`unwrap_or_else(|_| ext_root.clone())`) silently forwarded the
+/// UNRESOLVED, possibly-relative path on failure, re-rooting it inside the
+/// child's fresh tempdir cwd (invariant 6, security.md's "extensions root not
+/// propagated" class of defect).
+fn absolutize_sandbox_path(path: &std::path::Path) -> PathBuf {
+    if let Ok(canon) = std::fs::canonicalize(path) {
+        return canon;
+    }
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => cwd.join(path),
+        // No sensible fallback if even the parent's own cwd is unavailable;
+        // return the path unchanged rather than panicking.
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// Read one chunk (up to `buf.len()` bytes) from `*pipe`. Returns the byte
+/// count read, or `0` on EOF or a read error — either of which means the
+/// caller should stop selecting on this pipe. Only called from a `select!`
+/// arm guarded by `pipe.is_some()`, but returns `0` rather than panicking if
+/// that invariant is ever violated.
+async fn read_one_chunk<R: tokio::io::AsyncRead + Unpin>(
+    pipe: &mut Option<R>,
+    buf: &mut [u8],
+) -> usize {
+    match pipe.as_mut() {
+        Some(r) => r.read(buf).await.unwrap_or(0),
+        None => 0,
+    }
+}
+
+/// Collect stdout/stderr from an already-spawned, already-written-to child up
+/// to `cap` bytes per stream, actively killing the child the instant EITHER
+/// stream's bound is hit rather than letting it run to completion.
+///
+/// D11-007 follow-up. This reads the two pipes concurrently via `select!` —
+/// one chunk at a time, whichever pipe is ready first — rather than
+/// `tokio::join!`ing a bounded read-to-completion on each. That distinction
+/// is load-bearing, not stylistic: `join!` waits for BOTH futures, and a
+/// bounded read only resolves early on hitting `cap` OR on EOF. A module that
+/// overflows stdout while leaving stderr open and silent (the common case —
+/// most modules write only to stdout) never delivers EOF on stderr while it
+/// keeps running, so `join!` would hang on the stderr half FOREVER regardless
+/// of how promptly the stdout half detected its overflow — no placement of a
+/// kill call after such a `join!` can help, since the join itself never
+/// completes without the very death-by-kill it is waiting to be told to
+/// trigger. Selecting on both, chunk by chunk, means the moment CANONICALLY
+/// EITHER stream crosses `cap` this function can act — independent of
+/// whether the other stream ever produces anything at all.
+///
+/// Once either stream crosses `cap`, the child is killed via
+/// `Child::start_kill` (signal only, no wait) and then reaped via `wait()`,
+/// so a runaway module is terminated promptly under `OutputSizeExceeded`
+/// instead of surviving until the caller's outer timeout (default 300s)
+/// reaps it and misreports the overflow as an opaque `Timeout`.
+///
+/// Extracted from `_sandboxed_execute` (mirroring `build_sandbox_env`) so
+/// this behaviour is unit-testable against a real, cheaply-spawned process
+/// instead of requiring the `--internal-sandbox-runner` subprocess machinery
+/// (which needs the compiled `apcore-cli` binary at `current_exe()` and is
+/// excluded from ordinary `cargo test` runs).
+async fn collect_capped_output(
+    mut child: tokio::process::Child,
+    cap: usize,
+    module_id: &str,
+) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), ModuleExecutionError> {
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let mut stdout_buf: Vec<u8> = Vec::new();
+    let mut stderr_buf: Vec<u8> = Vec::new();
+    let mut stdout_chunk = [0u8; 65536];
+    let mut stderr_chunk = [0u8; 65536];
+
+    let overflowed = loop {
+        if stdout_pipe.is_none() && stderr_pipe.is_none() {
+            // Both streams reached EOF within the cap: normal completion.
+            break false;
+        }
+        tokio::select! {
+            n = read_one_chunk(&mut stdout_pipe, &mut stdout_chunk), if stdout_pipe.is_some() => {
+                if n == 0 {
+                    stdout_pipe = None;
+                } else {
+                    stdout_buf.extend_from_slice(&stdout_chunk[..n]);
+                }
+            }
+            n = read_one_chunk(&mut stderr_pipe, &mut stderr_chunk), if stderr_pipe.is_some() => {
+                if n == 0 {
+                    stderr_pipe = None;
+                } else {
+                    stderr_buf.extend_from_slice(&stderr_chunk[..n]);
+                }
+            }
+        }
+        if stdout_buf.len() > cap || stderr_buf.len() > cap {
+            break true;
+        }
+    };
+
+    if overflowed {
+        // Actively terminate — do not wait for the child to exit on its own.
+        // `start_kill` sends the signal without waiting; the subsequent
+        // `wait()` reaps the process so it does not linger as a zombie.
+        // Both are best-effort: if the child already exited between the read
+        // completing and this point, either call simply becomes a no-op /
+        // returns quickly.
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+
+        // D11-007: classify the overflow stream so operators can identify
+        // which direction breached the cap.
+        let overflow_stream = match (stdout_buf.len() > cap, stderr_buf.len() > cap) {
+            (true, true) => "stdout+stderr",
+            (true, false) => "stdout",
+            (false, true) => "stderr",
+            // Unreachable given `overflowed`, but match exhaustively to avoid
+            // a panic if the condition is widened.
+            (false, false) => "stdout",
+        }
+        .to_string();
+        return Err(ModuleExecutionError::OutputSizeExceeded {
+            module_id: module_id.to_string(),
+            limit_bytes: cap,
+            overflow_stream,
+        });
+    }
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()))?;
+    Ok((stdout_buf, stderr_buf, status))
 }
 
 // Sandbox
@@ -211,12 +374,45 @@ impl Sandbox {
         if !self.enabled {
             // Passthrough: delegate to the in-process apcore::Executor and
             // preserve the ModuleError variant so callers can map to the
-            // protocol-spec exit code.
+            // protocol-spec exit code. This path already carries the
+            // attached ACL, since it runs through the same executor's own
+            // pipeline (`acl_check` step).
             return executor
                 .call(module_id, input_data, None, None)
                 .await
                 .map_err(ModuleExecutionError::ModuleError);
         }
+
+        // Defense-in-depth ACL gate (FE-14 section 4.10). `_sandboxed_execute`
+        // spawns a subprocess that builds its OWN bare `Registry` + `Executor`
+        // from inherited `APCORE_*` env vars, which never sees `executor`'s
+        // attached ACL — so without a check here, `--sandbox` is a complete
+        // access-control bypass. `cli::dispatch_module` already gates this at
+        // its call site, but that gate protects only callers that remember to
+        // invoke it; checking again here means the guarantee holds for EVERY
+        // caller of `Sandbox::execute`, present or future, regardless of
+        // call-site correctness.
+        //
+        // `caller_id` is left as `None` (resolves to `@external`) for the same
+        // reason the call-site gate does: apcore makes `Context::caller_id`
+        // unsettable by callers, and a top-level dispatch is always
+        // `@external`. The context and the arguments projection are both
+        // required non-`None` — PROTOCOL_SPEC 6.5 makes a conditional rule a
+        // non-match without a context, and an `arguments`-scoped rule inert
+        // without the projection, so passing either as `None` would leave
+        // those rule classes silently inert on this path while they fire
+        // in-process.
+        if let Some(acl) = executor.acl.as_deref() {
+            let gate_ctx = crate::acl_cmd::delegated_gate_context();
+            let projection = apcore::acl::GovernanceProjection::from_arguments(&input_data);
+            let decision = acl.check_access(None, module_id, Some(&gate_ctx), Some(&projection));
+            if decision.access == "deny" {
+                return Err(ModuleExecutionError::AclDenied {
+                    module_id: module_id.to_string(),
+                });
+            }
+        }
+
         self._sandboxed_execute(module_id, input_data).await
     }
 
@@ -255,7 +451,7 @@ impl Sandbox {
         // overrides any inherited `APCORE_EXTENSIONS_ROOT` from the standard
         // APCORE_* whitelist forwarding above.
         if let Some(ref ext_root) = self.extensions_root {
-            let resolved = std::fs::canonicalize(ext_root).unwrap_or_else(|_| ext_root.clone());
+            let resolved = absolutize_sandbox_path(ext_root);
             // Replace any prior APCORE_EXTENSIONS_ROOT entry forwarded by the
             // whitelist loop — the explicit builder value wins.
             env.retain(|(k, _)| k != "APCORE_EXTENSIONS_ROOT");
@@ -270,15 +466,13 @@ impl Sandbox {
             // forwards the host value verbatim — but the child runs with
             // `cwd = tmpdir_path`, so any relative path (e.g. "./extensions")
             // resolves to a directory inside the sandbox tempdir that does
-            // not exist. Canonicalise here so the inherited path stays
-            // valid after the cwd switch, matching the explicit-override
-            // branch above.
+            // not exist. Absolutize here so the inherited path stays valid
+            // after the cwd switch, matching the explicit-override branch
+            // above.
             if let Some(idx) = env.iter().position(|(k, _)| k == "APCORE_EXTENSIONS_ROOT") {
                 let raw = env[idx].1.clone();
                 let p = std::path::PathBuf::from(&raw);
-                if let Ok(canon) = std::fs::canonicalize(&p) {
-                    env[idx].1 = canon.to_string_lossy().into_owned();
-                }
+                env[idx].1 = absolutize_sandbox_path(&p).to_string_lossy().into_owned();
             }
         }
 
@@ -345,65 +539,20 @@ impl Sandbox {
             Duration::from_secs(300)
         };
 
-        // Take pipe handles before the join so the child struct can also be
-        // awaited for the exit status in the same async block.
-        let stdout_pipe = child.stdout.take();
-        let stderr_pipe = child.stderr.take();
-
         // Per-instance cap; defaults to SANDBOX_OUTPUT_SIZE_LIMIT_BYTES (64 MiB)
         // unless overridden via `with_max_output_bytes` (D1-004 parity).
         let cap = self.max_output_bytes;
-        let collect_result = timeout(timeout_dur, async {
-            let (stdout_res, stderr_res) = tokio::join!(
-                async {
-                    let mut buf = Vec::new();
-                    if let Some(r) = stdout_pipe {
-                        let _ = r.take(cap as u64 + 1).read_to_end(&mut buf).await;
-                    }
-                    buf
-                },
-                async {
-                    let mut buf = Vec::new();
-                    if let Some(r) = stderr_pipe {
-                        let _ = r.take(cap as u64 + 1).read_to_end(&mut buf).await;
-                    }
-                    buf
-                },
-            );
-            let status = child
-                .wait()
+        // `collect_capped_output` actively kills `child` the instant either
+        // stream's cap is breached (D11-007 follow-up), so a runaway module
+        // is terminated promptly instead of surviving until this OUTER
+        // timeout fires and misreporting the overflow as `Timeout`.
+        let (stdout_bytes, stderr_bytes, status) =
+            timeout(timeout_dur, collect_capped_output(child, cap, module_id))
                 .await
-                .map_err(|e| ModuleExecutionError::SpawnFailed(e.to_string()))?;
-            Ok::<_, ModuleExecutionError>((stdout_res, stderr_res, status))
-        })
-        .await
-        .map_err(|_| ModuleExecutionError::Timeout {
-            module_id: module_id.to_string(),
-            timeout_secs: self.timeout_secs,
-        })??;
-
-        let (stdout_bytes, stderr_bytes, status) = collect_result;
-
-        if stdout_bytes.len() > cap || stderr_bytes.len() > cap {
-            // D11-007: classify the overflow stream so operators can identify
-            // which direction breached the cap. Both streams use `take(cap+1)`,
-            // so a length strictly greater than `cap` indicates that stream
-            // was the offender.
-            let overflow_stream = match (stdout_bytes.len() > cap, stderr_bytes.len() > cap) {
-                (true, true) => "stdout+stderr",
-                (true, false) => "stdout",
-                (false, true) => "stderr",
-                // Unreachable given the surrounding `if` condition, but match
-                // exhaustively to avoid a panic if the condition is widened.
-                (false, false) => "stdout",
-            }
-            .to_string();
-            return Err(ModuleExecutionError::OutputSizeExceeded {
-                module_id: module_id.to_string(),
-                limit_bytes: cap,
-                overflow_stream,
-            });
-        }
+                .map_err(|_| ModuleExecutionError::Timeout {
+                    module_id: module_id.to_string(),
+                    timeout_secs: self.timeout_secs,
+                })??;
 
         if !status.success() {
             let exit_code = status.code().unwrap_or(-1);
@@ -648,5 +797,189 @@ mod tests {
             leaked.is_empty(),
             "APCORE_AUTH_* vars must not leak into sandbox env: {leaked:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression: FE-14 §4.10 defense-in-depth ACL gate on Sandbox::execute
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_sandbox_execute_denies_when_acl_denies_module_without_spawning() {
+        // BLOCKER: `_sandboxed_execute` builds its own bare Registry +
+        // Executor in the child and never sees the ACL attached to the
+        // `executor` argument, so `--sandbox` was previously a complete
+        // access-control bypass regardless of anything the CLI's dispatch
+        // call site did. `Sandbox::execute` itself must refuse before ever
+        // spawning the subprocess. If this regresses to "spawn anyway", this
+        // test would hang or error out on subprocess machinery instead of
+        // returning promptly with `AclDenied`.
+        use apcore::acl::{ACLRule, ACL};
+
+        let rule = ACLRule::new(
+            vec!["@external".to_string()],
+            vec!["denied.module".to_string()],
+            "deny",
+        );
+        let acl = ACL::try_new(vec![rule], "allow", None).expect("well-formed ACL");
+
+        let mut executor =
+            apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+        executor.set_acl(acl);
+
+        let sandbox = Sandbox::new(true, 5);
+        let result = sandbox.execute("denied.module", json!({}), &executor).await;
+
+        match result {
+            Err(ModuleExecutionError::AclDenied { module_id }) => {
+                assert_eq!(module_id, "denied.module");
+            }
+            other => panic!("expected AclDenied without spawning a subprocess, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_execute_allows_when_acl_allows_module() {
+        // Discriminating case for the fix above: a hardcoded deny would pass
+        // the BLOCKER test trivially. An allowed module must still reach
+        // `_sandboxed_execute` (and fail there for an unrelated, sandbox-
+        // machinery reason — there is no real `denied.module` binary to run —
+        // rather than being rejected by the ACL gate).
+        use apcore::acl::{ACLRule, ACL};
+
+        let rule = ACLRule::new(
+            vec!["@external".to_string()],
+            vec!["some.other.module".to_string()],
+            "deny",
+        );
+        let acl = ACL::try_new(vec![rule], "allow", None).expect("well-formed ACL");
+
+        let mut executor =
+            apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+        executor.set_acl(acl);
+
+        // Very short timeout: we only care that the ACL gate did not reject
+        // it outright; the subprocess itself is expected to fail fast since
+        // `allowed.module` is not a real registered module.
+        let sandbox = Sandbox::new(true, 1);
+        let result = sandbox
+            .execute("allowed.module", json!({}), &executor)
+            .await;
+
+        assert!(
+            !matches!(result, Err(ModuleExecutionError::AclDenied { .. })),
+            "an allowed module must not be rejected by the ACL gate, got: {result:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression: extensions-root absolutize must not require existence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_with_extensions_root_absolutizes_a_nonexistent_relative_path() {
+        // D11-W3 follow-up (explicit-override branch). `with_extensions_root`
+        // deliberately accepts a path that may not exist yet (security.md:
+        // "A relative `path` is accepted and resolved here rather than
+        // rejected"). The previous
+        // `canonicalize(..).unwrap_or_else(|_| ext_root.clone())` forwarded
+        // the RAW, unresolved relative path whenever the target didn't exist
+        // — silently re-rooting it inside the sandbox child's fresh tempdir
+        // cwd (invariant 6's "extensions root not propagated" defect class).
+        let relative = PathBuf::from("no-such-extensions-dir-abc987");
+        assert!(!relative.exists(), "premise: the path must not exist");
+
+        let s = Sandbox::new(true, 5).with_extensions_root(Some(relative.clone()));
+        let env = s.build_sandbox_env(&std::collections::HashMap::new());
+
+        let forwarded = env
+            .iter()
+            .find(|(k, _)| k == "APCORE_EXTENSIONS_ROOT")
+            .map(|(_, v)| v.clone())
+            .expect("APCORE_EXTENSIONS_ROOT must be forwarded");
+
+        assert_ne!(
+            forwarded,
+            relative.to_string_lossy(),
+            "must not silently forward the unresolved relative path when canonicalize fails"
+        );
+        assert!(
+            std::path::Path::new(&forwarded).is_absolute(),
+            "forwarded extensions root must be absolute even when the target \
+             doesn't exist yet, got {forwarded:?}"
+        );
+        assert_eq!(
+            std::path::Path::new(&forwarded),
+            std::env::current_dir().unwrap().join(&relative),
+            "must fall back to a lexical absolutize against the parent's cwd"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression: overflow must kill the child promptly, not wait for it
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_collect_capped_output_kills_runaway_child_promptly_on_overflow() {
+        // D11-007 follow-up: a module that keeps writing past the cap must be
+        // killed as soon as the cap is hit rather than left running until the
+        // caller's outer timeout (default 300s) reaps it, which previously
+        // turned a clear OutputSizeExceeded into a misleading Timeout.
+        //
+        // Uses a real, cheaply-spawned subprocess rather than the sandbox's
+        // `--internal-sandbox-runner` path, which needs the compiled
+        // `apcore-cli` binary and is excluded from ordinary `cargo test` runs
+        // (see the #[ignore] tests in tests/security/test_sandbox.rs).
+        //
+        // The child writes past the cap ONCE and then spins on CPU without
+        // touching its pipes again — deliberately NOT a plain `cat
+        // /dev/zero`. A pure never-stop-writing child would die from SIGPIPE
+        // the instant `collect_capped_output`'s bounded reader is dropped
+        // (which closes our end of the pipe) regardless of whether an
+        // explicit kill is issued, making that shape unable to discriminate
+        // the fix from the bug it fixes. A child that goes CPU-bound after
+        // its initial write never touches the (now-closed) pipe again, so it
+        // is unaffected by SIGPIPE/EPIPE and can only be stopped by an
+        // explicit kill — reproducing the "runaway module that keeps
+        // running" scenario the fix targets.
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg("head -c 2000 /dev/zero; while true; do :; done")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn test child");
+
+        let started = std::time::Instant::now();
+        // Generous outer bound: if the fix regresses to "wait for the child
+        // to exit on its own", this future never resolves (the child never
+        // exits) and this outer timeout fires first, failing the test with a
+        // clear message instead of hanging the test suite.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            collect_capped_output(child, 1024, "overflow.module"),
+        )
+        .await
+        .expect(
+            "must resolve well before a long outer sandbox timeout would, not hang \
+             waiting for a runaway child to exit on its own",
+        );
+
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "overflow must be detected and the child killed promptly, took {:?}",
+            started.elapsed()
+        );
+        match result {
+            Err(ModuleExecutionError::OutputSizeExceeded {
+                overflow_stream, ..
+            }) => {
+                assert_eq!(overflow_stream, "stdout");
+            }
+            other => panic!("expected OutputSizeExceeded, got: {other:?}"),
+        }
     }
 }
