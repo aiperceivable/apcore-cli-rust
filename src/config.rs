@@ -62,6 +62,29 @@ impl ConfigResolver {
         ("expose.mode", "all"),
         ("expose.include", "[]"),
         ("expose.exclude", "[]"),
+        // ACL governance (FE-14, v0.12.0). `acl.root` is an apcore-owned key,
+        // so its environment variable is `APCORE_ACL_ROOT` rather than an
+        // `APCORE_CLI_*` name, and the default matches apcore's own
+        // `Config::get_default("acl.root")`. A missing root attaches nothing;
+        // there is deliberately NO `acl.enabled: false` switch, because a key
+        // whose only effect is to silently disable access control is a
+        // foot-gun that reads as configuration (spec §5).
+        //
+        // The two `acl.audit.*` keys drive the §4.8 audit wiring in
+        // `acl_loader`. An earlier revision of this comment claimed they were
+        // held back pending a public `ACL::set_audit_logger` in Python and
+        // TypeScript; that prerequisite was retracted (spec §10) -- all three
+        // SDKs accept the callback through the ACL constructor, and Rust has
+        // the setter on top of that.
+        //
+        // `include_denied` follows apcore's own
+        // `schemas/acl-config.schema.json`: it governs whether **denied**
+        // attempts are logged. `false` therefore suppresses deny entries and
+        // leaves allow entries alone -- it is NOT an inverted "only log
+        // denials" switch.
+        ("acl.root", "./acl"),
+        ("acl.audit.enabled", "true"),
+        ("acl.audit.include_denied", "true"),
     ];
 
     /// Namespace key → legacy key mapping for backward compatibility.
@@ -366,6 +389,9 @@ mod tests {
             "cli.strategy",
             "cli.group_depth",
             "expose.mode",
+            "acl.root",
+            "acl.audit.enabled",
+            "acl.audit.include_denied",
         ] {
             assert!(
                 resolver.defaults.contains_key(key),

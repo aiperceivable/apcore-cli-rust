@@ -734,23 +734,39 @@ fn is_valid_module_id(s: &str) -> bool {
 // Error code mapping
 // ---------------------------------------------------------------------------
 
+/// Whether this dispatch will reach an execution path that does NOT carry the
+/// executor's attached ACL, and must therefore be gated here in the parent
+/// (FE-14 section 4.10).
+///
+/// * A filesystem script module is spawned as a subprocess and never reaches
+///   `Executor::call`.
+/// * `--sandbox` delegates to `sandbox_runner`, which builds a fresh
+///   `Registry` + `Executor` with no ACL attached.
+///
+/// Both are complete bypasses, and the sandbox one inverts the user's intent:
+/// `--sandbox` is a security flag, so stronger isolation would otherwise mean
+/// weaker access control.
+pub(crate) fn bypasses_executor_acl(has_script_executable: bool, use_sandbox: bool) -> bool {
+    has_script_executable || use_sandbox
+}
+
 /// Map an apcore error code string to the appropriate CLI exit code.
 ///
 /// Exit code table:
 /// * `MODULE_NOT_FOUND` / `MODULE_LOAD_ERROR` / `MODULE_DISABLED` → 44
 /// * `SCHEMA_VALIDATION_ERROR`                                     → 45
 /// * `APPROVAL_DENIED` / `APPROVAL_TIMEOUT` / `APPROVAL_PENDING`  → 46
-/// * `CONFIG_NOT_FOUND` / `CONFIG_INVALID`                         → 47
+/// * `CONFIG_NOT_FOUND` / `CONFIG_INVALID` / `ACL_RULE_ERROR`      → 47
 /// * `SCHEMA_CIRCULAR_REF`                                         → 48
 /// * `ACL_DENIED`                                                  → 77
 /// * everything else (including `MODULE_EXECUTE_ERROR` / `MODULE_TIMEOUT`) → 1
 pub(crate) fn map_apcore_error_to_exit_code(error_code: &str) -> i32 {
     use crate::{
-        EXIT_ACL_DENIED, EXIT_APPROVAL_DENIED, EXIT_CONFIG_BIND_ERROR, EXIT_CONFIG_MOUNT_ERROR,
-        EXIT_CONFIG_NAMESPACE_RESERVED, EXIT_CONFIG_NOT_FOUND, EXIT_DEPENDENCY_NOT_FOUND,
-        EXIT_DEPENDENCY_VERSION_MISMATCH, EXIT_ERROR_FORMATTER_DUPLICATE,
-        EXIT_MODULE_EXECUTE_ERROR, EXIT_MODULE_NOT_FOUND, EXIT_SCHEMA_CIRCULAR_REF,
-        EXIT_SCHEMA_VALIDATION_ERROR,
+        EXIT_ACL_DENIED, EXIT_ACL_RULE_ERROR, EXIT_APPROVAL_DENIED, EXIT_CONFIG_BIND_ERROR,
+        EXIT_CONFIG_MOUNT_ERROR, EXIT_CONFIG_NAMESPACE_RESERVED, EXIT_CONFIG_NOT_FOUND,
+        EXIT_DEPENDENCY_NOT_FOUND, EXIT_DEPENDENCY_VERSION_MISMATCH,
+        EXIT_ERROR_FORMATTER_DUPLICATE, EXIT_MODULE_EXECUTE_ERROR, EXIT_MODULE_NOT_FOUND,
+        EXIT_SCHEMA_CIRCULAR_REF, EXIT_SCHEMA_VALIDATION_ERROR,
     };
     match error_code {
         "MODULE_NOT_FOUND" | "MODULE_LOAD_ERROR" | "MODULE_DISABLED" => EXIT_MODULE_NOT_FOUND,
@@ -762,6 +778,11 @@ pub(crate) fn map_apcore_error_to_exit_code(error_code: &str) -> i32 {
         "SCHEMA_VALIDATION_ERROR" => EXIT_SCHEMA_VALIDATION_ERROR,
         "APPROVAL_DENIED" | "APPROVAL_TIMEOUT" | "APPROVAL_PENDING" => EXIT_APPROVAL_DENIED,
         "CONFIG_NOT_FOUND" | "CONFIG_INVALID" => EXIT_CONFIG_NOT_FOUND,
+        // FE-14 §6.1: a structurally invalid ACL file is a *configuration*
+        // fault, so it shares 47 with CONFIG_INVALID. 77 stays reserved for an
+        // actual access decision. Cross-SDK map change — all three SDKs add
+        // this key together.
+        "ACL_RULE_ERROR" => EXIT_ACL_RULE_ERROR,
         "SCHEMA_CIRCULAR_REF" => EXIT_SCHEMA_CIRCULAR_REF,
         "ACL_DENIED" => EXIT_ACL_DENIED,
         // Config Bus errors (apcore >= 0.15.0)
@@ -1130,6 +1151,21 @@ pub async fn dispatch_module(
     let approval_timeout_arg = matches.get_one::<String>("approval-timeout").cloned();
     let approval_token = matches.get_one::<String>("approval-token").cloned();
 
+    // FE-14 §6.2: bypassing a *configured* ACL is a materially different event
+    // from running with no rules at all, so the warning names the strategy and
+    // fires only when an ACL is actually attached.
+    crate::acl_cmd::warn_if_strategy_bypasses_acl(
+        strategy_name.as_deref(),
+        apcore_executor.acl.is_some(),
+    );
+
+    // FE-14 §4.3: `--identity-id` / `--identity-type` / `--role` build the
+    // Context handed to the executor. `None` when no flag was given, so apcore
+    // constructs its own default context exactly as it did pre-FE-14 —
+    // `Context::caller_id` is never set here, and a real execution always
+    // presents `@external`.
+    let cli_ctx = crate::acl_cmd::identity_context();
+
     // 4. Build CLI kwargs from schema-derived flags (stub: empty map).
     let cli_kwargs = extract_cli_kwargs(matches, &module_def);
 
@@ -1208,6 +1244,68 @@ pub async fn dispatch_module(
         merged.insert("_approval_token".to_string(), Value::String(token.clone()));
     }
 
+    // 8. Build merged input as serde_json::Value.
+    //
+    // Built ahead of the approval gate because the ACL gate below reads the
+    // governance projection of these arguments (PROTOCOL_SPEC 6.1.7) and its
+    // approval axis feeds the gate.
+    let input_value = serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
+
+    // Determine sandbox flag.
+    let use_sandbox = matches.get_flag("sandbox");
+
+    // Check if this module has a script-based executable.
+    let script_executable = EXECUTABLES
+        .get()
+        .and_then(|map| map.get(module_id))
+        .cloned();
+
+    // 6.5 FE-14 section 4.10: gate every execution path that does not carry
+    // the attached ACL.
+    //
+    // Attaching an ACL to the executor gates the calls that go *through that
+    // executor*. It gates nothing else, and this CLI has two paths that build
+    // their own:
+    //
+    // * **Sandbox subprocess** (`--sandbox`). `sandbox_runner` constructs a
+    //   fresh `Registry` + `Executor` from `APCORE_EXTENSIONS_ROOT` with no
+    //   ACL attached. This inverts the user's intent outright: `--sandbox` is
+    //   a *security* flag, so switching on stronger isolation would switch off
+    //   access control.
+    // * **Filesystem script modules.** `FsDiscoverer` executables are spawned
+    //   as subprocesses and never reach `Executor::call`, so the pipeline's
+    //   `acl_check` step never sees them.
+    //
+    // The decision is reached HERE, in the parent, which already holds the
+    // ACL, and a denial refuses BEFORE the subprocess is spawned -- one
+    // enforcement point rather than one per execution mechanism. The child
+    // re-loading `acl.root` is explicitly NOT the control: the sandbox
+    // forwards a narrow env allowlist by design, so the child's view is
+    // neither guaranteed nor trustworthy.
+    let mut acl_requires_approval = false;
+    if bypasses_executor_acl(script_executable.is_some(), use_sandbox) {
+        if let Some(acl) = apcore_executor.acl.as_deref() {
+            // The gate MUST supply both a context and the argument projection.
+            // PROTOCOL_SPEC 6.5 makes every conditional rule a non-match
+            // without a context, and apcore's pipeline creates one at Step 1
+            // for every real call -- so passing `None` here would leave
+            // conditional `deny` rules inert on the delegated path while they
+            // fire in-process. `arguments`-scoped rules go inert the same way
+            // without the projection.
+            let gate_ctx = crate::acl_cmd::delegated_gate_context();
+            let projection = apcore::acl::GovernanceProjection::from_arguments(&input_value);
+            // `caller_id` is deliberately not passed: apcore makes it
+            // unsettable by callers, and a top-level CLI call is always
+            // `@external` (FE-14 section 4.3 / section 7 rule 2).
+            let decision = acl.check_access(None, module_id, Some(&gate_ctx), Some(&projection));
+            if decision.access == "deny" {
+                eprintln!("Error: Permission denied for module '{module_id}'.");
+                std::process::exit(crate::EXIT_ACL_DENIED);
+            }
+            acl_requires_approval = decision.approval_required;
+        }
+    }
+
     // 7. Approval gate (exit 46 on denial/timeout).
     // Resolve the timeout: --approval-timeout flag > cli.approval_timeout
     // config default > hardcoded 60s. Non-numeric values fall back to the
@@ -1227,7 +1325,21 @@ pub async fn dispatch_module(
                 .and_then(|s| s.parse::<u64>().ok())
         })
         .unwrap_or(crate::approval::DEFAULT_APPROVAL_TIMEOUT_SECS);
-    let module_json = serde_json::to_value(&module_def).unwrap_or_default();
+    let mut module_json = serde_json::to_value(&module_def).unwrap_or_default();
+    // Since apcore 0.28.0 the approval gate fires on the UNION of the module
+    // annotation, an ACL rule carrying `approval: required`, and
+    // `gate_destructive`. On the sandbox and script paths this CLI *is* the
+    // gate, so it rewrites the annotation to the effective value the same way
+    // apcore's own gate does before building the request -- otherwise the same
+    // rule would demand a human on one path and not the other (section 4.10).
+    if acl_requires_approval {
+        if let Some(annotations) = module_json
+            .get_mut("annotations")
+            .and_then(Value::as_object_mut)
+        {
+            annotations.insert("requires_approval".to_string(), Value::Bool(true));
+        }
+    }
     if let Err(e) = crate::approval::check_approval_with_timeout(
         &module_json,
         auto_approve,
@@ -1238,18 +1350,6 @@ pub async fn dispatch_module(
         eprintln!("Error: {e}");
         std::process::exit(EXIT_APPROVAL_DENIED);
     }
-
-    // 8. Build merged input as serde_json::Value.
-    let input_value = serde_json::to_value(&merged).unwrap_or(Value::Object(Default::default()));
-
-    // Determine sandbox flag.
-    let use_sandbox = matches.get_flag("sandbox");
-
-    // Check if this module has a script-based executable.
-    let script_executable = EXECUTABLES
-        .get()
-        .and_then(|map| map.get(module_id))
-        .cloned();
 
     // -- F6: Streaming execution --
     if stream_flag {
@@ -1292,7 +1392,7 @@ pub async fn dispatch_module(
         // so we fall back to standard call and output as single JSONL line.
         let res = tokio::select! {
             res = apcore_executor.call(
-                module_id, input_value.clone(), None, None,
+                module_id, input_value.clone(), cli_ctx.as_ref(), None,
             ) => res,
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("Execution cancelled.");
@@ -1331,7 +1431,7 @@ pub async fn dispatch_module(
             res = apcore_executor.call(
                 module_id,
                 input_value.clone(),
-                None,
+                cli_ctx.as_ref(),
                 None,
             ) => res,
             _ = tokio::signal::ctrl_c() => {
@@ -1436,7 +1536,7 @@ pub async fn dispatch_module(
                 res = apcore_executor.call(
                     module_id,
                     input_value.clone(),
-                    None,
+                    cli_ctx.as_ref(),
                     None,
                 ) => {
                     res.map_err(|e| {
@@ -1781,7 +1881,8 @@ mod tests {
 
     #[test]
     fn test_apcli_subcommand_names_matches_spec() {
-        // Spec §4.1 subcommand table — 13 entries registered under `apcli`.
+        // Spec §4.1 subcommand table — 15 entries registered under `apcli`
+        // (13 through v0.11.0, plus FE-14 `acl` and FE-15a `openapi`).
         let expected: &[&str] = &[
             "list",
             "describe",
@@ -1796,8 +1897,48 @@ mod tests {
             "config",
             "completion",
             "describe-pipeline",
+            "acl",
+            "openapi",
         ];
         assert_eq!(crate::builtin_group::APCLI_SUBCOMMAND_NAMES, expected);
+    }
+
+    #[test]
+    fn test_sandbox_alone_triggers_the_parent_acl_gate() {
+        // FE-14 section 4.10. `--sandbox` builds a fresh Executor in the child
+        // with no ACL attached, so the parent must reach the decision itself.
+        // Asserted directly because the standalone binary's registry holds
+        // only FsDiscoverer modules, for which the script branch is selected
+        // first -- the sandbox half of the predicate would otherwise never be
+        // exercised by an end-to-end test.
+        assert!(bypasses_executor_acl(
+            /*has_script_executable*/ false, /*use_sandbox*/ true
+        ));
+        assert!(bypasses_executor_acl(true, false));
+        assert!(bypasses_executor_acl(true, true));
+        // An in-process call through the executor gates itself.
+        assert!(!bypasses_executor_acl(false, false));
+    }
+
+    #[test]
+    fn test_map_error_acl_rule_error_is_47() {
+        // FE-14 §6.1: ACL_RULE_ERROR previously fell through to the catch-all
+        // arm and exited 1, indistinguishable from "the module ran and
+        // failed". It is a configuration fault, so 47 — never 77, which stays
+        // reserved for an actual access decision.
+        assert_eq!(map_apcore_error_to_exit_code("ACL_RULE_ERROR"), 47);
+        assert_ne!(map_apcore_error_to_exit_code("ACL_RULE_ERROR"), 77);
+    }
+
+    #[test]
+    fn test_acl_rule_error_maps_from_the_apcore_enum() {
+        // Guard against the enum's serialized name drifting from the string
+        // the map keys on.
+        let err = apcore::errors::ModuleError::new(
+            apcore::errors::ErrorCode::ACLRuleError,
+            "bad rule".to_string(),
+        );
+        assert_eq!(map_module_error_to_exit_code(&err), 47);
     }
 
     // ---------------------------------------------------------------------------

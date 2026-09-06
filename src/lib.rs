@@ -18,6 +18,8 @@
 // owns the type rather than making a different one downstream.
 #![allow(clippy::result_large_err)]
 
+pub mod acl_cmd;
+pub mod acl_loader;
 pub mod approval;
 pub mod builtin_group;
 pub mod cli;
@@ -27,6 +29,8 @@ pub mod display_helpers;
 pub mod exposure;
 pub mod fs_discoverer;
 pub mod init_cmd;
+pub mod openapi_cmd;
+pub mod openapi_source;
 pub mod output;
 pub mod ref_resolver;
 pub mod schema_parser;
@@ -56,6 +60,14 @@ pub const EXIT_DEPENDENCY_VERSION_MISMATCH: i32 = 44;
 pub const EXIT_SCHEMA_VALIDATION_ERROR: i32 = 45;
 pub const EXIT_APPROVAL_DENIED: i32 = 46;
 pub const EXIT_CONFIG_NOT_FOUND: i32 = 47;
+// FE-14 §6.1: `ACL_RULE_ERROR` is a real apcore `ErrorCode` that no SDK's exit
+// map carried, so a malformed ACL file fell through to the generic 1 —
+// indistinguishable from "the module ran and failed". 47 (CONFIG_INVALID) is
+// correct rather than 77: the ACL could not be *read*, which is a
+// configuration fault, not a denial. 77 stays reserved for an actual access
+// decision, or scripts branching on it would misreport a broken config as a
+// permissions problem.
+pub const EXIT_ACL_RULE_ERROR: i32 = 47;
 pub const EXIT_SCHEMA_CIRCULAR_REF: i32 = 48;
 pub const EXIT_ACL_DENIED: i32 = 77;
 // Config Bus errors (apcore >= 0.15.0)
@@ -77,9 +89,9 @@ pub const EXIT_SIGINT: i32 = 130;
 /// by ID even when the apcli group is configured with a minimal surface.
 pub const APCLI_ALWAYS_REGISTERED: &[&str] = &["exec"];
 
-/// Central dispatcher for the 13 canonical apcli subcommands. Walks a fixed
+/// Central dispatcher for the 15 canonical apcli subcommands. Walks a fixed
 /// registration table and honors [`ApcliGroup::resolve_visibility`] for
-/// include/exclude modes. Under `"all"` or `"none"` all 13 subcommands are
+/// include/exclude modes. Under `"all"` or `"none"` all 15 subcommands are
 /// registered (spec §4.9 registration rules table); under `"include"` only
 /// listed subcommands + [`APCLI_ALWAYS_REGISTERED`]; under `"exclude"` all
 /// except listed + [`APCLI_ALWAYS_REGISTERED`].
@@ -122,6 +134,14 @@ pub fn register_apcli_subcommands(
             "describe-pipeline",
             Box::new(strategy::register_pipeline_command),
         ),
+        // FE-14: `acl` requires the executor at dispatch time but not at
+        // registration time, so it is a plain builder row like the rest. It is
+        // NOT in `APCLI_ALWAYS_REGISTERED` — under `mode: include` it
+        // registers only when explicitly listed (spec §4.10).
+        ("acl", Box::new(acl_cmd::register_acl_command)),
+        // FE-15a: `openapi` needs neither registry nor executor — it reads a
+        // document and writes files (spec §4.7).
+        ("openapi", Box::new(openapi_cmd::register_openapi_command)),
     ];
 
     // The six system subcommands register atomically: either all appear (the
@@ -210,6 +230,25 @@ pub fn register_apcli_subcommands(
 // see the resolved name. The static `BUILTIN_GROUP_NAME = "apcli"` const
 // in `cli.rs` and `RESERVED_FLAG_NAMES` should become per-instance state
 // once the API exists.
+
+// ACL governance (FE-14)
+pub use acl_cmd::{
+    acl_command, check_exit_code, cli_identity, delegated_gate_context, identity_context,
+    register_acl_command, set_cli_identity, status_exit_code, validate_exit_code, CliIdentity,
+    DEFAULT_IDENTITY_ID, DEFAULT_IDENTITY_TYPE,
+};
+pub use acl_loader::{
+    acl_audit_enabled, acl_audit_include_denied, acl_audit_record, install_acl_audit_logger,
+    load_cli_acl, load_cli_acl_with_audit, resolve_acl_file, resolve_acl_root, AclAuditRecord,
+    ACL_AUDIT_ENABLED_ENV, ACL_AUDIT_FIELDS, ACL_AUDIT_INCLUDE_DENIED_ENV, ACL_ROOT_ENV,
+};
+
+// OpenAPI import (FE-15a)
+pub use openapi_cmd::{openapi_command, register_openapi_command};
+pub use openapi_source::{
+    detect_proxy_hazards, load_openapi_source, Hazard, OpenApiSourceError,
+    DEFAULT_OPENAPI_TIMEOUT_SECS,
+};
 
 // Approval gate (FE-04 + FE-11 §3.5)
 pub use approval::{

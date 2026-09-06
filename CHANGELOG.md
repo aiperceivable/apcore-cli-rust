@@ -4,6 +4,111 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.0] - 2026-09-06
+
+Two features: **FE-14 ACL Governance** makes the CLI's access-control surface reachable for the first time, and **FE-15a OpenAPI Import** adds `apcli openapi scan` / `generate`. `APCLI_SUBCOMMAND_NAMES` grows from 13 to 15.
+
+The ACL work turned up **two silent access-control bypasses** — see Security below. They were present in all three SDKs and are fixed in all three.
+
+`make check` is green end to end: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings` (0 warnings), `apdev-rs check-chars` (29 files, ASCII-only), and 996 tests across 33 binaries, up from 800.
+
+### Added
+
+- **FE-14: the CLI now attaches an ACL.** apcore has enforced access control since PROTOCOL_SPEC §6, and this CLI has always carried the *downstream* half of it — exit code `77` for `ACL_DENIED`, an `acl` row in `--dry-run` preflight, `acl_check` in `apcli describe-pipeline`. None of it was ever reachable, because **no apcore-cli SDK had ever constructed or attached an `ACL`**: all three build an `Executor` directly rather than going through the `APCore` bootstrap that performs `ACL::discover`. The result was an executor whose `acl_check` step consulted nothing, and a `governance_state()` reporting `unprotected_control_surface: true` for every project — including projects shipping an `acl/global_acl.yaml` and reasonably assuming it was in force.
+
+  New `src/acl_loader.rs` resolves an ACL root through the FE-07 4-tier chain (`--acl` > `APCORE_ACL_ROOT` > `acl.root` in `apcore.yaml` > `./acl`) and delegates the parse to `ACL::load`. Rule-key closure, `effect` / `approval` enum closure and pattern-array arity are apcore's contract and conformance-tested there; the CLI does not reimplement them.
+
+  Enforcement is **only-when-configured**. A missing root attaches nothing and changes no behaviour, preserving apcore's missing-path invariant: synthesizing an empty ACL with `default_effect: deny` would deny every call in every project that lacks an `acl/` directory. Every existing project behaves exactly as it did.
+
+- **`apcli acl` subcommand group** (`src/acl_cmd.rs`): `list`, `check`, `validate`, `status`.
+
+  `check` calls `ACL::check_access`, never the boolean `ACL::check` — the latter fails closed on an approval requirement, returning `false` for a call that is *allowed but needs a human*, which would report "denied" for a rule set that in fact permits the call. Both axes are reported separately, and an allow-with-approval outcome exits `0`.
+
+  `validate` renders `sync` and `async` as separate columns rather than one boolean: a finding with `sync=no, async=yes` is an async-only handler, working under `async_check()` and unevaluable under `check()`, and collapsing them loses exactly that.
+
+  `status` renders all nine `Executor::governance_state()` observations. `acl_configured` alone is not the answer — the ACL and approval gates are pipeline *steps*, and `internal` / `testing` / `minimal` remove them, so an executor can hold an ACL that no step ever consults.
+
+- **`--identity-id` / `--identity-type` / `--role` global flags.** These build a `Context` identity so conditional rules keyed on `roles` or `identity_types` are evaluable from the terminal. They are **unauthenticated argv assertions, not authentication**, and each flag's `--help` says so. `apcli acl check` restates the three with identical wording; clap resolves the two levels per argument, so a subcommand flag overrides only its own counterpart and a root flag not restated still applies.
+
+  `Context::caller_id` is never fabricated — apcore deliberately makes it unsettable, so a top-level CLI call is always `@external`, and a flag that set it would let any user assume any module's identity. When only `--role` or `--identity-type` is given, `Identity.id` falls back to `DEFAULT_IDENTITY_ID` (`@cli`), pinned in value and export name across all three SDKs; the `@` prefix follows apcore's synthetic-principal convention so it cannot collide with a real user id of `cli`.
+
+- **FE-15a: `apcli openapi scan` and `apcli openapi generate`** (`src/openapi_cmd.rs`, `src/openapi_source.rs`). `scan` reads an OpenAPI 3.0/3.1 document through the toolkit's `OpenAPIScanner` and renders the modules it would produce in every FE-08 format; `generate -o DIR` materializes them as `<id>.binding.yaml` through `YAMLWriter`. Neither registers a module, builds an executor, or issues a request to the described API — `scan` of a local file performs no network I/O at all.
+
+  The CLI is an adapter, not a second implementation: `derive_module_id` output is returned verbatim (it is the subject of a cross-SDK conformance corpus and must match byte-for-byte in three languages), schema extraction is the toolkit's, and the routing contract is exactly the two flat keys `http_method` and `url_path`. The scanner hooks are deliberately not exposed as flags — overriding derivation hands back the naming guarantee, which is not something a command-line flag should be able to do silently.
+
+- **Proxy-hazard detection.** `HTTPProxyRegistryWriter` decides body-versus-query by HTTP method alone, so a query parameter declared on a `POST` / `PUT` / `PATCH` operation **would be sent in the request body** — silently. FE-15a cannot fix that (the fix is upstream, in apcore-toolkit 0.12.0), but it makes it visible: the CLI holds the raw document, which still carries `parameters[].in`, so affected operations are named with their method and offending parameter names by both `scan` and `generate`. Hazards are counted separately from scanner warnings, appear under a top-level `hazards` key in machine formats because they describe a *future* execution path, and never change the exit code.
+
+- **FE-14 §4.8: ACL decisions now reach the FE-05 audit log.** apcore emits exactly one `AuditEntry` per `check_access()` call, but only through an `audit_logger` callback, and nothing in apcore wires the `acl.audit.*` keys to one. The CLI now does: when `acl.audit.enabled` is true, the same `AuditLogger` the module-dispatch path uses is installed as the callback, so ACL decisions land in `~/.apcore-cli/audit.jsonl` beside execution records.
+
+  **This SDK attaches with `ACL::set_audit_logger` rather than rebuilding.** §4.8 describes `ACL::new(src.rules, src.default_effect, logger)` because that is the only mechanism Python and TypeScript offer, and explicitly permits an SDK to use whichever its runtime has. Rust's setter is strictly less lossy on two counts: the rebuild must carry `default_effect` across by hand — pass a literal `"deny"` and every file declaring `default_effect: allow` has its governing default silently inverted for each unmatched call — and the rebuild drops the `yaml_path` that `reload()` depends on. The setter can express neither mistake. `acl.audit.enabled: false` attaches the `ACL::load` result with no callback and no rebuild; an ACL an embedder supplied itself never reaches the loader and is attached unchanged.
+
+  **The wire record is 13 fields, in apcore's `AuditEntry` declaration order, and nothing else.** Key order is normative — the log is JSONL, so an unspecified order would make the same decision serialize to different bytes per SDK. It is pinned by a `#[derive(Serialize)]` struct rather than a `serde_json::json!` literal: `serde_json::Map` is a `BTreeMap` unless the `preserve_order` feature happens to be enabled somewhere in the dependency graph, so a map literal would emit alphabetical order on one build and insertion order on another, silently. Serialising apcore's `AuditEntry` directly is wrong for a second reason — `skip_serializing_if = "Option::is_none"` on six optional fields would drop `matched_rule`, `matched_rule_index`, `identity_type`, `call_depth`, `trace_id` and `handler_error` from any entry that did not populate them. Here an absent value is `null` and every line carries the same key set. No CLI field is added either, notably not the `user` field FE-05 puts on *execution* records, so a consumer can read an ACL record against apcore's `AuditEntry` rather than a CLI dialect of it.
+
+  `acl.audit.include_denied` governs **denied** decisions, matching apcore's own `schemas/acl-config.schema.json` ("Whether to log denied access attempts"): `false` suppresses deny entries and leaves allow entries alone. It is not an inverted "log denials only" switch.
+
+  A logging fault never changes an access decision. The callback is infallible by construction — building the record cannot fail, and `AuditLogger` swallows its own IO errors behind a one-shot warning — so an unwritable audit log costs the entry and nothing else.
+
+- **Test coverage.** `tests/test_acl_cmd.rs` (70 cases, including the §4.8 rows T-ACL-26 / 27 / 27a / 27b / 27c) and `tests/test_openapi_cmd.rs` (40 cases), driven end-to-end through the real binary so the asserted exit codes are the ones a user's shell sees. The section 4.10 cases use a sentinel file the module's own script creates, because an exit code alone does not prove a subprocess was never started.
+
+  The §4.8 rows run in-process instead, deliberately: the production audit path writes to `~/.apcore-cli/audit.jsonl`, so a test spawning the real binary with auditing on would append to the developer's own log. They call the exact function `main.rs` calls, with an `AuditLogger` pointed at a temp file. T-ACL-27a asserts that **no logger was installed** — read off apcore's `ACL` `Debug` rendering, the only introspection it offers — rather than merely that no entries were written; the two differ, and only the former rules out a callback that silently drops everything. T-ACL-26 asserts an **equality** on the ordered key list read off the raw JSONL text, which pins field set, order, casing and the absence of extras at once.
+
+### Changed
+
+- **`apcore = ">=0.30"`, `apcore-toolkit = { version = ">=0.11.1", features = ["http-proxy"] }`.** The floors track the aligned apcore 0.30.0 / apcore-toolkit 0.11.1 release. Both bumps are confined to layers this CLI does not consume, so neither forced a behavioural change here — the only edit either required was to a test that had pinned the toolkit dependency line *verbatim*, version floor included, and therefore failed on any bump regardless of what changed. It now asserts the `features = ["http-proxy"]` half, which is what it was written to guard; the floor is Cargo's business.
+
+  The `http-proxy` feature is required, not optional: `load_spec` sits behind it in the Rust toolkit, and an SDK that cannot reach the HTTP path must fail with an actionable message rather than a missing-symbol link error. Local-file scanning and the YAML writer need none of it.
+
+- **`ConfigResolver::DEFAULTS` gains `acl.root` (`./acl`), `acl.audit.enabled` (`true`) and `acl.audit.include_denied` (`true`).** All three are apcore-owned keys, so their environment variables are `APCORE_ACL_ROOT`, `APCORE_ACL_AUDIT_ENABLED` and `APCORE_ACL_AUDIT_INCLUDE_DENIED` — the apcore convention, following the `APCORE_EXTENSIONS_ROOT` precedent rather than extending it. There is deliberately **no `acl.enabled: false`**: a key whose only effect is to silently disable access control is a foot-gun that reads as configuration. To disable enforcement, point `acl.root` at a path that does not exist.
+
+  The two audit booleans accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`, case-insensitively after trimming — a table shared with Python and TypeScript, and deliberately not `str::parse::<bool>()`: Rust's `FromStr for bool` *errors* on `"0"`, so delegating to it would leave `APCORE_ACL_AUDIT_ENABLED=0` unable to switch auditing off while the same value worked in the other two SDKs. An unrecognised spelling falls back to the key's default (`true`) with a warning naming the key, rather than to `false` — reading an unparseable governance value as "off" would let a typo silently stop the audit trail.
+
+- **`tests/acl_argument_scoped_approval.rs` builds its rules through `ACLRule::new`.** apcore 0.29.0 makes `ACLRule` `#[non_exhaustive]`, so struct-literal construction no longer compiles across the package boundary.
+
+### Fixed
+
+- **`ACL_RULE_ERROR` exited 1 instead of 47.** It is a real `apcore::errors::ErrorCode` that no SDK's exit map carried, so a malformed ACL file fell through to `map_apcore_error_to_exit_code`'s catch-all arm — the code that reads as "the module ran and failed", indistinguishable from a genuine execution failure. Now `47` (CONFIG_INVALID), added in all three SDKs together.
+
+  `47` rather than `77` because the ACL could not be *read*, which is a configuration fault, not a denial. `77` stays reserved for an actual access decision, or a script branching on it would misreport a broken config as a permissions problem.
+
+- **The test suite appended to the developer's real `~/.apcore-cli/audit.jsonl`.** `tests/test_e2e.rs` spawns the binary without `APCORE_CLI_AUDIT_DISABLE=1`, so three `math.add` executions wrote 639 bytes of real audit records into the developer's own log on every `cargo test` run — and `system_usage`'s summary reader, which derived the same home path independently, read from it. Pre-existing in all three SDKs and fixed in all three; the FE-14 §4.8 work is what surfaced it. It never made a test fail, so a green suite was never evidence either way.
+
+  Under the existing `test-support` feature, `AuditLogger::default_path()` now resolves to a temp file instead. The fix is deliberately **not** `APCORE_CLI_AUDIT_DISABLE=1` in `test_e2e.rs`: that would stop those tests exercising the audit path at all, trading a visible problem for an invisible one. Redirecting keeps the writes happening where they can be counted. The redirect path is *derived* rather than published through an environment variable, so the test process and every binary it spawns compute the same value independently — `std::env::set_var` is unsound once other threads are running, and test binaries are multi-threaded by default.
+
+  A production build compiles the branch out entirely (verified: the string `apcore-cli-test-audit` does not appear in the `cargo build --release` binary), so no environment or feature setting can relocate a released binary's audit trail. `home_audit_path()` is split out and pinned by its own test against the real home-derived value, because an assertion that `default_path()` merely "contains `.apcore-cli/audit.jsonl`" would keep passing against the redirect and silently stop testing the shipped location. `system_usage` now delegates to the same function rather than re-deriving the path, so reader and writer cannot drift apart.
+
+  Verified by measurement, not by tests passing: `~/.apcore-cli/audit.jsonl` held 241911 bytes / md5 `75d0c8f5e1cd2951436379cd776a0bc7` both before and after a full `cargo test --all-features`, while the redirect target captured the 3 records (642 bytes) that used to land there — confirming the writes moved rather than merely stopped.
+
+- **Tracing wrote diagnostics to stdout, corrupting every machine format.** apcore emits one WARNING per unevaluable ACL rule at the default log level, and the `tracing_subscriber` fmt layer's default writer is stdout — so `apcli acl validate --format json | jq` failed on a rule set that had anything to report, which is precisely when a user runs it. The layer now writes to stderr, where every other diagnostic in this crate already goes.
+
+### Security
+
+- **`--sandbox` silently disabled access control.** `sandbox_runner` constructs a fresh `Registry` + `Executor` from `APCORE_EXTENSIONS_ROOT` with **no ACL attached**, so a rule set that denied a module was enforced for a plain call and ignored for a sandboxed one. This inverts the user's intent outright: `--sandbox` is a *security* flag, so switching on stronger isolation switched off access control. Present in Python and TypeScript too, fixed in all three.
+
+- **Filesystem script modules were never gated.** `FsDiscoverer` executables are spawned as subprocesses and never reach `Executor::call`, so the pipeline's `acl_check` step never saw them — meaning a configured ACL was silently ignored for exactly the modules this CLI discovers. An operator writing `acl/global_acl.yaml` would believe a denial was in force when nothing was checking. Rust-specific (the other SDKs have no equivalent discovery path).
+
+  Both are the same defect: attaching an ACL to the executor gates the calls that go *through that executor*, and gates nothing else. The decision is now reached in the **parent**, which already holds the ACL, and a denied call is refused with exit `77` **before the subprocess is spawned** — one enforcement point rather than one per execution mechanism. The child re-loading `acl.root` is explicitly not the control: the sandbox forwards a narrow environment allowlist by design, so the child's view is neither guaranteed nor trustworthy as a gate.
+
+  An ACL-sourced `approval: required` composes with the module annotation before the CLI's approval gate on these paths too, exactly as apcore's gate does for a normal call — otherwise the same rule would demand a human on one path and wave the call through on another. Five tests go red when the gate is reverted, including the pair that proves the sentinel file is not created.
+
+- **The gate itself had the same bypass one level down: it passed no `Context`.** A `Context` is built from the identity flags and is legitimately `None` when none were given — correct for `apcli acl check`, which *simulates* a call and is honestly context-free. It is wrong for a gate. PROTOCOL_SPEC §6.5 makes every conditional rule a non-match when a call supplies no context, while apcore's pipeline creates one at Step 1 for **every** real call. So a `deny` rule carrying `conditions` fired in-process and went inert on the delegated path — the same silent bypass, one level down, and invisible to any test using an unconditional rule.
+
+  Both gates now always present a context: the identity-bearing one when flags were given, otherwise a freshly built `@external` / `external` identity reproducing exactly what `Executor::call` constructs for `ctx: None`, so an `identity_types` rule behaves identically on both paths. They also pass the call's arguments as the governance projection, without which an `arguments`-scoped rule is unevaluable — and per §6.1.1 an unevaluable `deny` rule *takes effect*, so the omission silently denied calls it should have permitted as well as permitting ones it should have denied. Both directions are pinned by discriminating pairs.
+
+- **Credentials never reach disk.** Headers supplied via `openapi generate --header` to fetch a protected document exist only for that fetch; neither they nor the document's `securitySchemes` are copied into any generated artifact.
+
+### Notes
+
+- **A retracted claim, recorded because it reached implementers.** An earlier draft of this changelog — and of FE-14 §4.8 — said the audit wiring was blocked on a public `ACL.set_audit_logger` that Python and TypeScript would have to gain, and that shipping it in Rust alone would put this SDK ahead on a cross-SDK surface. That was wrong on the premise: **all three SDKs already accept the callback as a constructor argument** (`ACL(rules, default_effect, audit_logger=…)`, `new ACL(rules, defaultEffect, auditLogger)`, `ACL::new(rules, default_effect, audit_logger)`), so §4.8's load-then-construct sequence needed nothing new anywhere. Rust's `set_audit_logger` is an extra convenience on top, not the prerequisite. The wiring and both `acl.audit.*` keys land here in 0.12.0, alongside Python and TypeScript.
+
+- **All of FE-15b is excluded.** `generate` produces binding artifacts; it does **not** make an API callable, and the commands' `--help` says so rather than implying otherwise. Passing the generated files to `--binding` does not yet produce working commands, on two independent prerequisites: `--binding` is a real registration path only in Python (TypeScript populates a display-overlay map; Rust constructs a `DisplayResolver` and discards it), and `HTTPProxyRegistryWriter` cannot correctly encode a query parameter declared on a body method until apcore-toolkit 0.12.0 carries parameter locations. Neither is about OpenAPI; both are pre-existing debt.
+
+- **`--writer native` was specified and then withdrawn.** Every toolkit source writer resolves `ScannedModule.target` as a `module.path:callable` import path, while an OpenAPI-derived `target` is always a route descriptor such as `"GET /pets"` — so the flag could never have succeeded for any input `generate` can produce. Same root cause as the `RegistryWriter` limitation. `generate` is binding-YAML only, and no refusing stub is left behind. Emitting genuine host-language source for an OpenAPI operation means emitting an HTTP proxy implementation, which belongs with FE-15b.
+
+- **`apcli acl` is a `requires_executor` entry but is not in `APCLI_ALWAYS_REGISTERED`** — under `mode: include` it registers only when explicitly listed. `openapi` needs neither registry nor executor. Neither is a system command, so neither gates on `system.health.summary` availability.
+
+- **The `apcli-visibility` golden byte-match remains `#[ignore]`d** pending the canonical help formatter port, as it has been since FE-13. All five behavioural scenarios pass. The four new root flags' help strings are normative across all three SDKs, and are pinned here by a direct unit test on the clap `Arg` metadata rather than only through the golden — a fixture that does not byte-match in every SDK would let a reword pass locally and break the others.
+
+
 ## [0.11.0] - 2026-09-02
 
 Bumps the required `apcore` floor to `0.28` and `apcore-toolkit` to `0.10.2` to track the aligned apcore 0.28.0 release (2026-08-31). Carries one display fix and a crate-root lint attribute (both under Fixed). `make check` is green end to end: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings` (0 warnings), and 800 tests across 31 binaries including the conformance suite, all against apcore 0.28.0.

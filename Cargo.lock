@@ -133,9 +133,9 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apcore"
-version = "0.28.0"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fbf43b88dae4a2f992be22d3c893e16b153304b108a17b87405cedc194ccc8b"
+checksum = "2e83a50c0710283651003d041b817abe9a87981aeed90f045217d9b4694409df"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "apcore-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -196,9 +196,9 @@ dependencies = [
 
 [[package]]
 name = "apcore-toolkit"
-version = "0.10.2"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d7287e0a13af8d1265d6cbea3f9746e5b8a5f4292d02b61b32ae6d8cee6f703"
+checksum = "651b9140f353086de5cfe817839f679dbe550cb0595f74e61986d5393371783a"
 dependencies = [
  "apcore",
  "async-trait",

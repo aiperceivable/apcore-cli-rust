@@ -29,6 +29,7 @@ pub enum ShellError {
 /// `apcore-cli man list` still render useful output. Keep the set in sync
 /// with the spec §4.1 subcommand table plus the root-level `man` meta.
 pub const KNOWN_BUILTINS: &[&str] = &[
+    "acl",
     "completion",
     "config",
     "describe",
@@ -40,6 +41,7 @@ pub const KNOWN_BUILTINS: &[&str] = &[
     "init",
     "list",
     "man",
+    "openapi",
     "reload",
     "usage",
     "validate",
@@ -50,6 +52,7 @@ pub const KNOWN_BUILTINS: &[&str] = &[
 /// fish generators so adding a new built-in doesn't need touching three
 /// hand-maintained lists (review #3).
 pub const KNOWN_BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("acl", "Inspect and lint access-control rules"),
     ("completion", "Generate shell completion script"),
     ("config", "Read or update runtime configuration"),
     ("describe", "Show module metadata and schema"),
@@ -64,6 +67,7 @@ pub const KNOWN_BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
     ("init", "Scaffolding commands"),
     ("list", "List available modules"),
     ("man", "Generate man page"),
+    ("openapi", "Import an OpenAPI document as module artifacts"),
     ("reload", "Reload a module's definition"),
     ("usage", "Show module usage counters"),
     ("validate", "Validate a module's input against its schema"),
@@ -961,7 +965,21 @@ mod tests {
 
     #[test]
     fn test_known_builtins_has_expected_count() {
-        assert_eq!(KNOWN_BUILTINS.len(), 14);
+        // 14 through v0.11.0; FE-14 added `acl` and FE-15a added `openapi`.
+        assert_eq!(KNOWN_BUILTINS.len(), 16);
+    }
+
+    #[test]
+    fn test_known_builtins_covers_every_apcli_subcommand() {
+        // Drift guard: `man <name>` and the completion generators are driven
+        // from this list, so a subcommand added to APCLI_SUBCOMMAND_NAMES
+        // without a KNOWN_BUILTINS entry silently loses both.
+        for name in crate::builtin_group::APCLI_SUBCOMMAND_NAMES {
+            assert!(
+                KNOWN_BUILTINS.contains(name),
+                "KNOWN_BUILTINS missing apcli subcommand '{name}'"
+            );
+        }
     }
 
     #[test]

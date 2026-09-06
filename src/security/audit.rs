@@ -66,8 +66,58 @@ pub struct AuditLogger {
 
 impl AuditLogger {
     /// Return the default path: `~/.apcore-cli/audit.jsonl`.
+    ///
+    /// Under the `test-support` feature this resolves to
+    /// [`Self::test_redirect_path`] instead, so a test run cannot append to the
+    /// developer's real audit log. A production build (`cargo build
+    /// --release`, no features) compiles that branch out entirely: the
+    /// released binary always resolves the home path, and nothing in the
+    /// environment can move an audit trail.
     pub fn default_path() -> Option<PathBuf> {
+        #[cfg(feature = "test-support")]
+        {
+            Self::test_redirect_path()
+        }
+        #[cfg(not(feature = "test-support"))]
+        {
+            Self::home_audit_path()
+        }
+    }
+
+    /// The real, home-derived audit-log path: `~/.apcore-cli/audit.jsonl`.
+    ///
+    /// This is what [`Self::default_path`] resolves to in a production build.
+    /// It stays a separate function so the test redirect cannot mask a
+    /// regression in the production path: an assertion that `default_path()`
+    /// merely "contains `.apcore-cli/audit.jsonl`" would keep passing against
+    /// a redirected path and silently stop testing what it was written for.
+    /// Assertions about the shipped location must target this.
+    pub fn home_audit_path() -> Option<PathBuf> {
         dirs::home_dir().map(|h| h.join(".apcore-cli").join("audit.jsonl"))
+    }
+
+    /// Temp file that stands in for the real audit log while the test binaries
+    /// run (`test-support` only).
+    ///
+    /// The path is **derived, not configured**: this process and every
+    /// `apcore-cli` subprocess a test spawns compute the same value
+    /// independently, so a spawned binary's execution records land in the same
+    /// file as the parent's. That is what makes the redirect verifiable --
+    /// the bytes that used to reach `~/.apcore-cli/audit.jsonl` can be counted
+    /// here, rather than merely confirmed to have stopped arriving there. A
+    /// redirect target that ends up empty means the writes vanished for some
+    /// other reason and nothing has been proved.
+    ///
+    /// Deriving it also avoids publishing an environment variable for the
+    /// child to read: `std::env::set_var` is unsound once other threads are
+    /// running, and test binaries are multi-threaded by default.
+    #[cfg(feature = "test-support")]
+    pub fn test_redirect_path() -> Option<PathBuf> {
+        Some(
+            std::env::temp_dir()
+                .join("apcore-cli-test-audit")
+                .join("audit.jsonl"),
+        )
     }
 
     /// Create a new `AuditLogger`.
@@ -199,10 +249,6 @@ impl AuditLogger {
         exit_code: i32,
         duration_ms: u64,
     ) {
-        let Some(ref path) = self.path else {
-            return; // logging disabled
-        };
-
         let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
         let input_hash = Self::hash_input(input_data);
         let entry = json!({
@@ -214,6 +260,41 @@ impl AuditLogger {
             "exit_code":   exit_code,
             "duration_ms": duration_ms,
         });
+        self.append(&entry);
+    }
+
+    /// Log one ACL access decision (FE-14 §4.8).
+    ///
+    /// `record` is the already-adapted wire projection of apcore's
+    /// `AuditEntry` — see `acl_loader::AclAuditRecord`, which owns both the
+    /// field set and the normative key order. This method deliberately does no
+    /// field mapping of its own: the wire shape is a cross-SDK contract, so it
+    /// lives in exactly one place, next to the callback that produces it.
+    ///
+    /// Taking `&impl Serialize` rather than a `serde_json::Value` is what
+    /// keeps that order intact — `Value`'s object map is a `BTreeMap` unless
+    /// the `preserve_order` feature is enabled somewhere in the dependency
+    /// graph, so routing the record through `Value` could silently re-sort the
+    /// 13 fields alphabetically.
+    ///
+    /// The entry lands in the same `~/.apcore-cli/audit.jsonl` as execution
+    /// records, through the same append path, with the same
+    /// never-panic/never-propagate contract: a write fault costs the entry and
+    /// nothing else.
+    pub fn log_acl_decision<T: serde::Serialize>(&self, record: &T) {
+        self.append(record);
+    }
+
+    /// Append one JSON object as a line to the audit log.
+    ///
+    /// Shared by [`Self::log_execution`] and [`Self::log_acl_decision`] so
+    /// both record kinds get identical file creation, `0o600` tightening and
+    /// one-shot write-failure warning behaviour. A no-op when logging is
+    /// disabled (`path == None`).
+    fn append<T: serde::Serialize>(&self, entry: &T) {
+        let Some(ref path) = self.path else {
+            return; // logging disabled
+        };
 
         let result = (|| -> std::io::Result<()> {
             let file = std::fs::OpenOptions::new()
@@ -229,7 +310,7 @@ impl AuditLogger {
                 let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
             }
             let mut writer = BufWriter::new(file);
-            serde_json::to_writer(&mut writer, &entry).map_err(std::io::Error::other)?;
+            serde_json::to_writer(&mut writer, entry).map_err(std::io::Error::other)?;
             writeln!(writer)?;
             writer.flush()?;
             Ok(())
@@ -268,6 +349,37 @@ pub enum AuditLogError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn home_audit_path_is_the_shipped_location() {
+        // Pins the PRODUCTION path against the real home-derived value.
+        // `default_path()` is redirected under `test-support`, so asserting on
+        // that instead would pass against the temp file and stop testing the
+        // location the released binary actually writes to.
+        let home = dirs::home_dir().expect("a home directory");
+        assert_eq!(
+            AuditLogger::home_audit_path(),
+            Some(home.join(".apcore-cli").join("audit.jsonl"))
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn the_test_redirect_is_live_and_is_not_the_home_file() {
+        // The isolation itself, asserted rather than assumed: under
+        // `test-support` nothing may resolve to the developer's real log.
+        let redirected = AuditLogger::default_path().expect("a redirect path");
+        assert_eq!(redirected, AuditLogger::test_redirect_path().unwrap());
+        assert_ne!(
+            Some(redirected.clone()),
+            AuditLogger::home_audit_path(),
+            "the test suite must not target the real audit log"
+        );
+        assert!(redirected.starts_with(std::env::temp_dir()));
+        // The reader half follows the same redirect, so writer and reader
+        // cannot drift apart.
+        assert_eq!(crate::system_usage::default_audit_path(), Some(redirected));
+    }
 
     #[test]
     fn test_audit_logger_disabled_no_op() {

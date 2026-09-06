@@ -42,6 +42,9 @@ pub const APCLI_SUBCOMMAND_NAMES: &[&str] = &[
     "config",
     "completion",
     "describe-pipeline",
+    // FE-14 / FE-15a (v0.12.0): the canonical set grew from 13 to 15.
+    "acl",
+    "openapi",
 ];
 
 /// Default name of the built-in command group.
@@ -698,8 +701,9 @@ mod tests {
     // ----- Constants -----
 
     #[test]
-    fn apcli_subcommand_names_has_13_entries() {
-        assert_eq!(APCLI_SUBCOMMAND_NAMES.len(), 13);
+    fn apcli_subcommand_names_has_15_entries() {
+        // 13 through v0.11.0; FE-14 added `acl` and FE-15a added `openapi`.
+        assert_eq!(APCLI_SUBCOMMAND_NAMES.len(), 15);
     }
 
     #[test]
@@ -718,6 +722,8 @@ mod tests {
             "config",
             "completion",
             "describe-pipeline",
+            "acl",
+            "openapi",
         ] {
             assert!(
                 APCLI_SUBCOMMAND_NAMES.contains(expected),

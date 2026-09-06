@@ -65,6 +65,16 @@ pub fn extract_binding_path(args: &[String]) -> Option<String> {
     extract_argv_option(args, "--binding")
 }
 
+/// Pre-parse `--acl` from raw argv before clap processes arguments (FE-14
+/// §4.1 tier 1).
+///
+/// Pre-parsed rather than read off `matches` because the ACL must be attached
+/// to the executor before dispatch, and because the executor is built before
+/// the parse result is consumed.
+pub fn extract_acl_path(args: &[String]) -> Option<String> {
+    extract_argv_option(args, "--acl")
+}
+
 // ---------------------------------------------------------------------------
 // render_man_page
 // ---------------------------------------------------------------------------
@@ -157,9 +167,18 @@ pub fn init_tracing(log_level: &str) {
 
     let (filtered_layer, handle) = reload::Layer::new(filter);
 
+    // Diagnostics go to stderr, never stdout. `apcli acl list --format json`
+    // and `apcli openapi scan --format json` are piped into `jq`, and a
+    // tracing line on stdout (apcore emits one per unevaluable ACL rule at the
+    // default WARNING level) would corrupt the document. stderr is also where
+    // every other CLI diagnostic in this crate already goes.
     let _ = tracing_subscriber::registry()
         .with(filtered_layer)
-        .with(tracing_subscriber::fmt::layer().with_target(false))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_writer(std::io::stderr),
+        )
         .try_init();
 
     // Store handle for runtime reload; ignore if already set (e.g. in tests).
@@ -303,6 +322,14 @@ fn build_cli_command(
     // pass `standalone=false` to skip them.
     cmd = apply_discovery_flags(cmd, /*standalone*/ true);
 
+    // FE-14 §4.3: `--identity-id`, `--identity-type` and `--role` are global
+    // (not standalone-gated) — they shape the `Context` the CLI builds for
+    // `apcli exec`, `apcli validate`, `apcli acl check` and business-module
+    // dispatch, which an embedded host needs just as much as the binary does.
+    // They are unauthenticated argv assertions; `Context::caller_id` is never
+    // settable and a real execution always presents `@external`.
+    cmd = apcore_cli::acl_cmd::apply_identity_flags(cmd);
+
     // ----------------------------------------------------------------------
     // FE-13: Build the `apcli` subcommand group.
     // ----------------------------------------------------------------------
@@ -352,9 +379,9 @@ fn build_cli_command(
 }
 
 /// Attach discovery-related global flags (`--extensions-dir`, `--commands-dir`,
-/// `--binding`) to the root command. Only applied in standalone mode — when
-/// the CLI is embedded with a pre-injected registry, these flags have no
-/// effect so they are omitted to keep help output clean.
+/// `--binding`, `--acl`) to the root command. Only applied in standalone mode
+/// — when the CLI is embedded with a pre-injected registry, these flags have
+/// no effect so they are omitted to keep help output clean.
 fn apply_discovery_flags(cmd: clap::Command, standalone: bool) -> clap::Command {
     if !standalone {
         return cmd;
@@ -379,6 +406,18 @@ fn apply_discovery_flags(cmd: clap::Command, standalone: bool) -> clap::Command 
             .global(true)
             .value_name("PATH")
             .help("Path to binding.yaml for display overlay."),
+    )
+    // FE-14 §4.1 tier 1: `--acl` registers in standalone mode only, alongside
+    // the three flags above.
+    // The help string is normative: the `apcli-visibility` conformance
+    // fixtures byte-match root `--help` across all three SDKs, so the wording
+    // is pinned by FE-14 section 4.3 rather than chosen locally.
+    .arg(
+        clap::Arg::new("acl")
+            .long("acl")
+            .global(true)
+            .value_name("PATH")
+            .help("Path to the ACL file or directory (default: ./acl)"),
     )
 }
 
@@ -527,6 +566,60 @@ async fn handle_exec(
     apcore_cli::cli::dispatch_module(module_id, sub_m, registry_provider, apcore_executor).await;
 }
 
+/// Resolve, load and attach the ACL (FE-14 §4.1-§4.2), wiring the §4.8 audit
+/// callback when `acl.audit.enabled` is on.
+///
+/// Returns the file that was actually loaded, for display by `apcli acl list`
+/// and `apcli acl status`; `None` means no ACL is attached, which is the
+/// silent no-op case and never an error.
+///
+/// `audit_logger` is the same FE-05 logger the module-dispatch path uses, so
+/// ACL decisions land in `~/.apcore-cli/audit.jsonl` beside execution records.
+/// It is `None` when auditing is disabled process-wide
+/// (`APCORE_CLI_AUDIT_DISABLE=1`), in which case no ACL callback is installed
+/// either — there would be nothing to write to.
+///
+/// Exits 47 when a resolved ACL file exists but cannot be read or parsed.
+fn attach_acl(
+    executor: &mut apcore::Executor,
+    raw_args: &[String],
+    audit_logger: Option<apcore_cli::AuditLogger>,
+) -> Option<String> {
+    let acl_flag = extract_acl_path(&raw_args[1..]);
+    let resolver = if Path::new("apcore.yaml").exists() {
+        apcore_cli::ConfigResolver::new(None, Some(PathBuf::from("apcore.yaml")))
+    } else {
+        apcore_cli::ConfigResolver::new(None, None)
+    };
+
+    let root = apcore_cli::acl_loader::resolve_acl_root(&resolver, acl_flag.as_deref())?;
+    let source =
+        apcore_cli::acl_loader::resolve_acl_file(&root).map(|p| p.to_string_lossy().to_string());
+
+    match apcore_cli::acl_loader::load_cli_acl_with_audit(&root, &resolver, audit_logger) {
+        Ok(Some(acl)) => {
+            tracing::info!(
+                "ACL attached from {}",
+                source.as_deref().unwrap_or(root.as_str())
+            );
+            executor.set_acl(acl);
+            source
+        }
+        // Missing root or absent conventional file: silent, no enforcement.
+        Ok(None) => {
+            tracing::info!("No ACL found at '{root}'; enforcement is off.");
+            None
+        }
+        Err(e) => {
+            eprintln!(
+                "Error: {}",
+                apcore_cli::acl_loader::describe_load_error(&root, &e)
+            );
+            std::process::exit(apcore_cli::EXIT_ACL_RULE_ERROR);
+        }
+    }
+}
+
 /// Shared `completion` handler used by `apcli completion`.
 fn handle_completion(sub_m: &clap::ArgMatches, prog_name: &str) {
     let shell = *sub_m
@@ -656,6 +749,13 @@ async fn main() {
     );
     let matches = cmd.get_matches();
 
+    // FE-14 §4.3: publish the identity assertion before any dispatch path
+    // builds a Context. Empty assertions clear the cell, so a run with no
+    // identity flag behaves exactly as it did pre-FE-14.
+    apcore_cli::acl_cmd::set_cli_identity(Some(apcore_cli::acl_cmd::identity_from_matches(
+        &matches,
+    )));
+
     // Optionally reload log filter from --log-level flag.
     if let Some(level) = matches.get_one::<String>("log-level") {
         if let Some(handle) = RELOAD_HANDLE.get() {
@@ -704,6 +804,31 @@ async fn main() {
         apcore_cli::approval::DEFAULT_APPROVAL_TIMEOUT_SECS,
     )));
 
+    // Build the audit logger for the production dispatch path. dispatch_module
+    // emits one JSONL entry per invocation via AUDIT_LOGGER; without this
+    // every execution would be audit-silent (regression-prevented by
+    // planning/security/plan.md §Data Flow). The default path
+    // (~/.apcore-cli/audit.jsonl) is used; users can opt out by setting
+    // APCORE_CLI_AUDIT_DISABLE=1.
+    //
+    // Constructed here rather than after dispatch wiring because FE-14 §4.8
+    // hands the same logger to the ACL as its audit callback, and the ACL is
+    // attached below.
+    let audit_disabled = std::env::var("APCORE_CLI_AUDIT_DISABLE")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let audit_logger = (!audit_disabled).then(|| apcore_cli::AuditLogger::new(None));
+
+    // ----- FE-14: attach the ACL, when one is configured -----
+    //
+    // Enforcement-only-when-configured. A missing `acl.root` attaches nothing
+    // and changes no behaviour, preserving apcore's `ACL::discover` invariant
+    // that a missing path MUST NOT synthesize an empty default-deny ACL —
+    // which would otherwise deny every call in every project that lacks an
+    // `acl/` directory.
+    let acl_source: Option<String> =
+        attach_acl(&mut apcore_executor, &raw_args, audit_logger.clone());
+
     // Build the provider from a second registry for list/describe.
     // The filesystem scan is fast (local directory) and the discoverer
     // caches executable paths from the first scan.
@@ -720,18 +845,8 @@ async fn main() {
     // D9-001..004. dispatch_module now takes the concrete apcore::Executor
     // directly via apcore_executor below.
 
-    // Wire the audit logger for the production dispatch path. dispatch_module
-    // emits one JSONL entry per invocation via AUDIT_LOGGER; without this
-    // call every execution would be audit-silent (regression-prevented by
-    // planning/security/plan.md §Data Flow). The default path
-    // (~/.apcore-cli/audit.jsonl) is used; users can opt out by setting
-    // APCORE_CLI_AUDIT_DISABLE=1.
-    let audit_disabled = std::env::var("APCORE_CLI_AUDIT_DISABLE")
-        .ok()
-        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-    if !audit_disabled {
-        apcore_cli::cli::set_audit_logger(Some(apcore_cli::AuditLogger::new(None)));
-    }
+    // Wire the audit logger built above into the global module-dispatch slot.
+    apcore_cli::cli::set_audit_logger(audit_logger);
 
     let prog_name = resolve_prog_name(None);
 
@@ -787,6 +902,16 @@ async fn main() {
             }
             Some(("describe-pipeline", sub_m)) => {
                 apcore_cli::strategy::dispatch_describe_pipeline(sub_m);
+            }
+            // FE-14: the ACL itself is read back off the executor, so `list`
+            // and `status` cannot disagree about what is attached.
+            Some(("acl", sub_m)) => {
+                apcore_cli::acl_cmd::dispatch_acl(sub_m, &apcore_executor, acl_source.as_deref());
+            }
+            // FE-15a: neither `scan` nor `generate` touches the registry or
+            // the executor.
+            Some(("openapi", sub_m)) => {
+                apcore_cli::openapi_cmd::dispatch_openapi(sub_m).await;
             }
             _ => {
                 let _ = build_cli_command(None, Some(prog_name.clone()), false, None, None)

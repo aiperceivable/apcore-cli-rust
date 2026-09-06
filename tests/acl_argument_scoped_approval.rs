@@ -83,25 +83,16 @@ fn executor_with_argument_scoped_rule(auto_approve: bool) -> Executor {
 
     let mut executor = Executor::new(Arc::new(registry), Config::default());
 
-    // ACLRule deliberately implements no `Default` (apcore#108): it is a
-    // config-shaped struct deployments construct directly, so every field is
-    // spelled out here.
-    let narrow = ACLRule {
-        callers: vec!["*".to_string()],
-        targets: vec!["git.push".to_string()],
-        effect: "allow".to_string(),
-        approval: Some(ApprovalRequirement::Required),
-        description: None,
-        conditions: Some(json!({"arguments": {"has_key": ["force"]}})),
-    };
-    let broad = ACLRule {
-        callers: vec!["*".to_string()],
-        targets: vec!["*".to_string()],
-        effect: "allow".to_string(),
-        approval: None,
-        description: None,
-        conditions: None,
-    };
+    // ACLRule deliberately implements no `Default` (apcore#108) and is
+    // `#[non_exhaustive]` as of apcore 0.29.0 (api-surface-conventions.md
+    // §9.1), so a downstream crate builds one through `ACLRule::new` and
+    // assigns the optional fields on the returned value — the only form that
+    // compiles across the package boundary.
+    let mut narrow = ACLRule::new(vec!["*".to_string()], vec!["git.push".to_string()], "allow");
+    narrow.approval = Some(ApprovalRequirement::Required);
+    narrow.conditions = Some(json!({"arguments": {"has_key": ["force"]}}));
+
+    let broad = ACLRule::new(vec!["*".to_string()], vec!["*".to_string()], "allow");
 
     let acl = ACL::try_new(vec![narrow, broad], "deny", None).expect("ACL is well-formed");
     executor.set_acl(acl);

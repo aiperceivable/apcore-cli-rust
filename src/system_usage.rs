@@ -58,8 +58,16 @@ pub struct UsageSummary {
     pub latency_ms: f64,
 }
 
-fn default_audit_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".apcore-cli").join("audit.jsonl"))
+/// The audit log this aggregator reads when no explicit path is given.
+///
+/// Delegates to [`crate::security::AuditLogger::default_path`] rather than
+/// re-deriving `~/.apcore-cli/audit.jsonl`, so the reader and the writer
+/// cannot disagree about which file is the audit log. In production both
+/// resolve the same home path, exactly as before; under `test-support` both
+/// follow the same redirect, so a test reading a summary sees what the tests
+/// wrote rather than whatever the developer's real log happens to hold.
+pub(crate) fn default_audit_path() -> Option<PathBuf> {
+    crate::security::AuditLogger::default_path()
 }
 
 /// Aggregate the audit log per-module over the given period.

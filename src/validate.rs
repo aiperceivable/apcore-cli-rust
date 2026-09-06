@@ -220,8 +220,13 @@ pub async fn build_preflight_result(
         "input": input,
     });
 
+    // FE-14 §4.3: the preflight call carries the same identity assertion the
+    // real execution would, so an `acl` check row reflects the rule set as the
+    // asserted caller would meet it. `None` when no identity flag was given.
+    let cli_ctx = crate::acl_cmd::identity_context();
+
     match apcore_executor
-        .call("system.validate", preflight_input, None, None)
+        .call("system.validate", preflight_input, cli_ctx.as_ref(), None)
         .await
     {
         Ok(preflight) => preflight,

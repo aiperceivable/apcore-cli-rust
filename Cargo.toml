@@ -1,6 +1,6 @@
 [package]
 name = "apcore-cli"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 description = "Command-line interface for apcore modules"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ name = "apcore_cli"
 path = "src/lib.rs"
 
 [dependencies]
-apcore = ">=0.28"
+apcore = ">=0.30"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "string"] }
 serde = { version = "1", features = ["derive"] }
@@ -48,7 +48,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tempfile = "3"
 nix = { version = "0.30", features = ["user"] }
 libc = "0.2"
-apcore-toolkit = ">=0.10.2"
+apcore-toolkit = { version = ">=0.11.1", features = ["http-proxy"] }
 
 [features]
 # ADR-07 is fully landed as of 0.10.0 (6.2 fix): apcore-toolkit is a hard
