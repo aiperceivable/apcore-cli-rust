@@ -45,7 +45,16 @@ fn test_schema_to_clap_args_string_property() {
 }
 
 #[test]
-fn test_schema_to_clap_args_required_field_is_required() {
+fn test_schema_to_clap_args_required_field_is_not_required_at_clap_level() {
+    // Regression (2026-09): this test used to assert `is_required_set()`,
+    // which encoded the `--input -` (STDIN) bug -- a required property made
+    // clap refuse to parse the command line at all when its flag was
+    // omitted, even though STDIN piping exists precisely so required fields
+    // can arrive that way instead. clap-level `required` must always be
+    // `false`; required-ness is enforced post-parse via jsonschema
+    // validation against the merged input (matching Python's
+    // schema_parser.py: `required=False` at the Click level, `[required]`
+    // appended to help text instead).
     let schema = json!({
         "type": "object",
         "properties": {
@@ -56,8 +65,14 @@ fn test_schema_to_clap_args_required_field_is_required() {
     let result = schema_to_clap_args(&schema, None).unwrap();
     let arg = find_arg(&result.args, "a").expect("--a must exist");
     assert!(
-        arg.is_required_set(),
-        "required field must be marked required"
+        !arg.is_required_set(),
+        "required must be enforced post-parse, not at the clap level, so \
+         --input - (STDIN) can satisfy a required property without a flag"
+    );
+    let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
+    assert!(
+        help.contains("[required]"),
+        "help text must still annotate the property as required, got: {help:?}"
     );
 }
 

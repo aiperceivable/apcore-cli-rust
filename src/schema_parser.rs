@@ -120,7 +120,21 @@ pub fn extract_help_with_limit(prop_schema: &Value, max_len: usize) -> Option<St
         })?;
 
     if max_len > 0 && text.len() > max_len {
-        Some(format!("{}...", &text[..max_len - 3]))
+        // Find a valid UTF-8 char boundary at or before `max_len - 3` rather
+        // than slicing by raw byte offset: a multi-byte character (CJK,
+        // emoji, etc.) straddling that cutoff would otherwise panic with
+        // "byte index N is not a char boundary". `char_indices()` yields each
+        // char's START byte offset; take the last one strictly before the
+        // target, then add that char's own byte length to land on the
+        // boundary immediately AFTER it — which is always valid.
+        let target = max_len - 3;
+        let boundary = text
+            .char_indices()
+            .take_while(|&(i, _)| i < target)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        Some(format!("{}...", &text[..boundary]))
     } else {
         Some(text.to_string())
     }
@@ -367,8 +381,25 @@ pub fn schema_to_clap_args_with_limit(
             }
         }
 
-        // Build Arg using map_type.
-        let mut arg = map_type(prop_name, prop_schema)?.required(is_required);
+        // Build Arg using map_type. `.required(false)` unconditionally, then
+        // annotate the help text instead — mirroring the enum branch above
+        // (see its "STDIN compatibility" comment). Setting
+        // `.required(is_required)` here made clap refuse to parse the
+        // command line at all whenever a required property's flag was
+        // omitted, even though `--input -` / STDIN piping exists precisely
+        // so required fields can arrive that way instead of as a flag.
+        // Required-ness is enforced post-parse via jsonschema validation
+        // against the merged input, exactly like the enum branch and like
+        // Python's `schema_parser.py` (`required=False` at the Click level,
+        // `[required]` appended to help text only).
+        let mut arg = map_type(prop_name, prop_schema)?.required(false);
+
+        let help_text = match (help_text, is_required) {
+            (Some(help), true) => Some(format!("{help} [required]")),
+            (Some(help), false) => Some(help),
+            (None, true) => Some("[required]".to_string()),
+            (None, false) => None,
+        };
 
         if let Some(help) = help_text {
             arg = arg.help(help);
@@ -502,13 +533,45 @@ mod tests {
 
     #[test]
     fn test_schema_to_clap_args_integer_property() {
+        // Regression (2026-09): this test used to assert `is_required_set()`,
+        // which encoded the `--input -` (STDIN) bug -- a required property on
+        // the standard/fallback branch made clap refuse to parse the command
+        // line at all when its flag was omitted, even though STDIN piping
+        // exists precisely so required fields can arrive that way instead.
+        // clap-level `required` must always be `false` here; required-ness is
+        // enforced post-parse via jsonschema validation against the merged
+        // input (see test_required_standard_property_not_enforced_by_clap
+        // and test_help_annotates_required_standard_property below).
         let schema = json!({
             "properties": {"count": {"type": "integer"}},
             "required": ["count"]
         });
         let result = schema_to_clap_args(&schema, None).unwrap();
         let arg = find_arg(&result.args, "count").expect("--count must exist");
-        assert!(arg.is_required_set());
+        assert!(
+            !arg.is_required_set(),
+            "required must be enforced post-parse (jsonschema), not at the clap level, \
+             so --input - (STDIN) can satisfy a required property without a flag"
+        );
+    }
+
+    #[test]
+    fn test_help_annotates_required_standard_property() {
+        // Parity with the enum branch and with Python's schema_parser.py:
+        // clap-level `required` is always false, but the help text still
+        // tells the user the property is required.
+        let schema = json!({
+            "properties": {"count": {"type": "integer", "description": "How many"}},
+            "required": ["count"]
+        });
+        let result = schema_to_clap_args(&schema, None).unwrap();
+        let arg = find_arg(&result.args, "count").expect("--count must exist");
+        let help = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
+        assert!(
+            help.contains("[required]"),
+            "help text must annotate a required standard-branch property, got: {help:?}"
+        );
+        assert!(help.contains("How many"));
     }
 
     #[test]
@@ -637,6 +700,50 @@ mod tests {
         let prop = json!({"description": long_text});
         let result = extract_help_with_limit(&prop, 200).unwrap();
         assert_eq!(result.len(), 200);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_extract_help_truncation_does_not_panic_on_multibyte_boundary() {
+        // A CJK character is 3 bytes in UTF-8. Place one so it straddles the
+        // truncation cutoff (max_len - 3 = 997 for the default 1000-byte
+        // limit): 996 single-byte 'a's (occupying byte offsets 0..=995), then
+        // the multi-byte char starting at byte offset 996 and spanning
+        // 996..999. The naive `&text[..997]` used to slice into the MIDDLE of
+        // that character and panic with "byte index 997 is not a char
+        // boundary".
+        let text = format!("{}{}{}", "a".repeat(996), "\u{4e2d}", "b".repeat(50));
+        assert!(
+            text.len() > HELP_TEXT_MAX_LEN,
+            "premise: text exceeds the limit"
+        );
+
+        let prop = json!({"description": text});
+        let result = extract_help(&prop).expect("description is present");
+
+        assert!(
+            result.ends_with("..."),
+            "must still truncate with an ellipsis"
+        );
+        assert!(
+            result.len() <= HELP_TEXT_MAX_LEN + 3,
+            "must not massively overshoot the limit even when rounding up to \
+             the nearest char boundary, got len={}",
+            result.len()
+        );
+    }
+
+    #[test]
+    fn test_extract_help_truncation_does_not_panic_on_multibyte_boundary_custom_limit() {
+        // Same class of bug, exercised through the configurable-limit entry
+        // point. 😀 is 4 bytes in UTF-8; with max_len=20 the cutoff
+        // (max_len - 3 = 17) falls at byte offset 17, which is the SECOND
+        // byte of the emoji spanning offsets 16..20 -- exactly the kind of
+        // mid-character slice that used to panic.
+        let text = format!("{}{}{}", "x".repeat(16), "\u{1F600}", "y");
+        assert!(text.len() > 20, "premise: text exceeds the limit");
+        let result = extract_help_with_limit(&json!({"description": text}), 20)
+            .expect("description is present");
         assert!(result.ends_with("..."));
     }
 
@@ -926,6 +1033,35 @@ mod tests {
         assert_eq!(
             arg.get_default_values().first().and_then(|v| v.to_str()),
             Some("json")
+        );
+    }
+
+    #[test]
+    fn test_required_standard_property_does_not_block_stdin_parsing() {
+        // BLOCKER-adjacent regression: `.required(is_required)` on the
+        // standard/fallback branch made clap refuse to parse the command
+        // line at all when a required schema property's flag was omitted --
+        // even though `--input -` (STDIN) exists precisely so required
+        // fields can arrive that way instead of as a flag. Build a small
+        // ad-hoc Command the same way cli.rs's `build_module_command` does:
+        // schema-derived args attached alongside a plain `--input` flag.
+        let schema = json!({
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"]
+        });
+        let schema_args = schema_to_clap_args(&schema, None).unwrap();
+        let mut cmd = clap::Command::new("test-module")
+            .arg(clap::Arg::new("input").long("input").value_name("SOURCE"));
+        for arg in schema_args.args {
+            cmd = cmd.arg(arg);
+        }
+
+        // Required "count" supplied via --input -, NOT as --count.
+        let result = cmd.try_get_matches_from(["test-module", "--input", "-"]);
+        assert!(
+            result.is_ok(),
+            "clap must not reject a required property when it can arrive via \
+             --input - (STDIN) instead of its flag; got: {result:?}"
         );
     }
 
