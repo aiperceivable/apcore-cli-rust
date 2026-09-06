@@ -298,3 +298,72 @@ fn test_prog_name_in_version_output() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("apcore-cli"), "stdout: {stdout}");
 }
+
+// ---------------------------------------------------------------------------
+// Regression: null exec result must write zero bytes to stdout
+// ---------------------------------------------------------------------------
+
+/// Build a scratch extensions directory holding a single filesystem-script
+/// module (`test.nullresult`) whose `run.sh` always emits the JSON literal
+/// `null`, then return the tempdir (kept alive for the caller's process
+/// invocation) alongside its path.
+fn null_result_extensions_dir() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let module_dir = tmp.path().join("test/nullresult");
+    std::fs::create_dir_all(&module_dir).expect("mkdir module dir");
+    std::fs::write(
+        module_dir.join("module.json"),
+        r#"{
+  "name": "test.nullresult",
+  "description": "Always returns a null result (regression fixture)",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": { "type": "null" },
+  "executable": "run.sh"
+}"#,
+    )
+    .expect("write module.json");
+    let script_path = module_dir.join("run.sh");
+    std::fs::write(&script_path, "#!/usr/bin/env bash\necho null\n").expect("write run.sh");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("stat run.sh")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("chmod +x run.sh");
+    }
+    tmp
+}
+
+#[test]
+fn test_e2e_null_exec_result_writes_zero_bytes_to_stdout() {
+    // `format_exec_result` returns "" for a `Value::Null` result (see
+    // src/output.rs), but a call site that unconditionally does
+    // `println!("{out_str}")` still emits exactly one newline byte for that
+    // case. Python and TypeScript both write zero bytes for a null exec
+    // result, so the documented byte-for-byte stdout equivalence across the
+    // three SDKs requires the same here: this must be an EMPTY stdout, not
+    // "\n".
+    let tmp = null_result_extensions_dir();
+    let out = run_apcore(&[
+        "--extensions-dir",
+        tmp.path().to_str().expect("utf8 tmp path"),
+        "test.nullresult",
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "test.nullresult must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "a null exec result must write zero bytes to stdout, got {:?} ({} bytes)",
+        String::from_utf8_lossy(&out.stdout),
+        out.stdout.len()
+    );
+}

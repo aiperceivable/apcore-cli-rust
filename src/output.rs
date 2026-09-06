@@ -622,6 +622,38 @@ pub fn format_exec_result(result: &Value, format: &str, fields: Option<&str>) ->
     }
 }
 
+/// What (if anything) should be written to stdout for an exec result.
+///
+/// Pure decision split out of [`print_exec_result`] so the empty-vs-non-empty
+/// branch — the exact thing the null-result bug got wrong — is unit
+/// testable without capturing real stdout: `format_exec_result` returns `""`
+/// for `Value::Null`, and printing that via an unconditional `println!` would
+/// still emit a stray newline byte. Returns `None` when nothing should be
+/// printed.
+fn exec_result_to_print(result: &Value, format: &str, fields: Option<&str>) -> Option<String> {
+    let formatted = format_exec_result(result, format, fields);
+    if formatted.is_empty() {
+        None
+    } else {
+        Some(formatted)
+    }
+}
+
+/// Print a module execution result to stdout.
+///
+/// This is the single interface every call site should use instead of
+/// `println!("{}", format_exec_result(...))` — a `Value::Null` result formats
+/// to `""`, and an unconditional `println!` around that still writes one
+/// newline byte, breaking the documented byte-for-byte stdout equivalence
+/// with the Python and TypeScript SDKs (both write zero bytes for a null exec
+/// result). Centralizing the print here means a new call site can't
+/// reintroduce that bug.
+pub fn print_exec_result(result: &Value, format: &str, fields: Option<&str>) {
+    if let Some(s) = exec_result_to_print(result, format, fields) {
+        println!("{s}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -917,6 +949,41 @@ mod tests {
         let result = json!(3.15);
         let output = format_exec_result(&result, "json", None);
         assert!(output.starts_with("3.15"), "float must stringify correctly");
+    }
+
+    // --- exec_result_to_print / print_exec_result ---
+    //
+    // Regression: a `Value::Null` result formats to "", but a call site that
+    // unconditionally wraps `format_exec_result`'s return in `println!` still
+    // emits a stray newline byte for that case (see src/cli.rs call sites).
+    // `exec_result_to_print` is the pure decision `print_exec_result` acts
+    // on, tested directly here since capturing real stdout from `println!`
+    // is awkward at the unit level.
+
+    #[test]
+    fn test_exec_result_to_print_null_is_none() {
+        assert_eq!(
+            exec_result_to_print(&Value::Null, "json", None),
+            None,
+            "a null result must produce nothing to print, not an empty-but-Some string"
+        );
+    }
+
+    #[test]
+    fn test_exec_result_to_print_object_is_some() {
+        let result = json!({"sum": 42});
+        let printed = exec_result_to_print(&result, "json", None);
+        assert!(printed.is_some(), "a non-null result must be printed");
+        assert!(printed.unwrap().contains("42"));
+    }
+
+    #[test]
+    fn test_exec_result_to_print_empty_string_result_is_none() {
+        // An empty-string result also formats to "" (the String arm of
+        // format_exec_result returns the string verbatim), so it must be
+        // treated the same as Null: nothing printed, not a bare newline.
+        let result = json!("");
+        assert_eq!(exec_result_to_print(&result, "json", None), None);
     }
 
     // --- format_module_detail ---

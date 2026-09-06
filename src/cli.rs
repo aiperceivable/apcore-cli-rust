@@ -1366,9 +1366,7 @@ pub async fn dispatch_module(
                         serde_json::to_string_pretty(&combined).unwrap_or_default()
                     );
                 } else {
-                    let out_str =
-                        crate::output::format_exec_result(&output, fmt, fields_flag.as_deref());
-                    println!("{out_str}");
+                    crate::output::print_exec_result(&output, fmt, fields_flag.as_deref());
                     eprintln!(
                         "\nPipeline Trace (strategy: {}, {duration_ms}ms)",
                         strategy_name.as_deref().unwrap_or("standard"),
@@ -1461,10 +1459,7 @@ pub async fn dispatch_module(
         Ok(output) => {
             // 10. Format and output first (canonical order: format -> audit).
             let fmt = crate::output::resolve_format(format_flag.as_deref());
-            println!(
-                "{}",
-                crate::output::format_exec_result(&output, fmt, fields_flag.as_deref(),)
-            );
+            crate::output::print_exec_result(&output, fmt, fields_flag.as_deref());
             // 11. Audit log success AFTER format.
             audit_success(module_id, &input_value, duration_ms);
             std::process::exit(EXIT_SUCCESS);
