@@ -433,7 +433,7 @@ pub fn dispatch_usage(matches: &clap::ArgMatches, executor: &apcore::Executor) {
                     serde_json::to_string_pretty(&val).unwrap_or_else(|_| "{}".to_string())
                 );
             } else if module_id.is_some() {
-                println!("{}", crate::output::format_exec_result(&val, "table", None));
+                crate::output::print_exec_result(&val, "table", None);
             } else {
                 format_usage_summary_tty(&val);
             }
