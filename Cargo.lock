@@ -133,9 +133,9 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "apcore"
-version = "0.30.0"
+version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e83a50c0710283651003d041b817abe9a87981aeed90f045217d9b4694409df"
+checksum = "1b38cb784b350347fd7bc8cdde52ae4b562ecc6d7b8529893988d36c879be6e2"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -143,7 +143,6 @@ dependencies = [
  "dashmap",
  "futures-core",
  "futures-util",
- "glob",
  "jsonschema",
  "notify",
  "parking_lot",
@@ -161,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "apcore-cli"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -196,9 +195,9 @@ dependencies = [
 
 [[package]]
 name = "apcore-toolkit"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "651b9140f353086de5cfe817839f679dbe550cb0595f74e61986d5393371783a"
+checksum = "16b763d456cf9bdde9815492f1d6d596a78b90b1a533903a8bbd2c9ac2244bc9"
 dependencies = [
  "apcore",
  "async-trait",
@@ -211,6 +210,7 @@ dependencies = [
  "serde_yaml_ng",
  "syn 2.0.117",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "ureq",
  "walkdir",
@@ -1212,12 +1212,6 @@ dependencies = [
  "opaque-debug",
  "polyval",
 ]
-
-[[package]]
-name = "glob"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "h2"

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.1] - 2026-09-24
+
+Patch release. Bumps the required `apcore` floor to `0.31.0` and `apcore-toolkit` to `0.12.0`. No code changes — this SDK has attached the §4.8 audit callback via `ACL::set_audit_logger` (not a rebuild) since FE-14 shipped, so it never carried the reload-losing workaround the Python/TypeScript SDKs just dropped in this same release (D-66 on the apcore side made it unnecessary there). All tests pass unmodified; `cargo clippy --all-features --all-targets -- -D warnings` clean.
+
+### Security
+
+- **`apcli openapi scan | generate` inherits apcore-toolkit 0.12.0's `$ref` sibling-key fix.** `OpenAPIScanner` (imported, never reimplemented, by `openapi_cmd.rs`/`openapi_source.rs`) previously discarded a `$ref` node's sibling keys during schema resolution, dropping `x-sensitive` and letting a field an OpenAPI document marked sensitive reach apcore with nothing to redact on. Fixed upstream; no code change was needed here.
+
 ## [0.12.0] - 2026-09-06
 
 Two features: **FE-14 ACL Governance** makes the CLI's access-control surface reachable for the first time, and **FE-15a OpenAPI Import** adds `apcli openapi scan` / `generate`. `APCLI_SUBCOMMAND_NAMES` grows from 13 to 15.
