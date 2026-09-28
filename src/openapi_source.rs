@@ -408,10 +408,10 @@ mod tests {
                 }
             }
         });
-        let modules = vec![module("createPets", "POST", "/pets")];
+        let modules = vec![module("create_pets", "POST", "/pets")];
         let hazards = detect_proxy_hazards(&spec, &modules);
         assert_eq!(hazards.len(), 1);
-        assert_eq!(hazards[0].module_id, "createPets");
+        assert_eq!(hazards[0].module_id, "create_pets");
         assert_eq!(hazards[0].http_method, "POST");
         assert_eq!(hazards[0].url_path, "/pets");
         assert_eq!(hazards[0].parameters, vec!["dry_run", "trace"]);
@@ -428,7 +428,7 @@ mod tests {
                 }
             }
         });
-        let modules = vec![module("listPets", "GET", "/pets")];
+        let modules = vec![module("list_pets", "GET", "/pets")];
         assert!(detect_proxy_hazards(&spec, &modules).is_empty());
     }
 
@@ -443,13 +443,13 @@ mod tests {
             }
         });
         let modules = vec![
-            module("replacePet", "PUT", "/pets/{id}"),
-            module("patchPet", "PATCH", "/pets/{id}"),
+            module("replace_pet", "PUT", "/pets/{id}"),
+            module("patch_pet", "PATCH", "/pets/{id}"),
         ];
         let hazards = detect_proxy_hazards(&spec, &modules);
         assert_eq!(hazards.len(), 2);
-        assert_eq!(hazards[0].module_id, "patchPet");
-        assert_eq!(hazards[1].module_id, "replacePet");
+        assert_eq!(hazards[0].module_id, "patch_pet");
+        assert_eq!(hazards[1].module_id, "replace_pet");
     }
 
     #[test]
@@ -465,7 +465,7 @@ mod tests {
                 }
             }
         });
-        let modules = vec![module("createPet", "POST", "/pets/{id}")];
+        let modules = vec![module("create_pet", "POST", "/pets/{id}")];
         assert!(detect_proxy_hazards(&spec, &modules).is_empty());
     }
 
@@ -488,27 +488,27 @@ mod tests {
 
     #[test]
     fn hazards_correlate_by_routing_metadata_not_by_re_derivation() {
-        // A `--prefix api` scan produces `api.createPets`; correlation reads
-        // metadata, so the prefixed ID is reported verbatim.
+        // A `--prefix api` scan produces `api.create_pets`; correlation reads
+        // metadata, so the prefixed ID is reported as the scanner emitted it.
         let spec = json!({
             "paths": {"/pets": {"post": {"parameters": [{"name": "q", "in": "query"}]}}}
         });
-        let modules = vec![module("api.createPets", "POST", "/pets")];
+        let modules = vec![module("api.create_pets", "POST", "/pets")];
         let hazards = detect_proxy_hazards(&spec, &modules);
         assert_eq!(hazards.len(), 1);
-        assert_eq!(hazards[0].module_id, "api.createPets");
+        assert_eq!(hazards[0].module_id, "api.create_pets");
     }
 
     #[test]
     fn hazard_json_shape() {
         let h = Hazard {
-            module_id: "createPets".to_string(),
+            module_id: "create_pets".to_string(),
             http_method: "POST".to_string(),
             url_path: "/pets".to_string(),
             parameters: vec!["q".to_string()],
         };
         let v = h.to_json();
-        assert_eq!(v["module_id"], "createPets");
+        assert_eq!(v["module_id"], "create_pets");
         assert_eq!(v["http_method"], "POST");
         assert_eq!(v["url_path"], "/pets");
         assert_eq!(v["parameters"][0], "q");

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [Unreleased]
+
+### Changed — BREAKING
+
+- **`apcli openapi scan` / `generate` module IDs follow apcore-toolkit 0.13.0's normalisation; the toolkit floor is now `apcore-toolkit = { version = ">=0.13.0", features = ["http-proxy"] }`.** The CLI passes the scanner's IDs through unchanged, so it inherits the toolkit's new derivation: IDs derived from camelCase or hyphenated names are now snake_case — `createPets` → `create_pets`, `showPetById` → `show_pet_by_id` — and `generate`'s `.binding.yaml` file names change with them (`createPets.binding.yaml` → `create_pets.binding.yaml`). An `operationId`-derived camelCase ID used to be emitted verbatim and was rejected by apcore's registry when the generated binding was loaded; it is now loadable for the first time. Path-derived IDs with a camelCase parameter change too, although they were already loadable (`/pets/{petId}`: `pets.petid.get` → `pets.pet_id.get`). A legal ID is never rewritten, and a `--prefix` value is normalised with the rest of the ID (`Pet-Store` → `pet_store`). **Migration:** `--include` / `--exclude` patterns and scripts keyed on the old IDs or file names need updating; the filters match the emitted, normalised ID. A segment that still begins with a digit (`POST /v1/2fa` → `v1.2fa.post`) is not repaired: the module is still emitted and carries the toolkit's legality warning, which `scan` renders like any other scanner warning (exit stays `0`; pinned by new test T-OAPI-28). No CLI code changed; 18 tests re-pinned to the new IDs. `Cargo.lock` refreshed.
+
 ## [0.12.1] - 2026-09-24
 
 Patch release. Bumps the required `apcore` floor to `0.31.0` and `apcore-toolkit` to `0.12.0`. No code changes — this SDK has attached the §4.8 audit callback via `ACL::set_audit_logger` (not a rebuild) since FE-14 shipped, so it never carried the reload-losing workaround the Python/TypeScript SDKs just dropped in this same release (D-66 on the apcore side made it unnecessary there). All tests pass unmodified; `cargo clippy --all-features --all-targets -- -D warnings` clean.

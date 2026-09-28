@@ -752,8 +752,8 @@ mod tests {
     #[test]
     fn binding_filenames_mirror_the_toolkit_sanitizer() {
         assert_eq!(
-            sanitize_binding_filename("pets.petid.get"),
-            "pets.petid.get"
+            sanitize_binding_filename("pets.pet_id.get"),
+            "pets.pet_id.get"
         );
         assert_eq!(sanitize_binding_filename("a/b"), "a_b");
         // "../evil": '/' -> '_' gives ".._evil", then the ".." run collapses
@@ -775,9 +775,9 @@ mod tests {
 
     #[test]
     fn planned_paths_use_the_binding_suffix() {
-        let modules = vec![module("pets.petid.get", "GET", "/pets/{petId}")];
+        let modules = vec![module("pets.pet_id.get", "GET", "/pets/{petId}")];
         let paths = planned_paths(&modules, "/out");
-        assert_eq!(paths[0], PathBuf::from("/out/pets.petid.get.binding.yaml"));
+        assert_eq!(paths[0], PathBuf::from("/out/pets.pet_id.get.binding.yaml"));
     }
 
     // ----- rendering -----
@@ -789,11 +789,11 @@ mod tests {
             "info": {"title": "Petstore", "version": "1.0.0"},
             "paths": {}
         });
-        let mut m = module("createPets", "POST", "/pets");
+        let mut m = module("create_pets", "POST", "/pets");
         m.warnings
             .push("no 2xx response defined; output_schema is empty".to_string());
         let hazards = vec![Hazard {
-            module_id: "createPets".to_string(),
+            module_id: "create_pets".to_string(),
             http_method: "POST".to_string(),
             url_path: "/pets".to_string(),
             parameters: vec!["q".to_string()],
@@ -806,7 +806,7 @@ mod tests {
             payload["modules"][0]["warnings"][0],
             "no 2xx response defined; output_schema is empty"
         );
-        assert_eq!(payload["hazards"][0]["module_id"], "createPets");
+        assert_eq!(payload["hazards"][0]["module_id"], "create_pets");
         assert!(
             payload["modules"][0].get("hazards").is_none(),
             "hazards are a top-level key, not a module field"
@@ -820,7 +820,7 @@ mod tests {
             "info": {"title": "Petstore", "version": "1.0.0"},
             "paths": {}
         });
-        let modules = vec![module("listPets", "GET", "/pets")];
+        let modules = vec![module("list_pets", "GET", "/pets")];
         let out = render_scan_table("./petstore.yaml", &spec, &modules);
         assert!(out.starts_with("1 operation from ./petstore.yaml (OpenAPI 3.1.0, Petstore 1.0.0)"));
         assert!(out.contains("GET /pets"), "{out}");
@@ -829,10 +829,10 @@ mod tests {
 
     #[test]
     fn diagnostics_render_warnings_and_hazards_separately() {
-        let mut m = module("showPetById", "GET", "/pets/{petId}");
+        let mut m = module("show_pet_by_id", "GET", "/pets/{petId}");
         m.warnings.push("no 2xx response defined".to_string());
         let hazards = vec![Hazard {
-            module_id: "createPets".to_string(),
+            module_id: "create_pets".to_string(),
             http_method: "POST".to_string(),
             url_path: "/pets".to_string(),
             parameters: vec!["a".to_string(), "b".to_string()],
@@ -840,7 +840,7 @@ mod tests {
         let out = render_diagnostics(&[m], &hazards);
         assert!(out.contains("1 warning:"), "{out}");
         assert!(
-            out.contains("showPetById  no 2xx response defined"),
+            out.contains("show_pet_by_id  no 2xx response defined"),
             "{out}"
         );
         assert!(

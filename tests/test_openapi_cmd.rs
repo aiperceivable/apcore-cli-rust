@@ -2,7 +2,7 @@
 //
 // Covers the in-scope T-OAPI-* verification matrix from
 // `apcore-cli/docs/features/openapi-import.md` section 9: T-OAPI-01..22 and
-// 24..27. T-OAPI-23 is withdrawn (the `--writer native` flag was removed
+// 24..28. T-OAPI-23 is withdrawn (the `--writer native` flag was removed
 // because no toolkit source writer can resolve an OpenAPI `target`, see spec
 // section 4.4), and T-OAPI-30..40 belong to the deferred FE-15b.
 //
@@ -21,10 +21,11 @@ use serde_json::Value;
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/// Four operations, exercising every rendering branch the matrix asks about:
-/// an `operationId` (case preserved), a path-derived ID, a deprecated
-/// operation, a `POST` carrying `in: query` parameters (a proxy hazard), an
-/// operation with no 2xx response, and an external `$ref`.
+/// Five operations, exercising every rendering branch the matrix asks about:
+/// camelCase `operationId`s (which the toolkit emits as snake_case IDs), a
+/// path-derived ID with a camelCase path parameter, a deprecated operation, a
+/// `POST` carrying `in: query` parameters (a proxy hazard), an operation with
+/// no 2xx response, and an external `$ref`.
 const PETSTORE_YAML: &str = r#"
 openapi: "3.1.0"
 info:
@@ -126,6 +127,29 @@ swagger: "2.0"
 info: {title: Old, version: "1.0.0"}
 paths: {}
 "#;
+
+/// One operation with no `operationId` whose path-derived ID keeps a segment
+/// beginning with a digit: `POST /v1/2fa` -> `v1.2fa.post`. The toolkit's
+/// normalisation does not repair it (that would invent a name), so the module
+/// is emitted with a legality warning instead (T-OAPI-28).
+const TWO_FA_YAML: &str = r#"
+openapi: "3.1.0"
+info: {title: TwoFactor, version: "1.0.0"}
+paths:
+  /v1/2fa:
+    post:
+      summary: Enroll a second factor
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: {type: object}
+"#;
+
+/// The toolkit's legality warning for `v1.2fa.post`, byte-exact, as pinned by
+/// apcore-toolkit's openapi-scanner.md ("What normalisation will not repair").
+const TWO_FA_LEGALITY_WARNING: &str = "module_id 'v1.2fa.post' is not a legal apcore module ID: segment '2fa' must match ^[a-z][a-z0-9_]*$; name this operation with a derive_module_id or transform_module hook";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -263,16 +287,63 @@ fn t_oapi_02_json_source_is_parsed_by_content_sniffing() {
     );
 }
 
+/// T-OAPI-03: IDs equal the toolkit's derive_module_id output, unmodified by
+/// the CLI.
 #[test]
-fn t_oapi_03_operation_id_ids_are_the_toolkits_verbatim() {
+fn t_oapi_03_ids_equal_the_toolkits_derive_module_id_output() {
     let (project, source) = Project::petstore();
     let out = project.run(&["apcli", "openapi", "scan", &source, "--format", "json"]);
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let ids = module_ids(&json_stdout(&out));
-    // Case preserved; the CLI must not kebab-case, lowercase, or otherwise
-    // post-process what `derive_module_id` returned (spec 1.2).
-    assert!(ids.contains(&"listPets".to_string()), "{ids:?}");
-    assert!(ids.contains(&"createPets".to_string()), "{ids:?}");
-    assert!(ids.contains(&"showPetById".to_string()), "{ids:?}");
+    // The CLI must not kebab-case, re-case, or otherwise post-process what
+    // `derive_module_id` returned (spec 1.2). Since apcore-toolkit 0.13.0 that
+    // output is in apcore's Canonical ID alphabet: the fixture's camelCase
+    // `operationId`s, and its `{petId}` path parameter, are split into
+    // snake_case words. Each literal below is what 0.13.0 derives.
+    let operations = [
+        (
+            "/pets",
+            "get",
+            serde_json::json!({"operationId": "listPets"}),
+            "list_pets",
+        ),
+        (
+            "/pets",
+            "post",
+            serde_json::json!({"operationId": "createPets"}),
+            "create_pets",
+        ),
+        (
+            "/pets/{petId}",
+            "get",
+            serde_json::json!({"operationId": "showPetById"}),
+            "show_pet_by_id",
+        ),
+        (
+            "/pets/{petId}",
+            "delete",
+            serde_json::json!({}),
+            "pets.pet_id.delete",
+        ),
+        (
+            "/legacy",
+            "get",
+            serde_json::json!({"operationId": "legacyThing"}),
+            "legacy_thing",
+        ),
+    ];
+    let mut expected = Vec::new();
+    for (path, method, operation, literal) in &operations {
+        let derived = apcore_toolkit::derive_module_id(path, method, operation);
+        assert_eq!(derived, *literal, "toolkit derivation of {method} {path}");
+        expected.push(derived);
+    }
+    assert_eq!(
+        ids, expected,
+        "the CLI must emit derive_module_id's output unchanged, in document order"
+    );
+    // And every emitted ID is already canonical: re-deriving it returns it
+    // unchanged, so nothing between the scanner and stdout re-cased it.
     for id in &ids {
         assert_eq!(
             *id,
@@ -293,6 +364,9 @@ fn t_oapi_04_operations_without_an_operation_id_use_the_path_algorithm() {
     let ids = module_ids(&json_stdout(&out));
     let derived =
         apcore_toolkit::derive_module_id("/pets/{petId}", "delete", &serde_json::json!({}));
+    // The camelCase path parameter `{petId}` is split into words like any
+    // other name since apcore-toolkit 0.13.0 (it was `pets.petid.delete`).
+    assert_eq!(derived, "pets.pet_id.delete");
     assert!(
         ids.contains(&derived),
         "the DELETE with no operationId must use the path-and-method algorithm \
@@ -348,12 +422,17 @@ fn t_oapi_06_include_keeps_only_matching_ids() {
         "scan",
         &source,
         "--include",
-        "^listPets$",
+        "^list_pets$",
         "--format",
         "json",
     ]);
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
-    assert_eq!(module_ids(&json_stdout(&out)), vec!["listPets".to_string()]);
+    // Filters match the emitted, normalised ID, not the document's
+    // `operationId` (`listPets`).
+    assert_eq!(
+        module_ids(&json_stdout(&out)),
+        vec!["list_pets".to_string()]
+    );
 }
 
 #[test]
@@ -387,7 +466,7 @@ fn t_oapi_07_invalid_regex_exits_2() {
 fn t_oapi_08_no_deprecated_omits_deprecated_operations() {
     let (project, source) = Project::petstore();
     let with = project.run(&["apcli", "openapi", "scan", &source, "--format", "json"]);
-    assert!(module_ids(&json_stdout(&with)).contains(&"legacyThing".to_string()));
+    assert!(module_ids(&json_stdout(&with)).contains(&"legacy_thing".to_string()));
 
     let without = project.run(&[
         "apcli",
@@ -405,7 +484,7 @@ fn t_oapi_08_no_deprecated_omits_deprecated_operations() {
         stderr(&without)
     );
     let ids = module_ids(&json_stdout(&without));
-    assert!(!ids.contains(&"legacyThing".to_string()), "{ids:?}");
+    assert!(!ids.contains(&"legacy_thing".to_string()), "{ids:?}");
     assert_eq!(ids.len(), 4);
 }
 
@@ -425,7 +504,7 @@ fn t_oapi_09_string_deprecated_is_not_deprecated() {
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     assert_eq!(
         module_ids(&json_stdout(&out)),
-        vec!["getThing".to_string()],
+        vec!["get_thing".to_string()],
         "`deprecated: \"false\"` is a string, not the boolean true"
     );
 }
@@ -448,8 +527,8 @@ fn t_oapi_10_missing_2xx_response_warns_but_keeps_the_module() {
         .as_array()
         .expect("modules")
         .iter()
-        .find(|m| m["module_id"] == "showPetById")
-        .expect("showPetById is present despite the warning");
+        .find(|m| m["module_id"] == "show_pet_by_id")
+        .expect("show_pet_by_id is present despite the warning");
     let warnings: Vec<&str> = show["warnings"]
         .as_array()
         .expect("warnings array")
@@ -473,7 +552,7 @@ fn t_oapi_10b_table_output_renders_the_warning_block() {
         "{rendered}"
     );
     assert!(rendered.contains("warnings:"), "{rendered}");
-    assert!(rendered.contains("showPetById"), "{rendered}");
+    assert!(rendered.contains("show_pet_by_id"), "{rendered}");
     assert!(rendered.contains("GET /pets"), "{rendered}");
 }
 
@@ -571,7 +650,7 @@ fn t_oapi_13_json_carries_per_module_warnings_and_top_level_hazards() {
         .as_array()
         .expect("top-level hazards key");
     assert_eq!(hazards.len(), 1, "{hazards:?}");
-    assert_eq!(hazards[0]["module_id"], "createPets");
+    assert_eq!(hazards[0]["module_id"], "create_pets");
 }
 
 #[test]
@@ -586,7 +665,7 @@ fn t_oapi_14_markdown_and_skill_render_through_the_toolkit() {
             stderr(&out)
         );
         let rendered = stdout(&out);
-        assert!(rendered.contains("listPets"), "[{style}] {rendered}");
+        assert!(rendered.contains("list_pets"), "[{style}] {rendered}");
         // Diagnostics stay off the rendered document, on stderr.
         assert!(
             stderr(&out).contains("warnings:"),
@@ -634,7 +713,7 @@ fn t_oapi_16_post_with_query_parameters_is_reported_as_a_hazard() {
         rendered.contains("cannot be proxied by FE-15b"),
         "the hazard block must be rendered inline: {rendered}"
     );
-    assert!(rendered.contains("createPets"), "{rendered}");
+    assert!(rendered.contains("create_pets"), "{rendered}");
     assert!(rendered.contains("POST"), "{rendered}");
     assert!(
         rendered.contains("dry_run") && rendered.contains("notify"),
@@ -665,9 +744,9 @@ async fn t_oapi_17_get_with_query_parameters_is_not_a_hazard() {
     let (spec, modules) = scan_fixture(PETSTORE_YAML, ScanOptions::new()).await;
     let hazards = detect_proxy_hazards(&spec, &modules);
     assert_eq!(hazards.len(), 1, "{hazards:?}");
-    assert_eq!(hazards[0].module_id, "createPets");
+    assert_eq!(hazards[0].module_id, "create_pets");
     assert!(
-        !hazards.iter().any(|h| h.module_id == "listPets"),
+        !hazards.iter().any(|h| h.module_id == "list_pets"),
         "a GET with query parameters is correctly encoded: {hazards:?}"
     );
 }
@@ -763,7 +842,7 @@ fn t_oapi_18_generate_writes_one_binding_per_module() {
         assert!(name.ends_with(BINDING_SUFFIX), "{name}");
     }
     assert!(
-        files.contains(&format!("createPets{BINDING_SUFFIX}")),
+        files.contains(&format!("create_pets{BINDING_SUFFIX}")),
         "{files:?}"
     );
 }
@@ -784,7 +863,7 @@ fn t_oapi_19_dry_run_lists_paths_and_creates_nothing() {
     let listed = stdout(&out);
     assert_eq!(listed.trim().lines().count(), 5, "{listed}");
     assert!(
-        listed.contains(&format!("createPets{BINDING_SUFFIX}")),
+        listed.contains(&format!("create_pets{BINDING_SUFFIX}")),
         "{listed}"
     );
     assert!(
@@ -802,7 +881,7 @@ fn t_oapi_20_artifact_carries_an_intact_routing_contract() {
     let path = project
         .path()
         .join("out")
-        .join(format!("createPets{BINDING_SUFFIX}"));
+        .join(format!("create_pets{BINDING_SUFFIX}"));
     let text = std::fs::read_to_string(&path).expect("read artifact");
     let doc: Value = serde_yaml_ng::from_str(&text).expect("artifact is valid YAML");
     let binding = &doc["bindings"][0];
@@ -822,13 +901,15 @@ fn t_oapi_20_artifact_carries_an_intact_routing_contract() {
     assert!(url_path.starts_with('/'), "{url_path}");
     assert_eq!(url_path, "/pets");
     assert_eq!(binding["metadata"]["openapi"]["spec_version"], "3.1.0");
+    // The ID is normalised; the document's raw `operationId` is kept here.
+    assert_eq!(binding["module_id"], "create_pets");
     assert_eq!(binding["metadata"]["openapi"]["operation_id"], "createPets");
 
     // Braces are retained on a templated path.
     let templated = generated_files(&project.path().join("out"))
         .into_iter()
-        .find(|n| n.starts_with("showPetById"))
-        .expect("showPetById artifact");
+        .find(|n| n.starts_with("show_pet_by_id"))
+        .expect("show_pet_by_id artifact");
     let templated_doc: Value = serde_yaml_ng::from_str(
         &std::fs::read_to_string(project.path().join("out").join(templated)).expect("read"),
     )
@@ -844,8 +925,8 @@ fn t_oapi_20_artifact_carries_an_intact_routing_contract() {
         .expect("binding loads");
     let reloaded = loaded
         .iter()
-        .find(|m| m.module_id == "createPets")
-        .expect("createPets round-trips");
+        .find(|m| m.module_id == "create_pets")
+        .expect("create_pets round-trips");
     assert_eq!(
         reloaded.metadata.get("http_method").and_then(Value::as_str),
         Some("POST"),
@@ -860,7 +941,10 @@ fn t_oapi_20_artifact_carries_an_intact_routing_contract() {
 #[test]
 fn t_oapi_21_existing_file_is_skipped_without_force() {
     let (project, source) = Project::petstore();
-    let target = format!("out/createPets{BINDING_SUFFIX}");
+    // Must be the name `generate` writes for `operationId: createPets`
+    // (`create_pets`, the normalised ID), or nothing collides and the test
+    // proves nothing.
+    let target = format!("out/create_pets{BINDING_SUFFIX}");
     project.write(&target, "PRE-EXISTING\n");
 
     let out = project.run(&["apcli", "openapi", "generate", &source, "-o", "./out"]);
@@ -870,8 +954,12 @@ fn t_oapi_21_existing_file_is_skipped_without_force() {
         "a skipped file is not an error; stderr: {}",
         stderr(&out)
     );
+    // The hazard block on stderr also names `create_pets`, so the WARNING is
+    // matched as a whole line naming the skipped file.
     assert!(
-        stderr(&out).contains("WARNING") && stderr(&out).contains("createPets"),
+        stderr(&out).lines().any(|l| l.starts_with("WARNING")
+            && l.contains(&format!("create_pets{BINDING_SUFFIX}"))
+            && l.contains("skipping")),
         "a WARNING must name the skipped file: {}",
         stderr(&out)
     );
@@ -887,7 +975,8 @@ fn t_oapi_21_existing_file_is_skipped_without_force() {
 #[test]
 fn t_oapi_22_force_overwrites_an_existing_file() {
     let (project, source) = Project::petstore();
-    let target = format!("out/createPets{BINDING_SUFFIX}");
+    // The name `generate` writes for `operationId: createPets`; see T-OAPI-21.
+    let target = format!("out/create_pets{BINDING_SUFFIX}");
     project.write(&target, "PRE-EXISTING\n");
 
     let out = project.run(&[
@@ -896,7 +985,7 @@ fn t_oapi_22_force_overwrites_an_existing_file() {
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let text = std::fs::read_to_string(project.path().join(&target)).expect("read");
     assert_ne!(text, "PRE-EXISTING\n");
-    assert!(text.contains("createPets"), "{text}");
+    assert!(text.contains("create_pets"), "{text}");
 }
 
 // ---------------------------------------------------------------------------
@@ -958,7 +1047,7 @@ fn no_base_url_is_written() {
         project
             .path()
             .join("out")
-            .join(format!("createPets{BINDING_SUFFIX}")),
+            .join(format!("create_pets{BINDING_SUFFIX}")),
     )
     .expect("read");
     let doc: Value = serde_yaml_ng::from_str(&text).expect("valid YAML");
@@ -984,7 +1073,7 @@ fn t_oapi_26_generate_reports_the_same_hazards_as_scan() {
         .iter()
         .map(|h| h["module_id"].as_str().unwrap_or_default().to_string())
         .collect();
-    assert_eq!(scan_hazards, vec!["createPets".to_string()]);
+    assert_eq!(scan_hazards, vec!["create_pets".to_string()]);
 
     let generated = project.run(&["apcli", "openapi", "generate", &source, "-o", "./out"]);
     let err = stderr(&generated);
@@ -1025,6 +1114,81 @@ fn t_oapi_27_neither_command_touches_the_registry() {
     // registry really is empty for the run above.
     let listed = project.run(&["apcli", "list", "--format", "json"]);
     assert_eq!(listed.status.code(), Some(0), "stderr: {}", stderr(&listed));
+}
+
+// ---------------------------------------------------------------------------
+// T-OAPI-28 -- an ID the toolkit's normalisation cannot repair
+// ---------------------------------------------------------------------------
+
+/// T-OAPI-28: `POST /v1/2fa` (no `operationId`) is still listed as
+/// `v1.2fa.post`, and the toolkit's legality warning is rendered verbatim
+/// through the CLI's ordinary warning path; exit 0.
+#[test]
+fn t_oapi_28_unrepairable_id_is_listed_with_the_toolkits_legality_warning() {
+    let project = Project::new();
+    project.write("twofa.yaml", TWO_FA_YAML);
+
+    // The CLI neither repairs nor drops the ID: it is the toolkit's own
+    // path-derived output.
+    let derived = apcore_toolkit::derive_module_id("/v1/2fa", "post", &serde_json::json!({}));
+    assert_eq!(derived, "v1.2fa.post");
+
+    // (a) Table: the module is listed, and the warnings block carries exactly
+    // one line, `  <id>  <warning>`, with the warning byte-exact. Nothing
+    // follows it -- the operation declares no query parameter, so there is no
+    // hazard block.
+    let table = project.run(&[
+        "apcli",
+        "openapi",
+        "scan",
+        "./twofa.yaml",
+        "--format",
+        "table",
+    ]);
+    assert_eq!(
+        table.status.code(),
+        Some(0),
+        "an unrepairable ID is a warning, not a failure; stderr: {}",
+        stderr(&table)
+    );
+    let rendered = stdout(&table);
+    let (listing, _) = rendered
+        .split_once("\n1 warning:\n")
+        .unwrap_or_else(|| panic!("the warnings block must be rendered: {rendered}"));
+    assert!(
+        listing.starts_with("1 operation from ./twofa.yaml"),
+        "{rendered}"
+    );
+    assert!(
+        listing.contains("v1.2fa.post") && listing.contains("POST /v1/2fa"),
+        "the module must still be listed in the table: {rendered}"
+    );
+    assert!(
+        rendered.ends_with(&format!(
+            "\n1 warning:\n  v1.2fa.post  {TWO_FA_LEGALITY_WARNING}\n"
+        )),
+        "the legality warning must be rendered verbatim in the warnings block: {rendered}"
+    );
+
+    // (b) JSON: the warning is the module's only `warnings` entry, and it
+    // raises no hazard.
+    let json = project.run(&[
+        "apcli",
+        "openapi",
+        "scan",
+        "./twofa.yaml",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(json.status.code(), Some(0), "stderr: {}", stderr(&json));
+    let payload = json_stdout(&json);
+    assert_eq!(module_ids(&payload), vec!["v1.2fa.post".to_string()]);
+    assert_eq!(payload["modules"][0]["module_id"], "v1.2fa.post");
+    assert_eq!(
+        payload["modules"][0]["warnings"],
+        serde_json::json!([TWO_FA_LEGALITY_WARNING])
+    );
+    assert_eq!(payload["hazards"], serde_json::json!([]));
 }
 
 // ---------------------------------------------------------------------------
