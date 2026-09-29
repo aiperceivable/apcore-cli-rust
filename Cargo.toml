@@ -1,6 +1,6 @@
 [package]
 name = "apcore-cli"
-version = "0.12.1"
+version = "0.12.2"
 edition = "2021"
 description = "Command-line interface for apcore modules"
 license = "Apache-2.0"
