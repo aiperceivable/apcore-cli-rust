@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.12.3] - 2026-10-10
+
+### Changed
+
+- Upgrade the required apcore floor to 0.32.0 and apcore-toolkit to 0.14.0. Public executor, loader, scanner, display and formatter interfaces consumed by this CLI remain compatible.
+- Binding documents now inherit toolkit 0.14.0's stricter validation: unknown document/entry keys and one-sided inline schema pairs fail in both modes; non-list `tags` fail in strict mode. Move application-specific entry data into `metadata` and supply both inline schemas. Runtime-only `auto_schema` / `schema_ref` entries require apcore's runtime loader, which this CLI's toolkit integration does not use.
+
+### Fixed
+
+- `apcli init module --style binding` emits paired inline schemas instead of `auto_schema: true`, making generated scaffolds load through toolkit 0.14.0 in loose and strict modes. The schemas describe the generated no-argument function and its `status: string` result.
+
+### Compatibility verification
+
+- Native apcore validators exercise the canonical `details.errors` shape (`path`, `keyword`, `message`) through JSON and terminal error output, covering root `""`, nested-array `/items/0/count` and escaped `/a~1b~0c` pointers. CLI exit remains 45. The CLI never reads a legacy `field` member and its JSON output preserves details verbatim.
+- Governance-provider/gate and logging fixes, immediate scoped timeouts, collect-all preflight, binding runtime validation, namespace dispatch, watcher/reload, task/store, nested-call and middleware/observability changes run inside apcore; no additional CLI call-site adaptation is required. MCP export-profile changes and the additive bare-name canonicalization API are not consumed here. OpenAPI generation already supplies both inline schemas.
+- Full `make check`: **1020 passed, 0 failed, 3 ignored**, including doctests; rustfmt, Clippy with warnings denied, and source character checks pass. Cargo.lock includes apcore 0.32.0, toolkit 0.14.0 and upstream-required async-trait 0.1.92.
+
 ## [0.12.2] - 2026-09-29
 
 ### Changed — BREAKING

@@ -1587,6 +1587,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_native_validation_error_json_pointers() {
+        const CHILD_MODE: &str = "APCORE_CLI_TEST_NATIVE_ERROR_MODE";
+        if let Ok(mode) = std::env::var(CHILD_MODE) {
+            let schema = serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer"},
+                    "items": {"type": "array", "items": {
+                        "type": "object", "properties": {"count": {"type": "integer"}}
+                    }},
+                    "a/b~c": {"type": "integer"}
+                },
+                "required": ["count"]
+            });
+            let error = apcore::schema::SchemaValidator::new()
+                .validate_input(
+                    &serde_json::json!({"items": [{"count": "bad"}], "a/b~c": "bad"}),
+                    &schema,
+                )
+                .unwrap_err();
+            let data = error.to_dict();
+            let code = data["code"].as_str().unwrap();
+            let exit_code = map_apcore_error_to_exit_code(code);
+            if mode == "json" {
+                emit_error_json("test.validate", &error.to_string(), exit_code, Some(&data));
+            } else {
+                emit_error_tty("test.validate", &error.to_string(), exit_code, Some(&data));
+            }
+            return;
+        }
+        for mode in ["json", "tty"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "cli::tests::test_native_validation_error_json_pointers",
+                    "--nocapture",
+                ])
+                .env(CHILD_MODE, mode)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(stderr.contains("/items/0/count"), "{stderr}");
+            assert!(stderr.contains("/a~1b~0c"), "{stderr}");
+            assert!(!stderr.contains("unknown"), "{stderr}");
+            if mode == "json" {
+                let payload: Value = serde_json::from_str(&stderr).unwrap();
+                assert_eq!(payload["exit_code"], 45);
+                assert_eq!(payload["code"], "SCHEMA_VALIDATION_ERROR");
+                let errors = payload["details"]["errors"].as_array().unwrap();
+                let paths: std::collections::BTreeSet<_> = errors
+                    .iter()
+                    .map(|entry| entry["path"].as_str().unwrap())
+                    .collect();
+                assert_eq!(
+                    paths,
+                    ["", "/items/0/count", "/a~1b~0c"].into_iter().collect()
+                );
+                for entry in errors {
+                    assert_eq!(entry.as_object().unwrap().len(), 3);
+                    assert!(entry["keyword"].is_string());
+                    assert!(entry["message"].is_string());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_validate_module_id_valid() {
         // Valid IDs must not return an error.
         for id in ["math.add", "text.summarize", "a", "a.b.c"] {

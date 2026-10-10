@@ -90,6 +90,22 @@ fn test_binding_style_creates_yaml() {
         "YAML must contain module id"
     );
 
+    for strict in [false, true] {
+        let modules = apcore_toolkit::BindingLoader::new()
+            .load(&yaml_file, strict, false)
+            .expect("generated bindings must load with toolkit 0.14.0");
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].module_id, "text.upper");
+        assert_eq!(
+            modules[0].input_schema,
+            serde_json::json!({"type": "object", "properties": {}})
+        );
+        assert_eq!(
+            modules[0].output_schema["properties"]["status"],
+            serde_json::json!({"type": "string"})
+        );
+    }
+
     // Companion Rust file lives in a sibling `commands/` dir of `--dir`,
     // so passing `--dir <tmp>/bindings` puts the companion in
     // `<tmp>/commands/text.rs` rather than leaking it to the CWD.

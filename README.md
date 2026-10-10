@@ -48,7 +48,7 @@ Terminal adapter for apcore. Execute AI-Perceivable modules from the command lin
 cargo install apcore-cli
 ```
 
-Requires Rust 1.75+, `apcore = 0.21.0` (exact pin), and `apcore-toolkit >= 0.13.0` (a **required** runtime dependency since v0.9.0). The `toolkit` Cargo feature is retained in `default-features` as a no-op for backward compatibility — consumers using `default-features = false` must explicitly enable `features = ["toolkit"]` to compile. See [tech-design ADR-09](https://github.com/aiperceivable/apcore-cli/blob/main/docs/tech-design.md) for the byte-equivalent toolkit-delegated tier rationale.
+Build with current stable Rust (`apcore` requires Rust 1.86+, and the checked-in lockfile includes dependencies requiring Rust 1.88+), `apcore >= 0.32.0`, and `apcore-toolkit >= 0.14.0` with the `http-proxy` feature (a required runtime dependency).
 
 > **Note:** `apcore-toolkit-rust` 0.7.0 enables `serde_json/preserve_order`. This transitively affects all `serde_json::Map` iteration in your dependency tree — code that relied on alphabetical key ordering must re-sort explicitly.
 

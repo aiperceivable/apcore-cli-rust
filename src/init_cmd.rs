@@ -311,7 +311,15 @@ fn create_binding_module(
          {i}- module_id: \"{module_id}\"\n\
          {i}{i}target: \"{target}\"\n\
          {i}{i}description: \"{description}\"\n\
-         {i}{i}auto_schema: true\n",
+         {i}{i}input_schema:\n\
+         {i}{i}{i}type: object\n\
+         {i}{i}{i}properties: {{}}\n\
+         {i}{i}output_schema:\n\
+         {i}{i}{i}type: object\n\
+         {i}{i}{i}properties:\n\
+         {i}{i}{i}{i}status:\n\
+         {i}{i}{i}{i}{i}type: string\n\
+         {i}{i}{i}required: [status]\n",
         i = "  ",
     );
 
