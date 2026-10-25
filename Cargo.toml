@@ -1,6 +1,6 @@
 [package]
 name = "apcore-cli"
-version = "0.12.5"
+version = "0.12.6"
 edition = "2021"
 description = "Command-line interface for apcore modules"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ name = "apcore_cli"
 path = "src/lib.rs"
 
 [dependencies]
-apcore = ">=0.32.2"
+apcore = ">=0.32.3"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env", "string"] }
 serde = { version = "1", features = ["derive"] }
