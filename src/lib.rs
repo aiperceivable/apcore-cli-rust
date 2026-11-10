@@ -201,7 +201,7 @@ pub fn register_apcli_subcommands(
 // API will be reintroduced when actually implemented; until then,
 // downstream Rust users invoke the binary directly or compose the
 // per-subcommand registrars (e.g., `register_completion_command`) onto a
-// `clap::Command` they own.
+// `clap::Command` they own and run modules via `dispatch_module_with_result`.
 //
 // Cross-SDK parity gap (tracked, not a bug): Python `create_cli` and
 // TypeScript `createCli` both accept an `allowed_prefixes` / `allowedPrefixes`
@@ -266,9 +266,9 @@ pub use builtin_group::{
 // Core dispatcher (FE-01)
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
-    collect_input_from_reader, dispatch_module, get_docs_url, is_all_options_help,
-    is_system_modules_available, set_all_options_help, set_audit_logger, set_docs_url,
-    set_executables, set_system_modules_available, validate_module_id, CliError,
+    collect_input_from_reader, dispatch_module, dispatch_module_with_result, get_docs_url,
+    is_all_options_help, is_system_modules_available, set_all_options_help, set_audit_logger,
+    set_docs_url, set_executables, set_system_modules_available, validate_module_id, CliError,
 };
 
 // FE-13 retires `cli::BUILTIN_COMMANDS`. Downstream consumers that pinned to

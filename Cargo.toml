@@ -1,6 +1,6 @@
 [package]
 name = "apcore-cli"
-version = "0.12.6"
+version = "0.13.0"
 edition = "2021"
 description = "Command-line interface for apcore modules"
 license = "Apache-2.0"
@@ -62,6 +62,7 @@ test-support = []
 
 [dev-dependencies]
 apcore-cli = { path = ".", features = ["test-support"] }
+futures-util = { version = "0.3", default-features = false }
 
 [[test]]
 name = "approval_integration"

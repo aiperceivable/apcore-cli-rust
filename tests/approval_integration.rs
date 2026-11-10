@@ -76,3 +76,88 @@ async fn module_non_tty_no_bypass_returns_approval_error() {
     let result = apcore_cli::approval::check_approval(&module_def, false, None).await;
     assert!(matches!(result, Err(ApprovalError::NonInteractive { .. })));
 }
+
+#[cfg(unix)]
+#[test]
+fn embedded_approval_rejects_without_reading_tty() {
+    use apcore_cli::{cli::exec_command, dispatch_module_with_result, MockRegistry};
+    use std::fs::File;
+    use std::io::IsTerminal;
+    use std::os::fd::FromRawFd;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const CHILD_MARKER: &str = "APCORE_CLI_TEST_EMBEDDED_APPROVAL_CHILD";
+    if std::env::var_os(CHILD_MARKER).is_some() {
+        assert!(std::io::stdin().is_terminal());
+        let registry = MockRegistry::new(vec![json!({
+            "module_id": "test.guarded",
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "annotations": {"requires_approval": true}
+        })]);
+        let executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+        let matches =
+            exec_command().get_matches_from(["exec", "test.guarded", "--approval-timeout", "1"]);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        assert_eq!(
+            runtime.block_on(dispatch_module_with_result(
+                "test.guarded",
+                &matches,
+                &registry,
+                &executor,
+                false,
+            )),
+            Err(EXIT_APPROVAL_DENIED)
+        );
+        return;
+    }
+
+    let mut master = -1;
+    let mut slave = -1;
+    // The PTY is created with system defaults. Keep its master open without
+    // supplying input so an accidental blocking approval reader cannot finish.
+    let result = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(result, 0, "{}", std::io::Error::last_os_error());
+    let _terminal = unsafe { File::from_raw_fd(master) };
+    let input = unsafe { File::from_raw_fd(slave) };
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "embedded_approval_rejects_without_reading_tty",
+            "--nocapture",
+        ])
+        .env(CHILD_MARKER, "1")
+        .env("RUST_MIN_STACK", "8388608")
+        .env_remove("APCORE_CLI_AUTO_APPROVE")
+        .stdin(Stdio::from(input))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let _ = child.wait();
+            panic!("Embedded approval left a blocking terminal reader running");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stderr.contains("Proceed?"), "{stderr}");
+}

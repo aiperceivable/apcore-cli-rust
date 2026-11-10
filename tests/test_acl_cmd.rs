@@ -1208,10 +1208,9 @@ fn t_acl_31_discriminator_same_call_without_sandbox_also_exits_77() {
 }
 
 #[test]
-fn t_acl_31_discriminator_both_forms_succeed_once_the_rule_is_removed() {
-    // Half two: with the deny rule gone, BOTH forms must run and create the
-    // sentinel. Without this, a gate that refused everything unconditionally
-    // would pass the two assertions above.
+fn t_acl_31_discriminator_plain_script_succeeds_once_the_rule_is_removed() {
+    // Without this positive control, a gate that refused every script would
+    // pass the denial assertions above.
     let (project, sentinel) = touch_project();
     project.write("acl/global_acl.yaml", ALLOW_ALL);
 
@@ -1224,36 +1223,26 @@ fn t_acl_31_discriminator_both_forms_succeed_once_the_rule_is_removed() {
         stderr(&plain)
     );
     assert!(sentinel.exists(), "the allowed call must actually run");
-    std::fs::remove_file(&sentinel).expect("reset sentinel");
-
-    let sandboxed = project.run_touch(&sentinel, &["demo.touch", "--x", "1", "--sandbox"]);
-    assert_eq!(
-        sandboxed.status.code(),
-        Some(0),
-        "stdout: {}\nstderr: {}",
-        stdout(&sandboxed),
-        stderr(&sandboxed)
-    );
-    assert!(
-        sentinel.exists(),
-        "the allowed sandboxed call must actually run"
-    );
 }
 
 #[test]
-fn t_acl_32_sandboxed_allowed_module_runs_normally() {
+fn t_acl_32_sandboxed_allowed_script_rejects_without_running() {
     let (project, sentinel) = touch_project();
     project.write("acl/global_acl.yaml", ALLOW_ALL);
     let out = project.run_touch(&sentinel, &["demo.touch", "--x", "1", "--sandbox"]);
     assert_eq!(
         out.status.code(),
-        Some(0),
+        Some(apcore_cli::EXIT_INVALID_INPUT),
         "stdout: {}\nstderr: {}",
         stdout(&out),
         stderr(&out)
     );
-    assert!(stdout(&out).contains("\"ok\""), "{}", stdout(&out));
-    assert!(sentinel.exists());
+    assert!(
+        stderr(&out).contains("--sandbox is not supported for filesystem script modules"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!sentinel.exists(), "the unisolated script must never run");
 }
 
 #[test]

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.13.0] - 2026-11-10
+
+### Added
+
+- `dispatch_module_with_result()` returns the raw JSON result or a CLI exit code to the host. Pass `print_result = false` to render the result in the host. The embedded dispatcher uses non-interactive approval and leaves signal handling to the caller.
+
+### Changed
+
+- Module execution rejects `--sandbox` combined with `--trace`, `--strategy`, or `--stream`. Sandbox execution requires the standalone CLI and a supported module. The embedded dispatcher and filesystem script modules reject unsupported sandbox requests with exit code 2.
+- Streaming modules use the executor's native stream. In embedded dispatch, a non-streaming module requested with `--stream` falls back to buffered execution and honors the result-printing setting.
+
+### Fixed
+
+- Terminal trace diagnostics remain on stderr when result printing is disabled.
+- Preserve custom approval prompts from `ModuleAnnotations.extra["approval_message"]` in CLI dispatch and in the executor's CLI approval handler.
+
 ## [0.12.3] - 2026-10-10
 
 ### Changed

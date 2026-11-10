@@ -43,7 +43,13 @@ fn get_requires_approval(module_def: &serde_json::Value) -> bool {
 fn get_approval_message(module_def: &serde_json::Value, module_id: &str) -> String {
     module_def
         .get("annotations")
-        .and_then(|a| a.get("approval_message"))
+        .and_then(|annotations| {
+            annotations.get("approval_message").or_else(|| {
+                annotations
+                    .get("extra")
+                    .and_then(|extra| extra.get("approval_message"))
+            })
+        })
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
@@ -72,9 +78,9 @@ fn get_module_id(module_def: &serde_json::Value) -> String {
 /// read one line from whatever source is appropriate (real stdin in
 /// production, a mock in tests).
 ///
-/// On timeout the blocking thread remains parked — this is acceptable
-/// because the process exits immediately with code 46 after this function
-/// returns `Err(ApprovalError::Timeout)`.
+/// A timeout does not stop a blocked reader. The standalone process exits
+/// after an approval timeout. The embedded dispatcher uses non-interactive
+/// approval so it does not start a terminal reader.
 async fn prompt_with_reader<F>(
     module_id: &str,
     message: &str,
@@ -526,14 +532,10 @@ impl apcore::ApprovalHandler for CliApprovalHandler {
         &self,
         request: &apcore::ApprovalRequest,
     ) -> Result<apcore::ApprovalResult, apcore::ModuleError> {
-        // Reconstruct the module-def shape the CLI handler expects.
-        // `requires_approval` is reflected from the apcore request so a
-        // module with the annotation cleared still bypasses the prompt.
+        // Preserve both the effective approval flag and the custom prompt.
         let module_def = serde_json::json!({
             "module_id": request.module_id,
-            "annotations": {
-                "requires_approval": request.annotations.requires_approval,
-            },
+            "annotations": request.annotations,
             "description": request.description,
         });
 
@@ -692,6 +694,20 @@ mod tests {
     fn approval_message_custom() {
         let v = json!({"annotations": {"approval_message": "Please confirm."}});
         assert_eq!(get_approval_message(&v, "mod-x"), "Please confirm.");
+    }
+
+    #[test]
+    fn approval_message_reads_native_annotation_extra() {
+        let mut annotations = apcore::ModuleAnnotations::default();
+        annotations.extra.insert(
+            "approval_message".to_string(),
+            json!("Confirm the remote change."),
+        );
+        let module_def = json!({"annotations": annotations});
+        assert_eq!(
+            get_approval_message(&module_def, "mod-x"),
+            "Confirm the remote change."
+        );
     }
 
     #[test]

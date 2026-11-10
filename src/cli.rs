@@ -1111,30 +1111,107 @@ async fn execute_script(executable: &std::path::Path, input: &Value) -> Result<V
         .map_err(|e| format!("script stdout is not valid JSON: {e}"))
 }
 
-/// Execute a module by ID: validate → collect input → validate schema
-/// → approve → execute → audit → output.
+fn validate_sandbox_flags(matches: &clap::ArgMatches, standalone: bool) -> Result<(), i32> {
+    if !matches.get_flag("sandbox") || matches.get_flag("dry-run") {
+        return Ok(());
+    }
+
+    if matches.get_flag("trace")
+        || matches.get_flag("stream")
+        || matches.get_one::<String>("strategy").is_some()
+    {
+        eprintln!("Error: --sandbox cannot be combined with --trace, --stream, or --strategy.");
+        return Err(crate::EXIT_INVALID_INPUT);
+    }
+
+    if !standalone {
+        eprintln!("Error: --sandbox requires the standalone apcore-cli executable.");
+        return Err(crate::EXIT_INVALID_INPUT);
+    }
+
+    Ok(())
+}
+
+/// Execute a module and exit the process with the corresponding CLI exit code.
 ///
-/// Calls `std::process::exit` with the appropriate code; never returns normally.
+/// Use [`dispatch_module_with_result`] when the caller needs to keep running.
 pub async fn dispatch_module(
     module_id: &str,
     matches: &clap::ArgMatches,
     registry: &Arc<dyn crate::discovery::RegistryProvider>,
     apcore_executor: &apcore::Executor,
 ) -> ! {
+    if let Err(code) = validate_sandbox_flags(matches, true) {
+        std::process::exit(code);
+    }
+
+    let exit_code = run_module_dispatch(
+        module_id,
+        matches,
+        registry.as_ref(),
+        apcore_executor,
+        true,
+        true,
+    )
+    .await
+    .map_or_else(|code| code, |_| crate::EXIT_SUCCESS);
+    std::process::exit(exit_code);
+}
+
+/// Execute a module and return control to the caller.
+///
+/// Use matches from [`build_module_command`] or [`exec_command`].
+/// Set `print_result` to false to suppress rendering the successful result.
+/// Returns the raw result before CLI field projection or trace decoration.
+/// Dry runs and streaming output return `Ok(None)`. Errors return a CLI exit code.
+/// Sandbox execution requires the standalone executable. The host owns signal handling
+/// and interactive approval. After collecting approval, the host can pass `--yes`.
+/// The host can cancel module dispatch by dropping the future.
+pub async fn dispatch_module_with_result(
+    module_id: &str,
+    matches: &clap::ArgMatches,
+    registry: &dyn crate::discovery::RegistryProvider,
+    apcore_executor: &apcore::Executor,
+    print_result: bool,
+) -> Result<Option<Value>, i32> {
+    validate_sandbox_flags(matches, false)?;
+
+    run_module_dispatch(
+        module_id,
+        matches,
+        registry,
+        apcore_executor,
+        print_result,
+        false,
+    )
+    .await
+}
+
+async fn run_module_dispatch(
+    module_id: &str,
+    matches: &clap::ArgMatches,
+    registry: &dyn crate::discovery::RegistryProvider,
+    apcore_executor: &apcore::Executor,
+    print_result: bool,
+    standalone: bool,
+) -> Result<Option<Value>, i32> {
     use crate::{
         EXIT_APPROVAL_DENIED, EXIT_INVALID_INPUT, EXIT_MODULE_NOT_FOUND,
-        EXIT_SCHEMA_VALIDATION_ERROR, EXIT_SIGINT, EXIT_SUCCESS,
+        EXIT_SCHEMA_VALIDATION_ERROR, EXIT_SIGINT,
     };
 
     // 1. Validate module ID format (exit 2 on bad format).
-    validate_module_id_or_exit(module_id);
+    if let Err(CliError::InvalidModuleId(msg)) = validate_module_id(module_id) {
+        eprintln!("Error: {msg}");
+        return Err(EXIT_INVALID_INPUT);
+    }
 
     // 2. Registry lookup (exit 44 if not found).
     let module_def = match registry.get_module_descriptor(module_id) {
         Some(def) => def,
         None => {
             eprintln!("Error: Module '{module_id}' not found in registry.");
-            std::process::exit(EXIT_MODULE_NOT_FOUND);
+            return Err(EXIT_MODULE_NOT_FOUND);
         }
     };
 
@@ -1174,19 +1251,19 @@ pub async fn dispatch_module(
         Ok(m) => m,
         Err(CliError::InputTooLarge { .. }) => {
             eprintln!("Error: STDIN input exceeds 10MB limit. Use --large-input to override.");
-            std::process::exit(EXIT_INVALID_INPUT);
+            return Err(EXIT_INVALID_INPUT);
         }
         Err(CliError::JsonParse(detail)) => {
             eprintln!("Error: STDIN does not contain valid JSON: {detail}.");
-            std::process::exit(EXIT_INVALID_INPUT);
+            return Err(EXIT_INVALID_INPUT);
         }
         Err(CliError::NotAnObject) => {
             eprintln!("Error: STDIN JSON must be an object, got array or scalar.");
-            std::process::exit(EXIT_INVALID_INPUT);
+            return Err(EXIT_INVALID_INPUT);
         }
         Err(e) => {
             eprintln!("Error: {e}");
-            std::process::exit(EXIT_INVALID_INPUT);
+            return Err(EXIT_INVALID_INPUT);
         }
     };
 
@@ -1214,7 +1291,7 @@ pub async fn dispatch_module(
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         if valid {
-            std::process::exit(EXIT_SUCCESS);
+            return Ok(None);
         } else {
             // Honor the granular check-level exit code mapping owned by
             // validate::first_failed_exit_code so the dry-run path agrees
@@ -1225,7 +1302,7 @@ pub async fn dispatch_module(
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            std::process::exit(crate::validate::first_failed_exit_code(&checks));
+            return Err(crate::validate::first_failed_exit_code(&checks));
         }
     }
 
@@ -1234,7 +1311,7 @@ pub async fn dispatch_module(
         if schema.contains_key("properties") {
             if let Err(detail) = validate_against_schema(&merged, &module_def.input_schema) {
                 eprintln!("Error: Validation failed: {detail}.");
-                std::process::exit(EXIT_SCHEMA_VALIDATION_ERROR);
+                return Err(EXIT_SCHEMA_VALIDATION_ERROR);
             }
         }
     }
@@ -1300,10 +1377,15 @@ pub async fn dispatch_module(
             let decision = acl.check_access(None, module_id, Some(&gate_ctx), Some(&projection));
             if decision.access == "deny" {
                 eprintln!("Error: Permission denied for module '{module_id}'.");
-                std::process::exit(crate::EXIT_ACL_DENIED);
+                return Err(crate::EXIT_ACL_DENIED);
             }
             acl_requires_approval = decision.approval_required;
         }
+    }
+
+    if use_sandbox && script_executable.is_some() {
+        eprintln!("Error: --sandbox is not supported for filesystem script modules.");
+        return Err(EXIT_INVALID_INPUT);
     }
 
     // 7. Approval gate (exit 46 on denial/timeout).
@@ -1340,32 +1422,87 @@ pub async fn dispatch_module(
             annotations.insert("requires_approval".to_string(), Value::Bool(true));
         }
     }
-    if let Err(e) = crate::approval::check_approval_with_timeout(
+    if let Err(e) = crate::approval::check_approval_with_tty_timeout(
         &module_json,
         auto_approve,
+        standalone && std::io::stdin().is_terminal(),
         approval_timeout_secs,
     )
     .await
     {
         eprintln!("Error: {e}");
-        std::process::exit(EXIT_APPROVAL_DENIED);
+        return Err(EXIT_APPROVAL_DENIED);
     }
 
+    // Only the process entry point owns the SIGINT handler.
+    let cancel = async {
+        if standalone {
+            let _ = tokio::signal::ctrl_c().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(cancel);
+
     // -- F6: Streaming execution --
-    if stream_flag {
+    let supports_streaming = script_executable.is_none()
+        && module_def
+            .annotations
+            .as_ref()
+            .is_some_and(|annotations| annotations.streaming);
+
+    if stream_flag && !standalone && !supports_streaming {
+        eprintln!(
+            "Warning: Module '{module_id}' does not declare streaming support. Falling back to standard execution."
+        );
+    }
+
+    if stream_flag && (standalone || supports_streaming) {
         // Streaming always outputs JSONL; --format table is ignored (spec 3.6.2).
         if format_flag.as_deref() == Some("table") {
             eprintln!("Warning: Streaming mode always outputs JSONL; --format table is ignored.");
         }
         let start = std::time::Instant::now();
-        // Stream outputs as JSONL.
+        if supports_streaming {
+            let mut chunks =
+                apcore_executor.stream(module_id, input_value.clone(), cli_ctx.as_ref(), None);
+            loop {
+                let chunk = tokio::select! {
+                    chunk = std::future::poll_fn(|cx| chunks.as_mut().poll_next(cx)) => chunk,
+                    _ = &mut cancel => {
+                        eprintln!("Execution cancelled.");
+                        return Err(EXIT_SIGINT);
+                    }
+                };
+                match chunk {
+                    Some(Ok(value)) => {
+                        println!("{}", serde_json::to_string(&value).unwrap_or_default());
+                        let _ = std::io::Write::flush(&mut std::io::stdout());
+                    }
+                    Some(Err(e)) => {
+                        let duration_ms = start.elapsed().as_millis() as u64;
+                        let code = map_module_error_to_exit_code(&e);
+                        audit_error(module_id, &input_value, code, duration_ms);
+                        eprintln!("Error: Module '{module_id}' execution failed: {e}.");
+                        return Err(code);
+                    }
+                    None => {
+                        let duration_ms = start.elapsed().as_millis() as u64;
+                        audit_success(module_id, &input_value, duration_ms);
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        // The standalone CLI retains its legacy buffered JSONL fallback.
         if let Some(exec_path) = script_executable.as_ref() {
             // Script-based: fall back to regular execution, output as JSONL.
             let res = tokio::select! {
                 res = execute_script(exec_path, &input_value) => res,
-                _ = tokio::signal::ctrl_c() => {
+                _ = &mut cancel => {
                     eprintln!("Execution cancelled.");
-                    std::process::exit(EXIT_SIGINT);
+                    return Err(EXIT_SIGINT);
                 }
             };
             let duration_ms = start.elapsed().as_millis() as u64;
@@ -1373,7 +1510,7 @@ pub async fn dispatch_module(
                 Ok(val) => {
                     println!("{}", serde_json::to_string(&val).unwrap_or_default());
                     audit_success(module_id, &input_value, duration_ms);
-                    std::process::exit(EXIT_SUCCESS);
+                    return Ok(None);
                 }
                 Err(e) => {
                     audit_error(
@@ -1383,20 +1520,17 @@ pub async fn dispatch_module(
                         duration_ms,
                     );
                     eprintln!("Error: {e}");
-                    std::process::exit(crate::EXIT_MODULE_EXECUTE_ERROR);
+                    return Err(crate::EXIT_MODULE_EXECUTE_ERROR);
                 }
             }
         }
-        // In-process: use executor.stream() if available, else fall through.
-        // apcore executor does not expose a stream() method in Rust yet,
-        // so we fall back to standard call and output as single JSONL line.
         let res = tokio::select! {
             res = apcore_executor.call(
                 module_id, input_value.clone(), cli_ctx.as_ref(), None,
             ) => res,
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut cancel => {
                 eprintln!("Execution cancelled.");
-                std::process::exit(EXIT_SIGINT);
+                return Err(EXIT_SIGINT);
             }
         };
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -1410,13 +1544,13 @@ pub async fn dispatch_module(
                     println!("{}", serde_json::to_string(&val).unwrap_or_default());
                 }
                 audit_success(module_id, &input_value, duration_ms);
-                std::process::exit(EXIT_SUCCESS);
+                return Ok(None);
             }
             Err(e) => {
                 let code = map_module_error_to_exit_code(&e);
                 audit_error(module_id, &input_value, code, duration_ms);
                 eprintln!("Error: Module '{module_id}' execution failed: {e}.");
-                std::process::exit(code);
+                return Err(code);
             }
         }
     }
@@ -1434,9 +1568,9 @@ pub async fn dispatch_module(
                 cli_ctx.as_ref(),
                 None,
             ) => res,
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut cancel => {
                 eprintln!("Execution cancelled.");
-                std::process::exit(EXIT_SIGINT);
+                return Err(EXIT_SIGINT);
             }
         };
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -1444,7 +1578,7 @@ pub async fn dispatch_module(
             Ok(output) => {
                 // Print result with trace appended (format BEFORE audit — canonical order).
                 let fmt = crate::output::resolve_format(format_flag.as_deref());
-                if fmt == "json" {
+                if fmt == "json" && print_result {
                     // Merge trace stub into JSON output.
                     let trace_data = serde_json::json!({
                         "strategy": strategy_name.as_deref().unwrap_or("standard"),
@@ -1465,8 +1599,10 @@ pub async fn dispatch_module(
                         "{}",
                         serde_json::to_string_pretty(&combined).unwrap_or_default()
                     );
-                } else {
-                    crate::output::print_exec_result(&output, fmt, fields_flag.as_deref());
+                } else if fmt != "json" {
+                    if print_result {
+                        crate::output::print_exec_result(&output, fmt, fields_flag.as_deref());
+                    }
                     eprintln!(
                         "\nPipeline Trace (strategy: {}, {duration_ms}ms)",
                         strategy_name.as_deref().unwrap_or("standard"),
@@ -1474,13 +1610,13 @@ pub async fn dispatch_module(
                 }
                 // Audit success AFTER format (canonical order: format -> audit).
                 audit_success(module_id, &input_value, duration_ms);
-                std::process::exit(EXIT_SUCCESS);
+                return Ok(Some(output));
             }
             Err(e) => {
                 let code = map_module_error_to_exit_code(&e);
                 audit_error(module_id, &input_value, code, duration_ms);
                 eprintln!("Error: Module '{module_id}' execution failed: {e}.");
-                std::process::exit(code);
+                return Err(code);
             }
         }
     }
@@ -1497,9 +1633,9 @@ pub async fn dispatch_module(
                 res = execute_script(&exec_path, &input_value) => {
                     res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e, None))
                 }
-                _ = tokio::signal::ctrl_c() => {
+                _ = &mut cancel => {
                     eprintln!("Execution cancelled.");
-                    std::process::exit(EXIT_SIGINT);
+                    return Err(EXIT_SIGINT);
                 }
             }
         } else if use_sandbox {
@@ -1522,9 +1658,9 @@ pub async fn dispatch_module(
                         }
                     })
                 }
-                _ = tokio::signal::ctrl_c() => {
+                _ = &mut cancel => {
                     eprintln!("Execution cancelled.");
-                    std::process::exit(EXIT_SIGINT);
+                    return Err(EXIT_SIGINT);
                 }
             }
         } else {
@@ -1546,9 +1682,9 @@ pub async fn dispatch_module(
                         (code, e.to_string(), data)
                     })
                 }
-                _ = tokio::signal::ctrl_c() => {
+                _ = &mut cancel => {
                     eprintln!("Execution cancelled.");
-                    std::process::exit(EXIT_SIGINT);
+                    return Err(EXIT_SIGINT);
                 }
             }
         };
@@ -1558,11 +1694,13 @@ pub async fn dispatch_module(
     match result {
         Ok(output) => {
             // 10. Format and output first (canonical order: format -> audit).
-            let fmt = crate::output::resolve_format(format_flag.as_deref());
-            crate::output::print_exec_result(&output, fmt, fields_flag.as_deref());
+            if print_result {
+                let fmt = crate::output::resolve_format(format_flag.as_deref());
+                crate::output::print_exec_result(&output, fmt, fields_flag.as_deref());
+            }
             // 11. Audit log success AFTER format.
             audit_success(module_id, &input_value, duration_ms);
-            std::process::exit(EXIT_SUCCESS);
+            Ok(Some(output))
         }
         Err((exit_code, msg, error_data)) => {
             // Audit log error.
@@ -1573,7 +1711,7 @@ pub async fn dispatch_module(
             } else {
                 emit_error_tty(module_id, &msg, exit_code, error_data.as_ref());
             }
-            std::process::exit(exit_code);
+            Err(exit_code)
         }
     }
 }

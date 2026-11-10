@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "apcore-cli"
-version = "0.12.6"
+version = "0.13.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -175,6 +175,7 @@ dependencies = [
  "clap_complete",
  "comfy-table",
  "dirs",
+ "futures-util",
  "gethostname",
  "jsonschema",
  "keyring",

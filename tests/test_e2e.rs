@@ -84,6 +84,53 @@ fn test_e2e_execute_math_add() {
 }
 
 #[test]
+fn test_e2e_sandbox_rejects_incompatible_flags() {
+    for flags in [
+        &["--trace"][..],
+        &["--stream"][..],
+        &["--strategy", "standard"][..],
+    ] {
+        let args = [
+            "--extensions-dir",
+            "./examples/extensions",
+            "apcli",
+            "exec",
+            "math.add",
+            "--sandbox",
+        ]
+        .into_iter()
+        .chain(flags.iter().copied())
+        .collect::<Vec<_>>();
+        let out = run_apcore(&args);
+        assert_eq!(out.status.code(), Some(apcore_cli::EXIT_INVALID_INPUT));
+        assert!(out.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("--sandbox cannot be combined"), "{stderr}");
+    }
+}
+
+#[test]
+fn test_e2e_sandbox_rejects_filesystem_script_modules() {
+    let out = run_apcore(&[
+        "--extensions-dir",
+        "./examples/extensions",
+        "math.add",
+        "--a",
+        "3",
+        "--b",
+        "4",
+        "--sandbox",
+    ]);
+    assert_eq!(out.status.code(), Some(apcore_cli::EXIT_INVALID_INPUT));
+    assert!(out.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--sandbox is not supported for filesystem script modules"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn test_e2e_stdin_piping() {
     // Pipe JSON input via stdin to apcli exec math.add.
     // Audit D9-003: root-level `exec` shim removed in v0.8.

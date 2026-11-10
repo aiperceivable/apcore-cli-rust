@@ -103,17 +103,30 @@ All modules are auto-discovered. CLI flags are auto-generated from each module's
 
 ### Programmatic approach (Rust library)
 
-The high-level embedding API (`CliConfig` / `run_with_config`) was removed in
-v0.7.0 (audit findings D9-001/002) — the previous stub never had a working
-dispatch loop. A real embedding API will be reintroduced as part of the
-post-D9 redesign. In v0.8.0 the parameterised builders `create_cli` /
-`create_cli_with` (issues #18 / #19) live **in the binary entry point**
-(`src/main.rs`) — they are NOT yet exported from the library crate root.
-Until that move is finished, downstream crates can pull individual
-building blocks (`FsDiscoverer`, `RegistryProvider`, `ExposureFilter`, the
-per-subcommand `register_*_command` helpers, and the umbrella
-`register_apcli_subcommands`) and assemble their own root command tree, or
-simply invoke the `apcli` binary directly.
+Compose a host command tree with the public `register_*_command` helpers or
+`build_module_command`. To execute a parsed module command and consume its
+structured result, call `dispatch_module_with_result`:
+
+```rust
+let result = apcore_cli::dispatch_module_with_result(
+    module_id,
+    &matches,
+    &registry_provider,
+    &executor,
+    false, // Let the host render the result.
+).await;
+```
+
+A successful non-streaming call returns `Ok(Some(value))` with the raw JSON
+result. Preflight and streaming calls return `Ok(None)` on success. Failures
+return `Err(exit_code)`. A non-streaming module requested with `--stream`
+falls back to buffered execution and returns its result.
+
+The host owns approval interaction. The dispatcher's approval gate uses its
+non-interactive policy, including the explicit `--yes` option. Use the
+standalone CLI for supported `--sandbox` execution. Sandbox execution
+rejects `--trace`, `--strategy`, and `--stream` combinations and filesystem
+script modules with exit code 2.
 
 ### Exposure Filtering (FE-12)
 
@@ -391,7 +404,7 @@ The following items are re-exported at the crate root (`apcore_cli::*`). Everyth
 Organized by source module:
 
 - **`approval::`** `check_approval` (re-exported); `check_approval_with_timeout`, `check_approval_with_tty`, `check_approval_with_tty_timeout`, `DEFAULT_APPROVAL_TIMEOUT_SECS` (module-path access)
-- **`cli::`** `set_all_options_help`, `is_all_options_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`
+- **`cli::`** `set_all_options_help`, `is_all_options_help`, `set_docs_url`, `get_docs_url`, `set_executables`, `set_audit_logger`, `build_module_command`, `build_module_command_with_limit`, `collect_input`, `collect_input_from_reader`, `validate_module_id`, `dispatch_module`, `dispatch_module_with_result`
 - **`discovery::`** `cmd_list`, `cmd_list_enhanced`, `cmd_describe`, `register_list_command`, `register_describe_command`, `register_exec_command`, `register_discovery_commands`
 - **`display_helpers::`** `get_display`, `get_cli_display_fields`
 - **`init_cmd::`** `init_command`, `handle_init`, `register_init_command`
