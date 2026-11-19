@@ -49,10 +49,7 @@ pub(crate) fn descriptor_to_scanned(m: &Value) -> apcore_toolkit::ScannedModule 
     }
 
     if let Some(ann) = m.get("annotations") {
-        if let Ok(parsed) = serde_json::from_value::<apcore::module::ModuleAnnotations>(ann.clone())
-        {
-            sm.annotations = Some(parsed);
-        }
+        sm.annotations = serde_json::from_value(ann.clone()).ok();
     }
 
     sm
