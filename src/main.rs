@@ -255,7 +255,7 @@ fn build_cli_command(
     if validate {
         if let Err(msg) = validate_extensions_dir(&ext_dir) {
             eprintln!("Error: {msg}");
-            std::process::exit(EXIT_CONFIG_NOT_FOUND);
+            apcore_cli::exit::exit_with(EXIT_CONFIG_NOT_FOUND);
         }
     }
 
@@ -517,11 +517,11 @@ fn handle_list(
     match apcore_cli::discovery::cmd_list_enhanced(registry_provider.as_ref(), &opts) {
         Ok(output) => {
             println!("{output}");
-            std::process::exit(0);
+            apcore_cli::exit::exit_with(0);
         }
         Err(e) => {
             eprintln!("Error: {e}");
-            std::process::exit(2);
+            apcore_cli::exit::exit_with(2);
         }
     }
 }
@@ -538,18 +538,18 @@ fn handle_describe(
     match apcore_cli::discovery::cmd_describe(registry_provider.as_ref(), module_id, format) {
         Ok(output) => {
             println!("{output}");
-            std::process::exit(0);
+            apcore_cli::exit::exit_with(0);
         }
         Err(apcore_cli::discovery::DiscoveryError::ModuleNotFound(_)) => {
             eprintln!(
                 "Error: {}",
                 apcore_cli::discovery::DiscoveryError::ModuleNotFound(module_id.clone())
             );
-            std::process::exit(apcore_cli::EXIT_MODULE_NOT_FOUND);
+            apcore_cli::exit::exit_with(apcore_cli::EXIT_MODULE_NOT_FOUND);
         }
         Err(e) => {
             eprintln!("Error: {e}");
-            std::process::exit(2);
+            apcore_cli::exit::exit_with(2);
         }
     }
 }
@@ -615,7 +615,7 @@ fn attach_acl(
                 "Error: {}",
                 apcore_cli::acl_loader::describe_load_error(&root, &e)
             );
-            std::process::exit(apcore_cli::EXIT_ACL_RULE_ERROR);
+            apcore_cli::exit::exit_with(apcore_cli::EXIT_ACL_RULE_ERROR);
         }
     }
 }
@@ -628,7 +628,7 @@ fn handle_completion(sub_m: &clap::ArgMatches, prog_name: &str) {
     let mut cmd = build_cli_command(None, Some(prog_name.to_string()), false, None, None);
     let output = apcore_cli::shell::cmd_completion(shell, prog_name, &mut cmd);
     print!("{output}");
-    std::process::exit(0);
+    apcore_cli::exit::exit_with(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -643,7 +643,7 @@ async fn main() {
     if raw_args.get(1).map(String::as_str) == Some("--internal-sandbox-runner") {
         if let Err(e) = apcore_cli::sandbox_runner::run_sandbox_subprocess().await {
             eprintln!("{e}");
-            std::process::exit(1);
+            apcore_cli::exit::exit_with(1);
         }
         return;
     }
@@ -662,7 +662,7 @@ async fn main() {
             None,
         );
         render_man_page(&roff);
-        std::process::exit(0);
+        apcore_cli::exit::exit_with(0);
     }
 
     // Intercept --version before validating the extensions directory.
@@ -670,7 +670,7 @@ async fn main() {
     if raw_args.len() > 1 && raw_args[1..].iter().any(|a| a == "--version" || a == "-V") {
         let name = resolve_prog_name(None);
         println!("{}, version {}", name, env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
+        apcore_cli::exit::exit_with(0);
     }
 
     // Pre-parse --all-options before clap sees argv (must happen before
@@ -877,7 +877,7 @@ async fn main() {
             }
             Some(("init", sub_m)) => {
                 apcore_cli::init_cmd::handle_init(sub_m);
-                std::process::exit(0);
+                apcore_cli::exit::exit_with(0);
             }
             Some(("health", sub_m)) => {
                 apcore_cli::system_cmd::dispatch_health(sub_m, &apcore_executor);
@@ -917,7 +917,7 @@ async fn main() {
                 let _ = build_cli_command(None, Some(prog_name.clone()), false, None, None)
                     .print_help();
                 println!();
-                std::process::exit(0);
+                apcore_cli::exit::exit_with(0);
             }
         },
         // ----- Root-level meta commands (stay at root per FE-13 §4.1) -----
@@ -934,11 +934,11 @@ async fn main() {
             ) {
                 Ok(output) => {
                     println!("{output}");
-                    std::process::exit(0);
+                    apcore_cli::exit::exit_with(0);
                 }
                 Err(e) => {
                     eprintln!("Error: {e}");
-                    std::process::exit(2);
+                    apcore_cli::exit::exit_with(2);
                 }
             }
         }
@@ -971,7 +971,7 @@ async fn main() {
                         // protocol-spec exit code rather than degrading
                         // silently to an empty command (review #8).
                         eprintln!("Error: {e}");
-                        std::process::exit(e.exit_code());
+                        apcore_cli::exit::exit_with(e.exit_code());
                     }
                 },
                 None => apcore_cli::cli::add_dispatch_flags(
@@ -983,7 +983,7 @@ async fn main() {
                 .try_get_matches_from(&trailing)
                 .unwrap_or_else(|e| {
                     eprintln!("{e}");
-                    std::process::exit(2);
+                    apcore_cli::exit::exit_with(2);
                 });
 
             apcore_cli::cli::dispatch_module(
@@ -999,7 +999,7 @@ async fn main() {
             let _ =
                 build_cli_command(None, Some(prog_name.clone()), false, None, None).print_help();
             println!();
-            std::process::exit(0);
+            apcore_cli::exit::exit_with(0);
         }
     }
 }

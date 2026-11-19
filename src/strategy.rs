@@ -74,7 +74,7 @@ pub fn dispatch_describe_pipeline(matches: &clap::ArgMatches) {
         Some(info) => info,
         None => {
             eprintln!("Error: Unknown strategy: {strategy}");
-            std::process::exit(2);
+            crate::exit::exit_with(2);
         }
     };
 
@@ -135,7 +135,7 @@ pub fn dispatch_describe_pipeline(matches: &clap::ArgMatches) {
         }
     }
 
-    std::process::exit(0);
+    crate::exit::exit_with(0);
 }
 
 // ---------------------------------------------------------------------------

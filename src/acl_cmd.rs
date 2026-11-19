@@ -739,13 +739,13 @@ pub fn dispatch_acl(matches: &clap::ArgMatches, executor: &apcore::Executor, sou
         Some(("list", sub_m)) => {
             let fmt = resolve_acl_format(sub_m, &["table", "json", "csv", "yaml", "jsonl"]);
             println!("{}", render_list(acl, source, &fmt));
-            std::process::exit(EXIT_SUCCESS);
+            crate::exit::exit_with(EXIT_SUCCESS);
         }
         Some(("check", sub_m)) => dispatch_check(sub_m, acl),
         Some(("validate", sub_m)) => {
             let Some(acl) = acl else {
                 eprintln!("Error: No ACL configured; nothing to check.");
-                std::process::exit(EXIT_CONFIG_NOT_FOUND);
+                crate::exit::exit_with(EXIT_CONFIG_NOT_FOUND);
             };
             let fmt = resolve_acl_format(sub_m, &["table", "json"]);
             let payload = validate_payload(acl);
@@ -762,7 +762,7 @@ pub fn dispatch_acl(matches: &clap::ArgMatches, executor: &apcore::Executor, sou
             // default; the JSON output carries each finding's `effect` so a
             // caller that wants to gate only on `deny` rules can do so
             // (spec 4.6; `--fail-on` is deferred, section 9 question 1).
-            std::process::exit(validate_exit_code(count));
+            crate::exit::exit_with(validate_exit_code(count));
         }
         Some(("status", sub_m)) => {
             let state = executor.governance_state();
@@ -782,11 +782,11 @@ pub fn dispatch_acl(matches: &clap::ArgMatches, executor: &apcore::Executor, sou
                 // check without parsing output (spec 4.7).
                 eprintln!("Error: Unprotected control surface.");
             }
-            std::process::exit(status_exit_code(&state, strict));
+            crate::exit::exit_with(status_exit_code(&state, strict));
         }
         _ => {
             eprintln!("Error: Usage: acl <list|check|validate|status>");
-            std::process::exit(EXIT_INVALID_INPUT);
+            crate::exit::exit_with(EXIT_INVALID_INPUT);
         }
     }
 }
@@ -794,7 +794,7 @@ pub fn dispatch_acl(matches: &clap::ArgMatches, executor: &apcore::Executor, sou
 fn dispatch_check(sub_m: &clap::ArgMatches, acl: Option<&ACL>) {
     let Some(acl) = acl else {
         eprintln!("Error: No ACL configured; nothing to check.");
-        std::process::exit(EXIT_CONFIG_NOT_FOUND);
+        crate::exit::exit_with(EXIT_CONFIG_NOT_FOUND);
     };
     let target = sub_m
         .get_one::<String>("target")
@@ -810,7 +810,7 @@ fn dispatch_check(sub_m: &clap::ArgMatches, acl: Option<&ACL>) {
             Ok(n) => Some(n),
             Err(_) => {
                 eprintln!("Error: Invalid --depth value '{raw}': expected a non-negative integer.");
-                std::process::exit(EXIT_INVALID_INPUT);
+                crate::exit::exit_with(EXIT_INVALID_INPUT);
             }
         },
         None => None,
@@ -821,7 +821,7 @@ fn dispatch_check(sub_m: &clap::ArgMatches, acl: Option<&ACL>) {
             Ok(v) => Some(GovernanceProjection::from_arguments(&v)),
             Err(e) => {
                 eprintln!("Error: Invalid --input JSON: {e}");
-                std::process::exit(EXIT_INVALID_INPUT);
+                crate::exit::exit_with(EXIT_INVALID_INPUT);
             }
         },
         None => None,
@@ -853,7 +853,7 @@ fn dispatch_check(sub_m: &clap::ArgMatches, acl: Option<&ACL>) {
     // An allow-with-approval outcome exits 0: authorization and approval are
     // independent axes, and conflating "needs a human" with "denied" would
     // make the exit code unusable for scripted policy checks (spec 4.5).
-    std::process::exit(check_exit_code(&decision));
+    crate::exit::exit_with(check_exit_code(&decision));
 }
 
 /// Build the simulation context for `acl check`.

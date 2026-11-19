@@ -384,7 +384,7 @@ pub async fn dispatch_openapi(matches: &clap::ArgMatches) {
         Some(("generate", sub_m)) => dispatch_generate(sub_m).await,
         _ => {
             eprintln!("Error: Usage: openapi <scan|generate>");
-            std::process::exit(EXIT_INVALID_INPUT);
+            crate::exit::exit_with(EXIT_INVALID_INPUT);
         }
     }
 }
@@ -410,7 +410,7 @@ async fn run_scan(sub_m: &clap::ArgMatches) -> ScanInputs {
         .unwrap_or_default();
     let headers = parse_headers(&raw_headers).unwrap_or_else(|e| {
         eprintln!("Error: {e}");
-        std::process::exit(EXIT_INVALID_INPUT);
+        crate::exit::exit_with(EXIT_INVALID_INPUT);
     });
 
     let timeout = match sub_m.get_one::<String>("openapi-timeout") {
@@ -420,7 +420,7 @@ async fn run_scan(sub_m: &clap::ArgMatches) -> ScanInputs {
                 eprintln!(
                     "Error: Invalid --openapi-timeout value '{raw}': expected seconds as a positive number."
                 );
-                std::process::exit(EXIT_INVALID_INPUT);
+                crate::exit::exit_with(EXIT_INVALID_INPUT);
             }
         },
         None => DEFAULT_OPENAPI_TIMEOUT_SECS,
@@ -430,7 +430,7 @@ async fn run_scan(sub_m: &clap::ArgMatches) -> ScanInputs {
         .await
         .unwrap_or_else(|e| {
             eprintln!("Error: {e}");
-            std::process::exit(e.exit_code());
+            crate::exit::exit_with(e.exit_code());
         });
 
     let options = ScanOptions {
@@ -453,7 +453,7 @@ async fn run_scan(sub_m: &clap::ArgMatches) -> ScanInputs {
                 // verbatim (spec 4.1 error table).
                 ScannerError::InvalidSpec(msg) => {
                     eprintln!("Error: {msg}");
-                    std::process::exit(EXIT_CONFIG_NOT_FOUND);
+                    crate::exit::exit_with(EXIT_CONFIG_NOT_FOUND);
                 }
                 ScannerError::Pattern(err) => {
                     let flag = if sub_m.get_one::<String>("include").is_some() {
@@ -462,7 +462,7 @@ async fn run_scan(sub_m: &clap::ArgMatches) -> ScanInputs {
                         "exclude"
                     };
                     eprintln!("Error: Invalid regex for --{flag}: {err}");
-                    std::process::exit(EXIT_INVALID_INPUT);
+                    crate::exit::exit_with(EXIT_INVALID_INPUT);
                 }
             }
         });
@@ -546,7 +546,7 @@ async fn dispatch_scan(sub_m: &clap::ArgMatches) {
 
     // Exit 0 even when warnings or hazards are present -- a
     // partially-understood document is a successful scan (spec 4.2).
-    std::process::exit(EXIT_SUCCESS);
+    crate::exit::exit_with(EXIT_SUCCESS);
 }
 
 fn emit_diagnostics_to_stderr(modules: &[ScannedModule], hazards: &[Hazard]) {
@@ -572,7 +572,7 @@ async fn dispatch_generate(sub_m: &clap::ArgMatches) {
             println!("{}", path.display());
         }
         report_generate_diagnostics(&scan);
-        std::process::exit(EXIT_SUCCESS);
+        crate::exit::exit_with(EXIT_SUCCESS);
     }
 
     // Without --force an existing file is skipped with a warning and the
@@ -607,7 +607,7 @@ async fn dispatch_generate(sub_m: &clap::ArgMatches) {
         eprintln!("{skipped} file(s) skipped; re-run with --force to overwrite.");
     }
     report_generate_diagnostics(&scan);
-    std::process::exit(EXIT_SUCCESS);
+    crate::exit::exit_with(EXIT_SUCCESS);
 }
 
 fn report_generate_diagnostics(scan: &ScanInputs) {
@@ -630,7 +630,7 @@ fn write_modules(modules: &[ScannedModule], output_dir: &str) -> Vec<WriteResult
             // An unwritable output directory is an OS-level error, propagated
             // (spec 6, exit 1).
             eprintln!("Error: {e}");
-            std::process::exit(EXIT_MODULE_EXECUTE_ERROR);
+            crate::exit::exit_with(EXIT_MODULE_EXECUTE_ERROR);
         })
 }
 

@@ -291,7 +291,7 @@ pub async fn dispatch_validate(
     // Check module exists.
     if registry.get_module_descriptor(module_id).is_none() {
         eprintln!("Error: Module '{module_id}' not found.");
-        std::process::exit(crate::EXIT_MODULE_NOT_FOUND);
+        crate::exit::exit_with(crate::EXIT_MODULE_NOT_FOUND);
     }
 
     // Collect input if provided.
@@ -301,7 +301,7 @@ pub async fn dispatch_validate(
             Ok(m) => m,
             Err(e) => {
                 eprintln!("Error: {e}");
-                std::process::exit(crate::EXIT_INVALID_INPUT);
+                crate::exit::exit_with(crate::EXIT_INVALID_INPUT);
             }
         };
 
@@ -313,7 +313,7 @@ pub async fn dispatch_validate(
             // Already exited above; defensive guard against caller skipping
             // the existence check.
             eprintln!("Error: Module '{module_id}' not found.");
-            std::process::exit(crate::EXIT_MODULE_NOT_FOUND);
+            crate::exit::exit_with(crate::EXIT_MODULE_NOT_FOUND);
         }
     };
 
@@ -325,14 +325,14 @@ pub async fn dispatch_validate(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if valid {
-        std::process::exit(crate::EXIT_SUCCESS);
+        crate::exit::exit_with(crate::EXIT_SUCCESS);
     } else {
         let checks = preflight
             .get("checks")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        std::process::exit(first_failed_exit_code(&checks));
+        crate::exit::exit_with(first_failed_exit_code(&checks));
     }
 }
 

@@ -164,7 +164,9 @@ static DOCS_URL: Mutex<Option<String>> = Mutex::new(None);
 /// ```
 pub fn set_docs_url(url: Option<String>) {
     if let Ok(mut guard) = DOCS_URL.lock() {
-        *guard = url;
+        // A trailing slash would produce `.../cli//commands/...` in the help
+        // footer; normalize once at the boundary.
+        *guard = url.map(|value| value.trim_end_matches('/').to_string());
     }
 }
 
@@ -250,7 +252,7 @@ pub fn add_dispatch_flags(cmd: clap::Command) -> clap::Command {
             .long("input")
             .value_name("SOURCE")
             .help(
-                "Read JSON input from a file path, \
+                "Read a JSON object, read it from a file path, \
                  or use '-' to read from stdin pipe",
             )
             .hide(hide),
@@ -411,7 +413,7 @@ pub fn exec_command() -> clap::Command {
 
 /// Built-in flag names added to every generated module command. A schema
 /// property that collides with one of these names will cause
-/// `std::process::exit(2)`.
+/// `crate::exit::exit_with(2)`.
 const RESERVED_FLAG_NAMES: &[&str] = &[
     "all-options",
     "approval-timeout",
@@ -687,7 +689,7 @@ pub fn validate_module_id(module_id: &str) -> Result<(), CliError> {
 /// Validate a module identifier, exiting on failure.
 ///
 /// On a valid id, returns `()`. On any violation, writes the error message
-/// to stderr and calls `std::process::exit(2)` — matching Python's
+/// to stderr and calls `crate::exit::exit_with(2)` — matching Python's
 /// `sys.exit(2)` and TypeScript's `process.exit(2)` observable behavior
 /// (D10-004 cross-SDK parity). Use this from production dispatch paths
 /// where the Result form's only sensible Err handling is the exit pattern;
@@ -696,7 +698,7 @@ pub fn validate_module_id(module_id: &str) -> Result<(), CliError> {
 pub fn validate_module_id_or_exit(module_id: &str) {
     if let Err(CliError::InvalidModuleId(msg)) = validate_module_id(module_id) {
         eprintln!("Error: {msg}");
-        std::process::exit(crate::EXIT_INVALID_INPUT);
+        crate::exit::exit_with(crate::EXIT_INVALID_INPUT);
     }
 }
 
@@ -884,11 +886,28 @@ pub(crate) fn validate_against_schema(
 /// When `error_data` is provided (from an apcore ModuleError), its fields
 /// (`code`, `details`, `suggestion`, `ai_guidance`, `retryable`,
 /// `user_fixable`) are included in the output per FE-11 spec section 3.3.
+#[cfg(test)]
 fn emit_error_json(
+    module_id: &str,
+    message: &str,
+    exit_code: i32,
+    error_data: Option<&serde_json::Value>,
+) {
+    emit_error_json_to(
+        module_id,
+        message,
+        exit_code,
+        error_data,
+        &ErrorStream::Stderr,
+    );
+}
+
+fn emit_error_json_to(
     _module_id: &str,
     message: &str,
     exit_code: i32,
     error_data: Option<&serde_json::Value>,
+    stream: &ErrorStream,
 ) {
     let mut payload = serde_json::json!({
         "error": true,
@@ -916,27 +935,45 @@ fn emit_error_json(
             }
         }
     }
-    eprintln!("{}", serde_json::to_string(&payload).unwrap_or_default());
+    stream.write_line(&serde_json::to_string(&payload).unwrap_or_default());
 }
 
 /// Emit human-readable error to stderr with structured guidance fields.
 ///
 /// Shows `[CODE]` header, `Details:` block, `Suggestion:`, and `Retryable:`
 /// labels. Hides `ai_guidance` and `user_fixable` (machine-oriented fields).
+#[cfg(test)]
 fn emit_error_tty(
-    _module_id: &str,
+    module_id: &str,
     message: &str,
     exit_code: i32,
     error_data: Option<&serde_json::Value>,
 ) {
+    emit_error_tty_to(
+        module_id,
+        message,
+        exit_code,
+        error_data,
+        &ErrorStream::Stderr,
+    );
+}
+
+fn emit_error_tty_to(
+    _module_id: &str,
+    message: &str,
+    exit_code: i32,
+    error_data: Option<&serde_json::Value>,
+    stream: &ErrorStream,
+) {
+    let mut out = String::new();
     // Header with error code.
     if let Some(code) = error_data
         .and_then(|d| d.get("code"))
         .and_then(|v| v.as_str())
     {
-        eprintln!("Error [{code}]: {message}");
+        out.push_str(&format!("Error [{code}]: {message}\n"));
     } else {
-        eprintln!("Error: {message}");
+        out.push_str(&format!("Error: {message}\n"));
     }
 
     // Details block.
@@ -944,9 +981,9 @@ fn emit_error_tty(
         .and_then(|d| d.get("details"))
         .and_then(|v| v.as_object())
     {
-        eprintln!("\n  Details:");
+        out.push_str("\n  Details:\n");
         for (k, v) in details {
-            eprintln!("    {k}: {v}");
+            out.push_str(&format!("    {k}: {v}\n"));
         }
     }
 
@@ -955,7 +992,7 @@ fn emit_error_tty(
         .and_then(|d| d.get("suggestion"))
         .and_then(|v| v.as_str())
     {
-        eprintln!("\n  Suggestion: {suggestion}");
+        out.push_str(&format!("\n  Suggestion: {suggestion}\n"));
     }
 
     // Retryable.
@@ -968,10 +1005,11 @@ fn emit_error_tty(
         } else {
             "No (same input will fail again)"
         };
-        eprintln!("  Retryable: {label}");
+        out.push_str(&format!("  Retryable: {label}\n"));
     }
 
-    eprintln!("\n  Exit code: {exit_code}");
+    out.push_str(&format!("\n  Exit code: {exit_code}\n"));
+    stream.write_line(out.trim_end_matches('\n'));
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,7 +1149,10 @@ async fn execute_script(executable: &std::path::Path, input: &Value) -> Result<V
         .map_err(|e| format!("script stdout is not valid JSON: {e}"))
 }
 
-fn validate_sandbox_flags(matches: &clap::ArgMatches, standalone: bool) -> Result<(), i32> {
+fn validate_sandbox_flags(
+    matches: &clap::ArgMatches,
+    standalone: bool,
+) -> Result<(), &'static str> {
     if !matches.get_flag("sandbox") || matches.get_flag("dry-run") {
         return Ok(());
     }
@@ -1120,13 +1161,11 @@ fn validate_sandbox_flags(matches: &clap::ArgMatches, standalone: bool) -> Resul
         || matches.get_flag("stream")
         || matches.get_one::<String>("strategy").is_some()
     {
-        eprintln!("Error: --sandbox cannot be combined with --trace, --stream, or --strategy.");
-        return Err(crate::EXIT_INVALID_INPUT);
+        return Err("--sandbox cannot be combined with --trace, --stream, or --strategy.");
     }
 
     if !standalone {
-        eprintln!("Error: --sandbox requires the standalone apcore-cli executable.");
-        return Err(crate::EXIT_INVALID_INPUT);
+        return Err("--sandbox requires the standalone apcore-cli executable.");
     }
 
     Ok(())
@@ -1135,27 +1174,187 @@ fn validate_sandbox_flags(matches: &clap::ArgMatches, standalone: bool) -> Resul
 /// Execute a module and exit the process with the corresponding CLI exit code.
 ///
 /// Use [`dispatch_module_with_result`] when the caller needs to keep running.
+/// Host-owned sink for failure lines.
+pub type ErrorWriter = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Callback receiving a classified dispatch failure.
+pub type ErrorHandler = Arc<dyn Fn(&DispatchFailure) + Send + Sync>;
+
+/// Where a failure envelope is written.
+#[derive(Clone, Default)]
+pub enum ErrorStream {
+    /// Default: keep stdout clean for results.
+    #[default]
+    Stderr,
+    /// Agent-facing hosts whose contract is "stdout contains exactly one
+    /// document on failure".
+    Stdout,
+    /// Host-owned sink (logger, buffer, protocol writer).
+    Custom(ErrorWriter),
+}
+
+impl ErrorStream {
+    pub(crate) fn write_line(&self, line: &str) {
+        match self {
+            Self::Stderr => eprintln!("{line}"),
+            Self::Stdout => println!("{line}"),
+            Self::Custom(write) => write(line),
+        }
+    }
+}
+
+/// Failure information handed to [`DispatchOptions::on_error`].
+#[derive(Debug, Clone)]
+pub struct DispatchFailure {
+    /// CLI exit code the dispatch is about to return.
+    pub exit_code: i32,
+    /// apcore error code, when the failure carries one.
+    pub code: Option<String>,
+    /// Human-readable message without the `Error: ` prefix.
+    pub message: String,
+    /// Canonical module ID that was invoked.
+    pub module_id: String,
+}
+
+/// Host hooks for [`dispatch_module_with_options`].
+///
+/// The defaults reproduce the standalone CLI: render results, merge no extra
+/// input, write failures to stderr, and report through the returned
+/// `Result<_, i32>`.
+#[derive(Clone)]
+pub struct DispatchOptions {
+    /// Render the successful result. Defaults to `true`.
+    pub print_result: bool,
+    /// Host-injected input merged after stdin/flag collection and before
+    /// validation. Use it for program-level flags that are part of the
+    /// module's input contract.
+    pub extra_input: Option<Value>,
+    /// Destination for failure envelopes. Defaults to stderr.
+    pub error_stream: ErrorStream,
+    /// Called after a failure is classified, before the exit code is returned.
+    pub on_error: Option<ErrorHandler>,
+    /// Translate apcore error codes into host exit codes. Keys are wire codes
+    /// (`MODULE_NOT_FOUND`, `SCHEMA_VALIDATION_ERROR`, ...); unmapped codes
+    /// keep the CLI's own mapping.
+    pub exit_codes: HashMap<String, i32>,
+}
+
+impl Default for DispatchOptions {
+    fn default() -> Self {
+        Self {
+            print_result: true,
+            extra_input: None,
+            error_stream: ErrorStream::default(),
+            on_error: None,
+            exit_codes: HashMap::new(),
+        }
+    }
+}
+
+struct DispatchErrors<'a> {
+    options: &'a DispatchOptions,
+    module_id: &'a str,
+    json: bool,
+}
+
+impl<'a> DispatchErrors<'a> {
+    fn new(options: &'a DispatchOptions, module_id: &'a str, matches: &clap::ArgMatches) -> Self {
+        let json = matches
+            .get_one::<String>("format")
+            .is_some_and(|format| format == "json")
+            || !std::io::stderr().is_terminal();
+        Self {
+            options,
+            module_id,
+            json,
+        }
+    }
+
+    fn fail(&self, exit_code: i32, code: &str, message: impl AsRef<str>) -> i32 {
+        self.report(
+            exit_code,
+            message.as_ref(),
+            Some(&serde_json::json!({ "code": code })),
+            None,
+        )
+    }
+
+    fn invalid_input(&self, message: impl AsRef<str>) -> i32 {
+        self.fail(crate::EXIT_INVALID_INPUT, "GENERAL_INVALID_INPUT", message)
+    }
+
+    fn module_error(&self, error: &apcore::ModuleError, input: &Value, duration_ms: u64) -> i32 {
+        let data = serde_json::to_value(error).ok();
+        self.report(
+            map_module_error_to_exit_code(error),
+            &error.to_string(),
+            data.as_ref(),
+            Some((input, duration_ms)),
+        )
+    }
+
+    fn report(
+        &self,
+        fallback_exit_code: i32,
+        message: &str,
+        error_data: Option<&Value>,
+        audit: Option<(&Value, u64)>,
+    ) -> i32 {
+        let code = error_data
+            .and_then(|data| data.get("code"))
+            .and_then(Value::as_str);
+        let exit_code = code
+            .and_then(|code| self.options.exit_codes.get(code).copied())
+            .unwrap_or(fallback_exit_code);
+        if let Some((input, duration_ms)) = audit {
+            audit_error(self.module_id, input, exit_code, duration_ms);
+        }
+        if let Some(handler) = &self.options.on_error {
+            handler(&DispatchFailure {
+                exit_code,
+                code: code.map(str::to_string),
+                message: message.to_string(),
+                module_id: self.module_id.to_string(),
+            });
+        }
+        let emit = if self.json {
+            emit_error_json_to
+        } else {
+            emit_error_tty_to
+        };
+        emit(
+            self.module_id,
+            message,
+            exit_code,
+            error_data,
+            &self.options.error_stream,
+        );
+        exit_code
+    }
+}
+
 pub async fn dispatch_module(
     module_id: &str,
     matches: &clap::ArgMatches,
     registry: &Arc<dyn crate::discovery::RegistryProvider>,
     apcore_executor: &apcore::Executor,
 ) -> ! {
-    if let Err(code) = validate_sandbox_flags(matches, true) {
-        std::process::exit(code);
+    let options = DispatchOptions::default();
+    let errors = DispatchErrors::new(&options, module_id, matches);
+    if let Err(message) = validate_sandbox_flags(matches, true) {
+        crate::exit::exit_with(errors.invalid_input(message));
     }
-
-    let exit_code = run_module_dispatch(
+    let exit_code = Box::pin(run_module_dispatch(
         module_id,
         matches,
         registry.as_ref(),
         apcore_executor,
+        &errors,
         true,
-        true,
-    )
+    ))
     .await
     .map_or_else(|code| code, |_| crate::EXIT_SUCCESS);
-    std::process::exit(exit_code);
+    crate::exit::exit_with(exit_code);
 }
 
 /// Execute a module and return control to the caller.
@@ -1174,16 +1373,44 @@ pub async fn dispatch_module_with_result(
     apcore_executor: &apcore::Executor,
     print_result: bool,
 ) -> Result<Option<Value>, i32> {
-    validate_sandbox_flags(matches, false)?;
-
-    run_module_dispatch(
+    dispatch_module_with_options(
         module_id,
         matches,
         registry,
         apcore_executor,
-        print_result,
-        false,
+        &DispatchOptions {
+            print_result,
+            ..DispatchOptions::default()
+        },
     )
+    .await
+}
+
+/// Execute a module with host hooks (extra input, failure stream, `on_error`).
+///
+/// Returns the raw result; failures return the CLI exit code, so an embedded
+/// host always keeps control (the standalone binary calls
+/// [`dispatch_module`], which exits).
+pub async fn dispatch_module_with_options(
+    module_id: &str,
+    matches: &clap::ArgMatches,
+    registry: &dyn crate::discovery::RegistryProvider,
+    apcore_executor: &apcore::Executor,
+    options: &DispatchOptions,
+) -> Result<Option<Value>, i32> {
+    let errors = DispatchErrors::new(options, module_id, matches);
+    validate_sandbox_flags(matches, false).map_err(|message| errors.invalid_input(message))?;
+
+    // Box the state machine: the dispatcher is large and an embedded host may
+    // call it from a small thread stack (tests default to 2 MB).
+    Box::pin(run_module_dispatch(
+        module_id,
+        matches,
+        registry,
+        apcore_executor,
+        &errors,
+        false,
+    ))
     .await
 }
 
@@ -1192,26 +1419,29 @@ async fn run_module_dispatch(
     matches: &clap::ArgMatches,
     registry: &dyn crate::discovery::RegistryProvider,
     apcore_executor: &apcore::Executor,
-    print_result: bool,
+    errors: &DispatchErrors<'_>,
     standalone: bool,
 ) -> Result<Option<Value>, i32> {
+    let options = errors.options;
+    let print_result = options.print_result;
     use crate::{
-        EXIT_APPROVAL_DENIED, EXIT_INVALID_INPUT, EXIT_MODULE_NOT_FOUND,
-        EXIT_SCHEMA_VALIDATION_ERROR, EXIT_SIGINT,
+        EXIT_APPROVAL_DENIED, EXIT_MODULE_NOT_FOUND, EXIT_SCHEMA_VALIDATION_ERROR, EXIT_SIGINT,
     };
 
     // 1. Validate module ID format (exit 2 on bad format).
     if let Err(CliError::InvalidModuleId(msg)) = validate_module_id(module_id) {
-        eprintln!("Error: {msg}");
-        return Err(EXIT_INVALID_INPUT);
+        return Err(errors.invalid_input(msg));
     }
 
     // 2. Registry lookup (exit 44 if not found).
     let module_def = match registry.get_module_descriptor(module_id) {
         Some(def) => def,
         None => {
-            eprintln!("Error: Module '{module_id}' not found in registry.");
-            return Err(EXIT_MODULE_NOT_FOUND);
+            return Err(errors.fail(
+                EXIT_MODULE_NOT_FOUND,
+                "MODULE_NOT_FOUND",
+                format!("Module '{module_id}' not found in registry."),
+            ));
         }
     };
 
@@ -1247,25 +1477,42 @@ async fn run_module_dispatch(
     let cli_kwargs = extract_cli_kwargs(matches, &module_def);
 
     // 5. Collect and merge input (exit 2 on errors).
-    let mut merged = match collect_input(stdin_flag, cli_kwargs, large_input) {
+    let input = match stdin_flag {
+        Some(source) if source.trim_start().starts_with(['{', '[']) => {
+            collect_input_from_reader(Some("-"), cli_kwargs, large_input, source.as_bytes())
+        }
+        _ => collect_input(stdin_flag, cli_kwargs, large_input),
+    };
+    let mut merged = match input {
         Ok(m) => m,
         Err(CliError::InputTooLarge { .. }) => {
-            eprintln!("Error: STDIN input exceeds 10MB limit. Use --large-input to override.");
-            return Err(EXIT_INVALID_INPUT);
+            return Err(
+                errors.invalid_input("Input exceeds 10MB limit. Use --large-input to override.")
+            );
         }
         Err(CliError::JsonParse(detail)) => {
-            eprintln!("Error: STDIN does not contain valid JSON: {detail}.");
-            return Err(EXIT_INVALID_INPUT);
+            return Err(
+                errors.invalid_input(format!("Input does not contain valid JSON: {detail}."))
+            );
         }
         Err(CliError::NotAnObject) => {
-            eprintln!("Error: STDIN JSON must be an object, got array or scalar.");
-            return Err(EXIT_INVALID_INPUT);
+            return Err(errors.invalid_input("Input JSON must be an object, got array or scalar."));
         }
         Err(e) => {
-            eprintln!("Error: {e}");
-            return Err(EXIT_INVALID_INPUT);
+            return Err(errors.invalid_input(e.to_string()));
         }
     };
+
+    // 5b. Host-injected input (program-level flags, envelope fields). Merged
+    // before validation so the values are validated like any other input.
+    if let Some(extra) = &options.extra_input {
+        let Some(extra_obj) = extra.as_object() else {
+            return Err(errors.invalid_input("extra_input must be a JSON object."));
+        };
+        for (key, value) in extra_obj {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
 
     // -- F1: Dry-run / validate: preflight only, no execution --
     if dry_run {
@@ -1310,8 +1557,11 @@ async fn run_module_dispatch(
     if let Some(schema) = module_def.input_schema.as_object() {
         if schema.contains_key("properties") {
             if let Err(detail) = validate_against_schema(&merged, &module_def.input_schema) {
-                eprintln!("Error: Validation failed: {detail}.");
-                return Err(EXIT_SCHEMA_VALIDATION_ERROR);
+                return Err(errors.fail(
+                    EXIT_SCHEMA_VALIDATION_ERROR,
+                    "SCHEMA_VALIDATION_ERROR",
+                    format!("Validation failed: {detail}."),
+                ));
             }
         }
     }
@@ -1376,16 +1626,20 @@ async fn run_module_dispatch(
             // `@external` (FE-14 section 4.3 / section 7 rule 2).
             let decision = acl.check_access(None, module_id, Some(&gate_ctx), Some(&projection));
             if decision.access == "deny" {
-                eprintln!("Error: Permission denied for module '{module_id}'.");
-                return Err(crate::EXIT_ACL_DENIED);
+                return Err(errors.fail(
+                    crate::EXIT_ACL_DENIED,
+                    "ACL_DENIED",
+                    format!("Permission denied for module '{module_id}'."),
+                ));
             }
             acl_requires_approval = decision.approval_required;
         }
     }
 
     if use_sandbox && script_executable.is_some() {
-        eprintln!("Error: --sandbox is not supported for filesystem script modules.");
-        return Err(EXIT_INVALID_INPUT);
+        return Err(
+            errors.invalid_input("--sandbox is not supported for filesystem script modules.")
+        );
     }
 
     // 7. Approval gate (exit 46 on denial/timeout).
@@ -1430,8 +1684,11 @@ async fn run_module_dispatch(
     )
     .await
     {
-        eprintln!("Error: {e}");
-        return Err(EXIT_APPROVAL_DENIED);
+        let code = match e {
+            crate::approval::ApprovalError::Timeout { .. } => "APPROVAL_TIMEOUT",
+            _ => "APPROVAL_DENIED",
+        };
+        return Err(errors.fail(EXIT_APPROVAL_DENIED, code, e.to_string()));
     }
 
     // Only the process entry point owns the SIGINT handler.
@@ -1481,10 +1738,7 @@ async fn run_module_dispatch(
                     }
                     Some(Err(e)) => {
                         let duration_ms = start.elapsed().as_millis() as u64;
-                        let code = map_module_error_to_exit_code(&e);
-                        audit_error(module_id, &input_value, code, duration_ms);
-                        eprintln!("Error: Module '{module_id}' execution failed: {e}.");
-                        return Err(code);
+                        return Err(errors.module_error(&e, &input_value, duration_ms));
                     }
                     None => {
                         let duration_ms = start.elapsed().as_millis() as u64;
@@ -1513,14 +1767,12 @@ async fn run_module_dispatch(
                     return Ok(None);
                 }
                 Err(e) => {
-                    audit_error(
-                        module_id,
-                        &input_value,
+                    return Err(errors.report(
                         crate::EXIT_MODULE_EXECUTE_ERROR,
-                        duration_ms,
-                    );
-                    eprintln!("Error: {e}");
-                    return Err(crate::EXIT_MODULE_EXECUTE_ERROR);
+                        &e,
+                        Some(&serde_json::json!({ "code": "MODULE_EXECUTE_ERROR" })),
+                        Some((&input_value, duration_ms)),
+                    ));
                 }
             }
         }
@@ -1547,10 +1799,7 @@ async fn run_module_dispatch(
                 return Ok(None);
             }
             Err(e) => {
-                let code = map_module_error_to_exit_code(&e);
-                audit_error(module_id, &input_value, code, duration_ms);
-                eprintln!("Error: Module '{module_id}' execution failed: {e}.");
-                return Err(code);
+                return Err(errors.module_error(&e, &input_value, duration_ms));
             }
         }
     }
@@ -1613,10 +1862,7 @@ async fn run_module_dispatch(
                 return Ok(Some(output));
             }
             Err(e) => {
-                let code = map_module_error_to_exit_code(&e);
-                audit_error(module_id, &input_value, code, duration_ms);
-                eprintln!("Error: Module '{module_id}' execution failed: {e}.");
-                return Err(code);
+                return Err(errors.module_error(&e, &input_value, duration_ms));
             }
         }
     }
@@ -1631,7 +1877,10 @@ async fn run_module_dispatch(
             // Script-based execution: spawn subprocess, pipe JSON via stdin/stdout.
             tokio::select! {
                 res = execute_script(&exec_path, &input_value) => {
-                    res.map_err(|e| (crate::EXIT_MODULE_EXECUTE_ERROR, e, None))
+                    res.map_err(|e| (
+                        crate::EXIT_MODULE_EXECUTE_ERROR, e,
+                        Some(serde_json::json!({ "code": "MODULE_EXECUTE_ERROR" })),
+                    ))
                 }
                 _ = &mut cancel => {
                     eprintln!("Execution cancelled.");
@@ -1654,7 +1903,10 @@ async fn run_module_dispatch(
                                 let data = serde_json::to_value(inner).ok();
                                 (code, e.to_string(), data)
                             }
-                            _ => (crate::EXIT_MODULE_EXECUTE_ERROR, e.to_string(), None),
+                            _ => (
+                                crate::EXIT_MODULE_EXECUTE_ERROR, e.to_string(),
+                                Some(serde_json::json!({ "code": "MODULE_EXECUTE_ERROR" })),
+                            ),
                         }
                     })
                 }
@@ -1702,17 +1954,12 @@ async fn run_module_dispatch(
             audit_success(module_id, &input_value, duration_ms);
             Ok(Some(output))
         }
-        Err((exit_code, msg, error_data)) => {
-            // Audit log error.
-            audit_error(module_id, &input_value, exit_code, duration_ms);
-            // F3: Enhanced error output with structured guidance fields.
-            if format_flag.as_deref() == Some("json") || !std::io::stderr().is_terminal() {
-                emit_error_json(module_id, &msg, exit_code, error_data.as_ref());
-            } else {
-                emit_error_tty(module_id, &msg, exit_code, error_data.as_ref());
-            }
-            Err(exit_code)
-        }
+        Err((exit_code, message, error_data)) => Err(errors.report(
+            exit_code,
+            &message,
+            error_data.as_ref(),
+            Some((&input_value, duration_ms)),
+        )),
     }
 }
 

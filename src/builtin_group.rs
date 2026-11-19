@@ -331,7 +331,7 @@ impl ApcliGroup {
             Ok(group) => group,
             Err(e) => {
                 eprintln!("{e}");
-                std::process::exit(EXIT_INVALID_INPUT);
+                crate::exit::exit_with(EXIT_INVALID_INPUT);
             }
         }
     }

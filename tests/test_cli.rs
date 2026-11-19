@@ -555,3 +555,277 @@ async fn embedded_dispatch_rejects_sandbox_before_constructing_dispatch_future()
         Ok(None),
     );
 }
+
+// ---------------------------------------------------------------------------
+// Embedded-host parity: extra_input, on_error, error_stream, docs URL
+// ---------------------------------------------------------------------------
+
+struct EchoModule;
+
+#[async_trait::async_trait]
+impl apcore::module::Module for EchoModule {
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "json": {"type": "boolean"}
+            },
+            "required": ["url"]
+        })
+    }
+
+    fn output_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+
+    fn description(&self) -> &str {
+        "Echo inputs"
+    }
+
+    async fn execute(
+        &self,
+        inputs: Value,
+        _ctx: &apcore::Context<Value>,
+    ) -> Result<Value, apcore::errors::ModuleError> {
+        Ok(inputs)
+    }
+}
+
+#[tokio::test]
+async fn embedded_dispatch_merges_extra_input() {
+    use apcore_cli::cli::exec_command;
+    use apcore_cli::discovery::ApCoreRegistryProvider;
+    use apcore_cli::{dispatch_module_with_options, DispatchOptions};
+
+    let registry = apcore::Registry::new();
+    registry
+        .register_module("echo.input", Box::new(EchoModule))
+        .unwrap();
+    let executor = apcore::Executor::new(
+        {
+            let r = apcore::Registry::new();
+            r.register_module("echo.input", Box::new(EchoModule))
+                .unwrap();
+            r
+        },
+        apcore::Config::default(),
+    );
+    let provider = ApCoreRegistryProvider::new(registry);
+    let matches = exec_command().get_matches_from([
+        "exec",
+        "echo.input",
+        "--input",
+        r#"{"url":"https://example.com","json":false}"#,
+    ]);
+
+    let options = DispatchOptions {
+        extra_input: Some(json!({"json": true})),
+        print_result: false,
+        ..DispatchOptions::default()
+    };
+    let result =
+        dispatch_module_with_options("echo.input", &matches, &provider, &executor, &options)
+            .await
+            .unwrap();
+    assert_eq!(
+        result,
+        Some(json!({"json": true, "url": "https://example.com"}))
+    );
+}
+
+#[tokio::test]
+async fn embedded_dispatch_reports_failures_to_on_error_and_the_chosen_stream() {
+    use apcore_cli::cli::exec_command;
+    use apcore_cli::discovery::ApCoreRegistryProvider;
+    use apcore_cli::{
+        dispatch_module_with_options, DispatchFailure, DispatchOptions, ErrorStream,
+        EXIT_MODULE_NOT_FOUND,
+    };
+    use std::sync::{Arc, Mutex};
+
+    let provider = ApCoreRegistryProvider::new(apcore::Registry::new());
+    let executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+    let matches = exec_command().get_matches_from(["exec", "missing.module", "--format", "json"]);
+
+    let failures: Arc<Mutex<Vec<DispatchFailure>>> = Arc::new(Mutex::new(Vec::new()));
+    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured_failures = Arc::clone(&failures);
+    let captured_lines = Arc::clone(&lines);
+    let options = DispatchOptions {
+        error_stream: ErrorStream::Custom(Arc::new(move |line: &str| {
+            captured_lines.lock().unwrap().push(line.to_string());
+        })),
+        on_error: Some(Arc::new(move |failure: &DispatchFailure| {
+            captured_failures.lock().unwrap().push(failure.clone());
+        })),
+        ..DispatchOptions::default()
+    };
+
+    let result =
+        dispatch_module_with_options("missing.module", &matches, &provider, &executor, &options)
+            .await;
+    assert_eq!(result, Err(EXIT_MODULE_NOT_FOUND));
+
+    let failures = failures.lock().unwrap();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].exit_code, EXIT_MODULE_NOT_FOUND);
+    assert_eq!(failures[0].code.as_deref(), Some("MODULE_NOT_FOUND"));
+    assert_eq!(failures[0].module_id, "missing.module");
+
+    let lines = lines.lock().unwrap();
+    assert_eq!(lines.len(), 1);
+    let payload: Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(payload["error"], true);
+    assert_eq!(payload["code"], "MODULE_NOT_FOUND");
+    assert_eq!(payload["exit_code"], EXIT_MODULE_NOT_FOUND);
+}
+
+#[test]
+fn docs_url_is_normalized_and_uses_the_full_module_path() {
+    use apcore_cli::cli::{build_module_command, get_docs_url, set_docs_url};
+    use std::sync::{Mutex, OnceLock};
+
+    static DOCS_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = DOCS_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap();
+
+    set_docs_url(Some("https://docs.example.com/cli///".into()));
+    assert_eq!(
+        get_docs_url().as_deref(),
+        Some("https://docs.example.com/cli")
+    );
+
+    let provider = apcore_cli::discovery::ApCoreRegistryProvider::new(status_registry(false));
+    use apcore_cli::discovery::RegistryProvider;
+    let descriptor = provider.get_module_descriptor("post.status").unwrap();
+    let help = build_module_command(&descriptor)
+        .unwrap()
+        .render_help()
+        .to_string();
+    assert!(
+        help.contains("https://docs.example.com/cli/commands/post.status"),
+        "{help}"
+    );
+    assert!(!help.contains("//commands"), "{help}");
+
+    set_docs_url(None);
+}
+
+#[tokio::test]
+async fn embedded_dispatch_translates_exit_codes_for_the_host() {
+    use apcore_cli::cli::exec_command;
+    use apcore_cli::discovery::ApCoreRegistryProvider;
+    use apcore_cli::{dispatch_module_with_options, DispatchFailure, DispatchOptions, ErrorStream};
+    use std::sync::{Arc, Mutex};
+
+    let provider = ApCoreRegistryProvider::new(apcore::Registry::new());
+    let executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+    let matches = exec_command().get_matches_from(["exec", "missing.module"]);
+
+    let failures: Arc<Mutex<Vec<DispatchFailure>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&failures);
+    let mut exit_codes = std::collections::HashMap::new();
+    exit_codes.insert("MODULE_NOT_FOUND".to_string(), 2);
+    let options = DispatchOptions {
+        error_stream: ErrorStream::Custom(Arc::new(|_| {})),
+        on_error: Some(Arc::new(move |failure: &DispatchFailure| {
+            captured.lock().unwrap().push(failure.clone());
+        })),
+        exit_codes,
+        ..DispatchOptions::default()
+    };
+
+    let result =
+        dispatch_module_with_options("missing.module", &matches, &provider, &executor, &options)
+            .await;
+    assert_eq!(result, Err(2), "host mapping must win over the CLI's 44");
+
+    let failures = failures.lock().unwrap();
+    assert_eq!(failures[0].exit_code, 2);
+    assert_eq!(failures[0].code.as_deref(), Some("MODULE_NOT_FOUND"));
+}
+
+#[tokio::test]
+async fn embedded_dispatch_reports_early_failures_once_as_json() {
+    use apcore_cli::cli::exec_command;
+    use apcore_cli::discovery::ApCoreRegistryProvider;
+    use apcore_cli::{dispatch_module_with_options, DispatchFailure, DispatchOptions, ErrorStream};
+    use std::sync::Arc;
+
+    let registry = apcore::Registry::new();
+    registry
+        .register_module("echo.input", Box::new(EchoModule))
+        .unwrap();
+    let provider = ApCoreRegistryProvider::new(registry);
+    let executor = apcore::Executor::new(apcore::Registry::new(), apcore::Config::default());
+    for (module_id, flags, code, fallback) in [
+        ("missing.module", &[][..], "MODULE_NOT_FOUND", 44),
+        ("INVALID", &[][..], "GENERAL_INVALID_INPUT", 2),
+        (
+            "echo.input",
+            &["--input", "{"][..],
+            "GENERAL_INVALID_INPUT",
+            2,
+        ),
+        (
+            "echo.input",
+            &["--input", "[]"][..],
+            "GENERAL_INVALID_INPUT",
+            2,
+        ),
+        (
+            "echo.input",
+            &["--sandbox", "--trace"][..],
+            "GENERAL_INVALID_INPUT",
+            2,
+        ),
+        ("echo.input", &[][..], "SCHEMA_VALIDATION_ERROR", 45),
+    ] {
+        for exit_code in [fallback, 7] {
+            let matches = exec_command().get_matches_from(
+                ["exec", module_id, "--format", "json"]
+                    .into_iter()
+                    .chain(flags.iter().copied()),
+            );
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let captured_failure = Arc::clone(&events);
+            let captured_output = Arc::clone(&events);
+            let options = DispatchOptions {
+                on_error: Some(Arc::new(move |failure: &DispatchFailure| {
+                    captured_failure.lock().unwrap().push(json!({
+                        "module_id": failure.module_id,
+                        "code": failure.code,
+                        "exit_code": failure.exit_code,
+                    }));
+                })),
+                error_stream: ErrorStream::Custom(Arc::new(move |line| {
+                    captured_output
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_str(line).unwrap());
+                })),
+                exit_codes: if exit_code == fallback {
+                    HashMap::new()
+                } else {
+                    HashMap::from([(code.to_string(), exit_code)])
+                },
+                ..DispatchOptions::default()
+            };
+
+            let result =
+                dispatch_module_with_options(module_id, &matches, &provider, &executor, &options)
+                    .await;
+
+            assert_eq!(result, Err(exit_code));
+            let events = events.lock().unwrap();
+            assert_eq!(events.len(), 2, "{events:?}");
+            assert_eq!(
+                events[0],
+                json!({"module_id": module_id, "code": code, "exit_code": exit_code})
+            );
+            assert_eq!(events[1]["error"], true);
+            assert_eq!(events[1]["code"], code);
+            assert_eq!(events[1]["exit_code"], exit_code);
+        }
+    }
+}

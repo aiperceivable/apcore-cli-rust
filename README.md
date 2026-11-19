@@ -122,6 +122,35 @@ result. Preflight and streaming calls return `Ok(None)` on success. Failures
 return `Err(exit_code)`. A non-streaming module requested with `--stream`
 falls back to buffered execution and returns its result.
 
+To inject host-level input, choose the failure stream, or observe failures,
+use `dispatch_module_with_options`:
+
+```rust
+use std::{collections::HashMap, sync::Arc};
+use apcore_cli::{DispatchOptions, ErrorStream, dispatch_module_with_options};
+
+let options = DispatchOptions {
+    print_result: false,
+    extra_input: Some(serde_json::json!({"json": true})),
+    error_stream: ErrorStream::Stdout,
+    exit_codes: HashMap::from([("SCHEMA_VALIDATION_ERROR".to_owned(), 2)]),
+    on_error: Some(Arc::new(|failure| {
+        eprintln!("{} failed with {:?}", failure.module_id, failure.code);
+    })),
+};
+let result = dispatch_module_with_options(
+    module_id, &matches, &registry_provider, &executor, &options,
+).await;
+```
+
+`on_error` receives a `DispatchFailure { exit_code, code, message, module_id }`.
+The callback, error output, and returned `Err` all use the mapped exit code.
+Pass `--format json` for one JSON document on failure during buffered dispatch.
+Streaming dispatch may already have emitted JSONL chunks when an error occurs.
+Library-side exits (command modules, validation, the binary entry point) go
+through `set_exit_handler()` / `exit_with()`. The default calls `process::exit`.
+
+
 The host owns approval interaction. The dispatcher's approval gate uses its
 non-interactive policy, including the explicit `--yes` option. Use the
 standalone CLI for supported `--sandbox` execution. Sandbox execution

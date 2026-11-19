@@ -306,12 +306,12 @@ pub(crate) fn require_approval_for_system_command(module_id: &str, auto_approve:
         }),
         Err(_) => {
             eprintln!("Error: no async runtime available for approval check");
-            std::process::exit(crate::EXIT_MODULE_EXECUTE_ERROR);
+            crate::exit::exit_with(crate::EXIT_MODULE_EXECUTE_ERROR);
         }
     };
     if let Err(e) = result {
         eprintln!("Error: {e}");
-        std::process::exit(crate::EXIT_APPROVAL_DENIED);
+        crate::exit::exit_with(crate::EXIT_APPROVAL_DENIED);
     }
 }
 
@@ -348,7 +348,7 @@ fn exit_on_system_error(err: SystemDispatchError) -> ! {
         }
         SystemDispatchError::NoAsyncRuntime => crate::EXIT_MODULE_EXECUTE_ERROR,
     };
-    std::process::exit(code);
+    crate::exit::exit_with(code);
 }
 
 /// Dispatch the `health` subcommand.
@@ -395,7 +395,7 @@ pub fn dispatch_health(matches: &clap::ArgMatches, executor: &apcore::Executor) 
             } else {
                 format_health_summary_tty(&val);
             }
-            std::process::exit(0);
+            crate::exit::exit_with(0);
         }
         Err(e) => exit_on_system_error(e),
     }
@@ -437,7 +437,7 @@ pub fn dispatch_usage(matches: &clap::ArgMatches, executor: &apcore::Executor) {
             } else {
                 format_usage_summary_tty(&val);
             }
-            std::process::exit(0);
+            crate::exit::exit_with(0);
         }
         Err(e) => exit_on_system_error(e),
     }
@@ -477,7 +477,7 @@ pub fn dispatch_enable(matches: &clap::ArgMatches, executor: &apcore::Executor) 
                 println!("Module '{module_id}' enabled.");
                 println!("  Reason: {reason}");
             }
-            std::process::exit(0);
+            crate::exit::exit_with(0);
         }
         Err(e) => exit_on_system_error(e),
     }
@@ -517,7 +517,7 @@ pub fn dispatch_disable(matches: &clap::ArgMatches, executor: &apcore::Executor)
                 println!("Module '{module_id}' disabled.");
                 println!("  Reason: {reason}");
             }
-            std::process::exit(0);
+            crate::exit::exit_with(0);
         }
         Err(e) => exit_on_system_error(e),
     }
@@ -567,7 +567,7 @@ pub fn dispatch_reload(matches: &clap::ArgMatches, executor: &apcore::Executor) 
                 println!("  Version: {prev} -> {new}");
                 println!("  Duration: {dur}ms");
             }
-            std::process::exit(0);
+            crate::exit::exit_with(0);
         }
         Err(e) => exit_on_system_error(e),
     }
@@ -587,7 +587,7 @@ pub fn dispatch_config(matches: &clap::ArgMatches, executor: &apcore::Executor) 
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "null".to_string());
             println!("{key} = {display}");
-            std::process::exit(0);
+            crate::exit::exit_with(0);
         }
         Some(("set", sub_m)) => {
             let key = sub_m.get_one::<String>("key").expect("key is required");
@@ -634,14 +634,14 @@ pub fn dispatch_config(matches: &clap::ArgMatches, executor: &apcore::Executor) 
                         println!("  {old} -> {new}");
                         println!("  Reason: {reason}");
                     }
-                    std::process::exit(0);
+                    crate::exit::exit_with(0);
                 }
                 Err(e) => exit_on_system_error(e),
             }
         }
         _ => {
             eprintln!("Error: config requires a subcommand (get or set).");
-            std::process::exit(2);
+            crate::exit::exit_with(2);
         }
     }
 }

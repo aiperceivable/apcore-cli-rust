@@ -98,7 +98,7 @@ fn guard_overwrite(filepath: &Path, force: bool) {
             "Error: '{}' already exists. Pass --force to overwrite.",
             filepath.display()
         );
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     }
 }
 
@@ -110,7 +110,7 @@ fn validate_dir(dir: &str) {
         .any(|c| c == std::path::Component::ParentDir);
     if has_dotdot {
         eprintln!("Error: Output directory must not contain '..' path components.");
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     }
 }
 
@@ -146,7 +146,7 @@ fn create_decorator_module(
             "Error: cannot create directory '{}': {e}",
             dir_path.display()
         );
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     });
 
     let safe_name = module_id.replace('.', "_");
@@ -209,7 +209,7 @@ fn create_decorator_module(
     guard_overwrite(&filepath, force);
     fs::write(&filepath, content).unwrap_or_else(|e| {
         eprintln!("Error: cannot write '{}': {e}", filepath.display());
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     });
 
     println!("Created {}", filepath.display());
@@ -244,7 +244,7 @@ fn create_convention_module(
     if let Some(parent) = filepath.parent() {
         fs::create_dir_all(parent).unwrap_or_else(|e| {
             eprintln!("Error: cannot create directory '{}': {e}", parent.display());
-            std::process::exit(2);
+            crate::exit::exit_with(2);
         });
     }
 
@@ -273,7 +273,7 @@ fn create_convention_module(
     guard_overwrite(&filepath, force);
     fs::write(&filepath, content).unwrap_or_else(|e| {
         eprintln!("Error: cannot write '{}': {e}", filepath.display());
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     });
 
     println!("Created {}", filepath.display());
@@ -295,7 +295,7 @@ fn create_binding_module(
             "Error: cannot create directory '{}': {e}",
             dir_path.display()
         );
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     });
 
     // Write YAML binding file.
@@ -326,7 +326,7 @@ fn create_binding_module(
     guard_overwrite(&yaml_filepath, force);
     fs::write(&yaml_filepath, yaml_content).unwrap_or_else(|e| {
         eprintln!("Error: cannot write '{}': {e}", yaml_filepath.display());
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     });
 
     println!("Created {}", yaml_filepath.display());
@@ -354,7 +354,7 @@ fn create_binding_module(
     if let Some(parent) = rs_filepath.parent() {
         fs::create_dir_all(parent).unwrap_or_else(|e| {
             eprintln!("Error: cannot create directory '{}': {e}", parent.display());
-            std::process::exit(2);
+            crate::exit::exit_with(2);
         });
     }
 
@@ -371,7 +371,7 @@ fn create_binding_module(
 
     fs::write(&rs_filepath, rs_content).unwrap_or_else(|e| {
         eprintln!("Error: cannot write '{}': {e}", rs_filepath.display());
-        std::process::exit(2);
+        crate::exit::exit_with(2);
     });
 
     println!("Created {}", rs_filepath.display());

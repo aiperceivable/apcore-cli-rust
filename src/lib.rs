@@ -26,6 +26,7 @@ pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod display_helpers;
+pub mod exit;
 pub mod exposure;
 pub mod fs_discoverer;
 pub mod init_cmd;
@@ -266,10 +267,13 @@ pub use builtin_group::{
 // Core dispatcher (FE-01)
 pub use cli::{
     build_module_command, build_module_command_with_limit, collect_input,
-    collect_input_from_reader, dispatch_module, dispatch_module_with_result, get_docs_url,
-    is_all_options_help, is_system_modules_available, set_all_options_help, set_audit_logger,
-    set_docs_url, set_executables, set_system_modules_available, validate_module_id, CliError,
+    collect_input_from_reader, dispatch_module, dispatch_module_with_options,
+    dispatch_module_with_result, get_docs_url, is_all_options_help, is_system_modules_available,
+    set_all_options_help, set_audit_logger, set_docs_url, set_executables,
+    set_system_modules_available, validate_module_id, CliError, DispatchFailure, DispatchOptions,
+    ErrorStream,
 };
+pub use exit::{exit_with, get_exit_handler, set_exit_handler, ExitHandler};
 
 // FE-13 retires `cli::BUILTIN_COMMANDS`. Downstream consumers that pinned to
 // the old symbol continue to compile via the deprecated alias on `cli::` for

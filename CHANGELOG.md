@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [0.14.0] - 2026-11-19
+
+### Added
+
+- `dispatch_module_with_options()` and `DispatchOptions` give embedded hosts
+  the same hooks as the TypeScript and Python CLIs: `extra_input` (merged
+  before validation), `error_stream` (`ErrorStream::Stdout` or a custom sink),
+  and `on_error(&DispatchFailure)` with the exit code, apcore code and message.
+  `dispatch_module_with_result()` keeps its signature and delegates with
+  defaults. `exit_codes` maps apcore wire codes to host exit codes (same
+  contract as the TypeScript and Python CLIs).
+- `set_exit_handler()` / `exit_with()` make every library-side exit go through
+  one handler. The default calls `process::exit`. The dispatcher boxes its
+  state machine so hosts on a small thread stack can call it.
+
+### Fixed
+
+- Dispatch reports early, traced, and streaming failures through the same
+  callback and formatter as buffered execution. `--format json` emits an error
+  envelope for early failures, and the callback, envelope, and returned error
+  use the same mapped exit code.
+- `--input` accepts inline JSON objects alongside files and stdin.
+- `set_docs_url()` strips trailing slashes, so help output no longer emits
+  `//commands/...`. The link already used the canonical module path.
+
+### Changed
+
+- Library code no longer calls `std::process::exit()` directly; command
+  modules, validation and the binary entry point route through `exit_with()`.
+- Refresh `Cargo.lock` (`tokio` 1.54.1, `openssl` 0.10.82,
+  `rustls-webpki` 0.103.17, `mio` 1.2.5, and other patch updates).
+
 ## [0.13.0] - 2026-11-10
 
 ### Added
