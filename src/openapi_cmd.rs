@@ -635,7 +635,7 @@ fn report_generate_diagnostics(scan: &ScanInputs) {
     // `generate` reports the same hazard set as `scan` on the same document
     // (spec 4.3 / T-OAPI-26). Diagnostics go to stderr so the written-path
     // listing on stdout stays machine-readable.
-    emit_diagnostics_to_stderr(&scan.modules, &scan);
+    emit_diagnostics_to_stderr(&scan.modules, scan);
 }
 
 fn write_modules(modules: &[ScannedModule], output_dir: &str) -> Vec<WriteResult> {
