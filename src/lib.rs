@@ -247,8 +247,9 @@ pub use acl_loader::{
 // OpenAPI import (FE-15a)
 pub use openapi_cmd::{openapi_command, register_openapi_command};
 pub use openapi_source::{
-    detect_proxy_hazards, load_openapi_source, Hazard, OpenApiSourceError,
-    DEFAULT_OPENAPI_TIMEOUT_SECS,
+    detect_effective_proxy_hazards, detect_proxy_hazards, load_openapi_source,
+    EffectiveProxyHazard, EffectiveProxyHazardKind, Hazard, OpenApiInputLocation,
+    OpenApiSourceError, DEFAULT_OPENAPI_TIMEOUT_SECS,
 };
 
 // Approval gate (FE-04 + FE-11 §3.5)

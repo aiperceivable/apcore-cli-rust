@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.14.1] - Unreleased
+
+### Added
+
+- `detect_effective_proxy_hazards` checks the selected modules from
+  `OpenAPIScanner::scan_with_effective_parameters` (toolkit 0.14.3 or later).
+  It reports unresolved parameters, incompatible query/JSON body routing,
+  path-template mismatches, and names that collide across input locations.
+  Apply tool selection before this check and reject reported operations
+  before HTTP proxy registration. The existing scanner and CLI diagnostic
+  defaults and the `detect_proxy_hazards` API retain their behavior.
+
 
 ## [0.14.0] - 2026-11-19
 
