@@ -7,14 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- `detect_effective_proxy_hazards` checks the selected modules from
-  `OpenAPIScanner::scan_with_effective_parameters` (toolkit 0.14.3 or later).
-  It reports unresolved parameters, incompatible query/JSON body routing,
-  path-template mismatches, and names that collide across input locations.
-  Apply tool selection before this check and reject reported operations
-  before HTTP proxy registration. The existing scanner and CLI diagnostic
-  defaults and the `detect_proxy_hazards` API retain their behavior.
-
+- `openapi scan` and `openapi generate` use the effective parameter scan
+  from toolkit 0.15.0. Scan JSON/YAML include `effective_hazards` and retain
+  the legacy `hazards` field. The commands keep their warning-only handling
+  of forwarding hazards.
+- `detect_effective_proxy_hazards` and its diagnostic types are re-exported
+  from the toolkit alongside the existing CLI `detect_proxy_hazards` API.
 
 ## [0.14.0] - 2026-11-19
 

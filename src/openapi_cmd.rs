@@ -26,7 +26,8 @@ use clap::{Arg, ArgAction, Command};
 use serde_json::{Map, Value};
 
 use crate::openapi_source::{
-    detect_proxy_hazards, load_openapi_source, parse_headers, Hazard, DEFAULT_OPENAPI_TIMEOUT_SECS,
+    detect_effective_proxy_hazards, detect_proxy_hazards, load_openapi_source, parse_headers,
+    EffectiveProxyHazard, Hazard, DEFAULT_OPENAPI_TIMEOUT_SECS,
 };
 use crate::{EXIT_CONFIG_NOT_FOUND, EXIT_INVALID_INPUT, EXIT_MODULE_EXECUTE_ERROR, EXIT_SUCCESS};
 
@@ -394,6 +395,7 @@ struct ScanInputs {
     spec: Value,
     modules: Vec<ScannedModule>,
     hazards: Vec<Hazard>,
+    effective_hazards: Vec<EffectiveProxyHazard>,
 }
 
 /// Load, scan, and detect hazards. Exits on every failure so both commands
@@ -444,7 +446,7 @@ async fn run_scan(sub_m: &clap::ArgMatches) -> ScanInputs {
     };
 
     let modules = OpenAPIScanner::new()
-        .scan(&spec, &options)
+        .scan_with_effective_parameters(&spec, &options)
         .await
         .unwrap_or_else(|e| {
             match e {
@@ -468,11 +470,13 @@ async fn run_scan(sub_m: &clap::ArgMatches) -> ScanInputs {
         });
 
     let hazards = detect_proxy_hazards(&spec, &modules);
+    let effective_hazards = detect_effective_proxy_hazards(&modules);
     ScanInputs {
         source,
         spec,
         modules,
         hazards,
+        effective_hazards,
     }
 }
 
@@ -483,14 +487,14 @@ async fn dispatch_scan(sub_m: &clap::ArgMatches) {
 
     match fmt {
         "json" => {
-            let payload = scan_payload(&scan.source, &scan.spec, &scan.modules, &scan.hazards);
+            let payload = scan_result_payload(&scan);
             println!(
                 "{}",
                 serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
             );
         }
         "yaml" => {
-            let payload = scan_payload(&scan.source, &scan.spec, &scan.modules, &scan.hazards);
+            let payload = scan_result_payload(&scan);
             println!(
                 "{}",
                 serde_yaml_ng::to_string(&payload)
@@ -512,7 +516,7 @@ async fn dispatch_scan(sub_m: &clap::ArgMatches) {
             println!("{rendered}");
             // csv/jsonl are flat row formats with nowhere to put a top-level
             // `hazards` key, so hazards go to stderr rather than being dropped.
-            emit_diagnostics_to_stderr(&[], &scan.hazards);
+            emit_diagnostics_to_stderr(&[], &scan);
         }
         "markdown" | "skill" => {
             // Rendered through the toolkit wholesale -- `scan()` returns
@@ -529,7 +533,7 @@ async fn dispatch_scan(sub_m: &clap::ArgMatches) {
                 other => println!("{other:?}"),
             }
             // Keep the rendered document clean; diagnostics still surface.
-            emit_diagnostics_to_stderr(&scan.modules, &scan.hazards);
+            emit_diagnostics_to_stderr(&scan.modules, &scan);
         }
         _ => {
             print!(
@@ -537,7 +541,7 @@ async fn dispatch_scan(sub_m: &clap::ArgMatches) {
                 render_scan_table(&scan.source, &scan.spec, &scan.modules)
             );
             println!();
-            let diagnostics = render_diagnostics(&scan.modules, &scan.hazards);
+            let diagnostics = render_scan_diagnostics(&scan.modules, &scan);
             if !diagnostics.is_empty() {
                 print!("{diagnostics}");
             }
@@ -549,8 +553,25 @@ async fn dispatch_scan(sub_m: &clap::ArgMatches) {
     crate::exit::exit_with(EXIT_SUCCESS);
 }
 
-fn emit_diagnostics_to_stderr(modules: &[ScannedModule], hazards: &[Hazard]) {
-    let diagnostics = render_diagnostics(modules, hazards);
+fn scan_result_payload(scan: &ScanInputs) -> Value {
+    let mut payload = scan_payload(&scan.source, &scan.spec, &scan.modules, &scan.hazards);
+    payload["effective_hazards"] = serde_json::json!(scan.effective_hazards);
+    payload
+}
+
+fn render_scan_diagnostics(modules: &[ScannedModule], scan: &ScanInputs) -> String {
+    let mut diagnostics = render_diagnostics(modules, &scan.hazards);
+    if !scan.effective_hazards.is_empty() {
+        diagnostics.push_str("\nEffective OpenAPI proxy hazards:\n");
+        for hazard in &scan.effective_hazards {
+            diagnostics.push_str(&format!("  {hazard}\n"));
+        }
+    }
+    diagnostics
+}
+
+fn emit_diagnostics_to_stderr(modules: &[ScannedModule], scan: &ScanInputs) {
+    let diagnostics = render_scan_diagnostics(modules, scan);
     if !diagnostics.is_empty() {
         eprint!("{diagnostics}");
     }
@@ -614,7 +635,7 @@ fn report_generate_diagnostics(scan: &ScanInputs) {
     // `generate` reports the same hazard set as `scan` on the same document
     // (spec 4.3 / T-OAPI-26). Diagnostics go to stderr so the written-path
     // listing on stdout stays machine-readable.
-    emit_diagnostics_to_stderr(&scan.modules, &scan.hazards);
+    emit_diagnostics_to_stderr(&scan.modules, &scan);
 }
 
 fn write_modules(modules: &[ScannedModule], output_dir: &str) -> Vec<WriteResult> {

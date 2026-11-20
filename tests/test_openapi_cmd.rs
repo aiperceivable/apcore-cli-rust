@@ -575,9 +575,14 @@ fn t_oapi_11_external_ref_is_warned_about_and_not_fetched() {
         })
         .collect();
     assert!(
-        all_warnings.iter().any(|w| w.contains("common.yaml")),
-        "the external $ref must be named in a warning: {all_warnings:?}"
+        all_warnings
+            .iter()
+            .any(|warning| warning.contains("external $ref not fetched: <external-ref>")),
+        "the external $ref must produce a redacted warning: {all_warnings:?}"
     );
+    assert!(!all_warnings
+        .iter()
+        .any(|warning| warning.contains("common.yaml")));
     // And nothing tried to read it -- the file does not exist, yet the scan
     // succeeded.
     assert!(!project.path().join("common.yaml").exists());
@@ -1295,4 +1300,74 @@ async fn load_openapi_source_takes_the_source_verbatim() {
         .await
         .expect_err("no probing");
     assert!(err.to_string().starts_with("Cannot read OpenAPI source '"));
+}
+
+#[test]
+fn test_effective_openapi_commands_match_shared_document_selection() {
+    let spec_root = std::env::var_os("APCORE_CLI_SPEC_REPO").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../apcore-cli"),
+        PathBuf::from,
+    );
+    let fixture: Value = serde_json::from_slice(
+        &std::fs::read(spec_root.join("conformance/fixtures/openapi_effective_documents.json"))
+            .expect("read shared fixture"),
+    )
+    .expect("parse shared fixture");
+    let cases = fixture["cases"].as_array().expect("fixture cases");
+    let selected = cases
+        .iter()
+        .find(|case| case["id"] == "standalone_reports_selected_forwarding_failure")
+        .expect("selected failure case");
+    let filtered = cases
+        .iter()
+        .find(|case| case["id"] == "standalone_excludes_forwarding_failure")
+        .expect("filtered failure case");
+    let project = Project::new();
+    let source = project.write("standalone.json", &selected["document"].to_string());
+    let source = source.to_str().unwrap();
+    let selection = filtered["include"].as_str().unwrap();
+
+    let out = project.run(&["apcli", "openapi", "scan", source, "--format", "json"]);
+    let payload = json_stdout(&out);
+    assert_eq!(payload["hazards"], serde_json::json!([]));
+    assert_eq!(
+        payload["effective_hazards"],
+        selected["expected"]["diagnostics"]
+    );
+
+    let out = project.run(&[
+        "apcli",
+        "openapi",
+        "scan",
+        source,
+        "--format",
+        "yaml",
+        "--include",
+        selection,
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let payload: Value = serde_yaml_ng::from_str(&stdout(&out)).expect("scan YAML");
+    assert_eq!(
+        payload["effective_hazards"],
+        filtered["expected"]["diagnostics"]
+    );
+    let module = &payload["modules"][0];
+    assert_eq!(
+        module["input_schema"]["properties"],
+        filtered["expected"]["modules"][0]["properties"]
+    );
+
+    let out = project.run(&["apcli", "openapi", "generate", source, "-o", "generated"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let diagnostics = stderr(&out);
+    assert!(
+        diagnostics.contains("update_items") && diagnostics.contains("tag"),
+        "{diagnostics}"
+    );
+    let binding = std::fs::read_to_string(project.path().join("generated/list_items.binding.yaml"))
+        .expect("generated binding");
+    assert!(
+        binding.contains("item_id") && binding.contains("tag"),
+        "{binding}"
+    );
 }
